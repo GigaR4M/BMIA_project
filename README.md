@@ -1,6 +1,6 @@
 # 🤖 BMIA - Bot de Moderação com IA para Discord
 
-Este é um bot para Discord projetado para moderar canais de texto automaticamente. Ele utiliza a API do Google Gemini para analisar mensagens em lotes, identificando e removendo conteúdo ofensivo, assédio ou discurso de ódio.
+Este é um bot para Discord projetado para moderar canais de texto automaticamente. Ele utiliza a API do Google Gemini para analisar mensagens em lotes, identificando e removendo conteúdo ofensivo, assédio ou discurso de ódio, mesmo com uso de "leetspeak" (troca de letras por números).
 
 ## ✨ Como Funciona
 
