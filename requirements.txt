@@ -2,3 +2,9 @@ discord.py
 google-generativeai
 python-dotenv
 Flask
+
+# Dependências do Sistema de Estatísticas
+asyncpg>=0.29.0
+matplotlib>=3.8.0
+pillow>=10.0.0
+python-dateutil>=2.8.2
