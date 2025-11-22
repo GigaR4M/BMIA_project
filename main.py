@@ -1,4 +1,4 @@
-# main.py - VERSÃO FINAL UNIFICADA
+# main.py - BOT HÍBRIDO: MODERAÇÃO COM IA + ESTATÍSTICAS
 
 # --- 1. Importações ---
 import discord
@@ -7,16 +7,30 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 import asyncio
 import traceback
+import logging
 from flask import Flask
 from threading import Thread
+
+# Importações do sistema de estatísticas
+from database import Database
+from stats_collector import StatsCollector
+from commands.stats_commands import StatsCommands
 
 # --- 2. Configuração Inicial e Constantes ---
 load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+DATABASE_URL = os.getenv('DATABASE_URL')  # Connection string do Supabase
 
 INTERVALO_ANALISE = 15
 buffer_mensagens = []
+
+# Configuração de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # --- 2a. Configuração do Servidor Web (Keep-Alive) ---
 app = Flask('')
@@ -47,7 +61,25 @@ intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
 intents.message_content = True
-client = discord.Client(intents=intents)
+intents.voice_states = True  # Necessário para estatísticas de voz
+intents.members = True  # Necessário para informações de membros
+
+# Usa CommandTree para suportar slash commands
+class MyClient(discord.Client):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tree = discord.app_commands.CommandTree(self)
+    
+    async def setup_hook(self):
+        # Registra comandos slash
+        await self.tree.sync()
+        logger.info("Comandos slash sincronizados")
+
+client = MyClient(intents=intents)
+
+# Inicializa sistema de estatísticas (será conectado no on_ready)
+db = None
+stats_collector = None
 
 
 # --- 4. Função de Análise com IA (Versão em Lote) ---
@@ -88,8 +120,30 @@ async def analisar_lote_com_ia(lista_de_mensagens):
 # --- 5. Eventos do Bot ---
 @client.event
 async def on_ready():
-    print(f'Bot conectado como {client.user}!')
-    print(f'Pronto para moderar conversas em lotes a cada {INTERVALO_ANALISE} segundos.')
+    global db, stats_collector
+    
+    print(f'🤖 Bot conectado como {client.user}!')
+    print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
+    
+    # Inicializa banco de dados e estatísticas
+    if DATABASE_URL:
+        try:
+            db = Database(DATABASE_URL)
+            await db.connect()
+            stats_collector = StatsCollector(db)
+            
+            # Registra comandos de estatísticas
+            client.tree.add_command(StatsCommands(db))
+            await client.tree.sync()
+            
+            print('📊 Sistema de estatísticas ativado!')
+        except Exception as e:
+            logger.error(f'❌ Erro ao inicializar estatísticas: {e}')
+            logger.warning('⚠️  Bot continuará apenas com moderação')
+    else:
+        logger.warning('⚠️  DATABASE_URL não configurada. Estatísticas desativadas.')
+    
+    print('✅ Bot totalmente inicializado!')
     print('------')
     client.loop.create_task(processador_em_lote())
 
@@ -98,8 +152,14 @@ async def on_ready():
 async def on_message(message):
     if message.author.bot:
         return
+    
+    # Adiciona ao buffer de moderação
     buffer_mensagens.append(message)
     print(f"Mensagem de {message.author} adicionada ao buffer (Tamanho atual: {len(buffer_mensagens)})")
+    
+    # Coleta estatísticas (se ativado)
+    if stats_collector:
+        await stats_collector.on_message(message)
 
 
 # --- NOVO: O Processador em Lote ---
@@ -115,6 +175,10 @@ async def processador_em_lote():
                 if veredito == "SIM":
                     print(f"Ofensa encontrada na mensagem de {msg.author}: '{msg.content}'. Removendo...")
                     try:
+                        # Marca como moderada nas estatísticas ANTES de deletar
+                        if stats_collector:
+                            await stats_collector.mark_message_as_moderated(msg.id)
+                        
                         await msg.delete()
                         aviso = (
                             f"Ei {msg.author.mention}, uma de suas mensagens recentes foi removida por violar as diretrizes da comunidade."
@@ -124,6 +188,20 @@ async def processador_em_lote():
                         print(f"Falha ao moderar mensagem de {msg.author}. Erro: {e}")
 
 
-# --- 6. Inicialização do Bot E DO SERVIDOR WEB ---
+# --- 6. Novo Evento: Rastreamento de Voz ---
+@client.event
+async def on_voice_state_update(member, before, after):
+    """Rastreia atividade de voz para estatísticas."""
+    if stats_collector:
+        await stats_collector.on_voice_state_update(member, before, after)
+
+
+# --- 7. Inicialização do Bot E DO SERVIDOR WEB ---
 keep_alive()  # Inicia o servidor web em segundo plano
-client.run(DISCORD_TOKEN)  # Inicia o bot
+
+try:
+    client.run(DISCORD_TOKEN)  # Inicia o bot
+finally:
+    # Cleanup: fecha conexão com banco de dados
+    if db:
+        asyncio.run(db.disconnect())

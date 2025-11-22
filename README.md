@@ -1,75 +1,152 @@
-# 🤖 BMIA - Bot de Moderação com IA para Discord
+# 🤖 BMIA - Bot Híbrido para Discord: Moderação com IA + Estatísticas
 
-Este é um bot para Discord projetado para moderar canais de texto automaticamente. Ele utiliza a API do Google Gemini para analisar mensagens em lotes, identificando e removendo conteúdo ofensivo, assédio ou discurso de ódio, mesmo com uso de "leetspeak" (troca de letras por números).
+Bot híbrido para Discord que combina **moderação automática com IA** e **sistema completo de estatísticas**. Utiliza Google Gemini para análise de mensagens e PostgreSQL (Supabase) para rastreamento de atividades.
 
-## ✨ Como Funciona
+## ✨ Funcionalidades
 
-O bot opera em um ciclo contínuo para otimizar o uso da API e evitar analisar cada mensagem individualmente:
+### 🛡️ Moderação Automática com IA
+- Análise em lote de mensagens a cada 15 segundos
+- Detecção de linguagem ofensiva, assédio e discurso de ódio
+- Remoção automática de conteúdo inadequado
+- Avisos temporários aos usuários
 
-1.  **Coleta de Mensagens:** O bot "escuta" o chat e adiciona todas as novas mensagens a um buffer (uma lista temporária).
-2.  **Análise em Lote:** A cada 15 segundos (`INTERVALO_ANALISE`), o bot envia o lote completo de mensagens coletadas para a API do Google Gemini.
-3.  **Veredito da IA:** A IA analisa todas as mensagens e retorna um veredito (ex: "1:NÃO, 2:SIM, 3:NÃO").
-4.  **Ação de Moderação:** O bot processa os vereditos. Mensagens marcadas como "SIM" (ofensivas) são removidas do canal, e um aviso temporário é enviado ao autor da mensagem.
-5.  **Keep-Alive:** O projeto inclui um pequeno servidor web Flask para garantir que o bot permaneça online em plataformas de hospedagem gratuitas (como Render ou Replit).
+### 📊 Sistema de Estatísticas
+- Rastreamento automático de mensagens e atividade de voz
+- Comandos slash modernos (`/stats`)
+- Estatísticas do servidor, usuários e canais
+- Rankings de usuários mais ativos
+- Dados armazenados em PostgreSQL (Supabase)
 
-## 🔧 Tecnologias Utilizadas
+## 🔧 Tecnologias
 
-* [Python 3](https://www.python.org/)
-* [discord.py](https://discordpy.readthedocs.io/en/stable/): Para a integração com a API do Discord.
-* [google-generativeai](https://pypi.org/project/google-generativeai/): Para acesso à API do Gemini.
-* [python-dotenv](https://pypi.org/project/python-dotenv/): Para gerenciamento de chaves de API e segredos.
-* [Flask](https://flask.palletsprojects.com/en/3.0.x/): Para criar o servidor web "keep-alive".
+- **Python 3.10+**
+- **discord.py** - API do Discord
+- **Google Gemini** - IA para moderação
+- **PostgreSQL (Supabase)** - Banco de dados gratuito
+- **asyncpg** - Driver PostgreSQL assíncrono
+- **Flask** - Servidor keep-alive
 
-## ⚙️ Configuração e Instalação
-
-Siga estes passos para configurar e executar o bot em seu próprio ambiente.
+## ⚙️ Instalação
 
 ### 1. Pré-requisitos
 
-* Você precisa ter o [Python 3.10](https://www.python.org/downloads/) ou superior instalado.
-* Uma conta no [Discord](https://discord.com/) com um bot configurado.
-    * Obtenha seu `DISCORD_TOKEN` no [Portal de Desenvolvedores do Discord](https://discord.com/developers/applications).
-    * Certifique-se de ativar as "Privileged Gateway Intents" (especialmente `Message Content Intent`) para o seu bot.
-* Uma chave de API do [Google Gemini](https://aistudio.google.com/app/apikey).
-    * Obtenha sua `GEMINI_API_KEY` no Google AI Studio.
+- Python 3.10 ou superior
+- Conta Discord com bot configurado ([Portal de Desenvolvedores](https://discord.com/developers/applications))
+  - Ative **Message Content Intent** e **Server Members Intent**
+- Chave API do Google Gemini ([Google AI Studio](https://aistudio.google.com/app/apikey))
+- Conta Supabase ([supabase.com](https://supabase.com))
 
-### 2. Instalação
+### 2. Clone e Configure
 
-1.  **Clone o repositório:**
-    ```bash
-    git clone (https://github.com/GigaR4M/BMIA_project.git)
-    cd SEU-REPOSITORIO
-    ```
+```bash
+# Clone o repositório
+git clone https://github.com/GigaR4M/BMIA_project.git
+cd BMIA_project
 
-2.  **Crie um ambiente virtual:**
-    (Recomendado para isolar as dependências)
-    ```bash
-    # Windows
-    python -m venv .venv
-    .\.venv\Scripts\activate
+# Crie ambiente virtual
+python -m venv .venv
 
-    # macOS / Linux
-    python3 -m venv .venv
-    source .venv/bin/activate
-    ```
+# Ative o ambiente virtual
+# Windows:
+.\.venv\Scripts\activate
+# Linux/Mac:
+source .venv/bin/activate
 
-3.  **Instale as dependências:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+# Instale dependências
+pip install -r requirements.txt
+```
 
-### 3. Configuração das Variáveis de Ambiente
+### 3. Configure Variáveis de Ambiente
 
-Crie um arquivo chamado `.env` na pasta principal do projeto. Este arquivo guardará suas chaves secretas e **não** deve ser enviado para o GitHub (o `.gitignore` já está configurado para isso).
-
-Copie o conteúdo abaixo para o seu arquivo `.env` e substitua pelos seus valores:
+Crie um arquivo `.env` na raiz do projeto:
 
 ```ini
-# Arquivo .env
-# Substitua pelos seus valores reais
+# Token do Bot Discord
+DISCORD_TOKEN=seu_token_aqui
 
-# Token do seu Bot no Portal de Desenvolvedores do Discord
-DISCORD_TOKEN=SEU_TOKEN_DO_BOT_AQUI
+# Chave API do Gemini
+GEMINI_API_KEY=sua_chave_aqui
 
-# Chave de API do Google AI Studio (Gemini)
-GEMINI_API_KEY=SUA_CHAVE_DE_API_DO_GEMINI_AQUI
+# Connection String do Supabase (PostgreSQL)
+DATABASE_URL=postgresql://postgres:senha@db.xxxxx.supabase.co:5432/postgres
+```
+
+### 4. Configure o Supabase
+
+1. Crie conta em [supabase.com](https://supabase.com)
+2. Crie novo projeto (região: South America - São Paulo)
+3. Vá em **Project Settings** → **Database**
+4. Copie a **Connection String (URI)**
+5. Cole no `.env` como `DATABASE_URL`
+
+O bot criará as tabelas automaticamente na primeira execução!
+
+### 5. Execute o Bot
+
+```bash
+python main.py
+```
+
+## 📖 Comandos Disponíveis
+
+### Comandos de Estatísticas (`/stats`)
+
+| Comando | Descrição | Permissão |
+|---------|-----------|-----------|
+| `/stats server [days]` | Estatísticas gerais do servidor | Todos |
+| `/stats me [days]` | Suas estatísticas pessoais | Todos |
+| `/stats user @usuario [days]` | Estatísticas de um usuário | Admin |
+| `/stats top [limit] [days]` | Ranking de usuários mais ativos | Todos |
+| `/stats channels [limit] [days]` | Canais mais ativos | Todos |
+
+**Parâmetros opcionais:**
+- `days`: Período em dias (padrão: 30)
+- `limit`: Quantidade de resultados (padrão: 10, máx: 25)
+
+## 🚀 Deploy (ShardCloud/Render)
+
+O bot inclui servidor Flask para manter-se ativo em plataformas gratuitas:
+
+1. Faça push do código para GitHub
+2. Conecte ao ShardCloud ou Render
+3. Configure as variáveis de ambiente no painel
+4. O bot iniciará automaticamente!
+
+## 📁 Estrutura do Projeto
+
+```
+BMIA_project/
+├── main.py                 # Arquivo principal do bot
+├── database.py             # Gerenciador PostgreSQL
+├── stats_collector.py      # Coletor de estatísticas
+├── commands/
+│   └── stats_commands.py   # Comandos slash
+├── utils/
+│   └── embed_builder.py    # Construtor de embeds
+├── requirements.txt        # Dependências
+├── .env                    # Variáveis de ambiente (não commitar!)
+└── .env.example            # Template de configuração
+```
+
+## 🔒 Privacidade
+
+- Estatísticas são agregadas e anônimas por padrão
+- Estatísticas pessoais só visíveis para o próprio usuário ou admins
+- Nenhum conteúdo de mensagens é armazenado, apenas metadados
+- Mensagens moderadas são marcadas mas não salvas
+
+## 🤝 Contribuindo
+
+Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull requests.
+
+## 📄 Licença
+
+Este projeto é open source. Use livremente!
+
+## 🆘 Suporte
+
+Problemas? Abra uma issue no GitHub!
+
+---
+
+**Desenvolvido com ❤️ usando Google Gemini e Supabase**
