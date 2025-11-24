@@ -146,6 +146,7 @@ async def on_ready():
     print('✅ Bot totalmente inicializado!')
     print('------')
     client.loop.create_task(processador_em_lote())
+    client.loop.create_task(collect_server_stats())
 
 
 @client.event
@@ -186,6 +187,23 @@ async def processador_em_lote():
                         await msg.channel.send(aviso, delete_after=10)
                     except Exception as e:
                         print(f"Falha ao moderar mensagem de {msg.author}. Erro: {e}")
+
+
+async def collect_server_stats():
+    """Coleta estatísticas do servidor periodicamente."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            if db:
+                for guild in client.guilds:
+                    # Atualiza contagem de membros
+                    await db.update_daily_member_count(guild.id, guild.member_count)
+                    logger.info(f"📊 Estatísticas atualizadas para {guild.name}: {guild.member_count} membros")
+        except Exception as e:
+            logger.error(f"❌ Erro ao coletar estatísticas do servidor: {e}")
+        
+        # Espera 1 hora antes da próxima atualização
+        await asyncio.sleep(3600)
 
 
 # --- 6. Novo Evento: Rastreamento de Voz ---
