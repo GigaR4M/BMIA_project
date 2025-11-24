@@ -29,7 +29,8 @@ class Database:
                 self.database_url,
                 min_size=2,
                 max_size=10,
-                command_timeout=60
+                command_timeout=60,
+                statement_cache_size=0  # Desabilita prepared statements para compatibilidade com pgbouncer
             )
             logger.info("✅ Conectado ao banco de dados PostgreSQL")
             await self.initialize_schema()
