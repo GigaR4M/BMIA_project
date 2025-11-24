@@ -189,12 +189,17 @@ class Database:
     async def update_daily_member_count(self, guild_id: int, member_count: int):
         """Atualiza a contagem de membros do dia."""
         async with self.pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO daily_stats (guild_id, date, server_member_count)
-                VALUES ($1, CURRENT_DATE, $2)
-                ON CONFLICT (guild_id, date)
-                DO UPDATE SET server_member_count = $2
-            """, guild_id, member_count)
+            try:
+                result = await conn.execute("""
+                    INSERT INTO daily_stats (guild_id, date, server_member_count)
+                    VALUES ($1, CURRENT_DATE, $2)
+                    ON CONFLICT (guild_id, date)
+                    DO UPDATE SET server_member_count = EXCLUDED.server_member_count
+                """, guild_id, member_count)
+                logger.info(f"✅ Contagem de membros atualizada: guild_id={guild_id}, count={member_count}, result={result}")
+            except Exception as e:
+                logger.error(f"❌ Erro ao atualizar contagem de membros: {e}")
+                raise
     
     # ==================== CONSULTAS DE ESTATÍSTICAS ====================
     
