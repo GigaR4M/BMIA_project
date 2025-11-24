@@ -109,6 +109,7 @@ class Database:
                     total_voice_minutes INTEGER DEFAULT 0,
                     most_active_channel_id BIGINT,
                     most_active_user_id BIGINT,
+                    server_member_count INTEGER DEFAULT 0,
                     UNIQUE(guild_id, date)
                 )
             """)
@@ -183,6 +184,16 @@ class Database:
                   AND channel_id = $2 
                   AND left_at IS NULL
             """, user_id, channel_id)
+
+    async def update_daily_member_count(self, guild_id: int, member_count: int):
+        """Atualiza a contagem de membros do dia."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO daily_stats (guild_id, date, server_member_count)
+                VALUES ($1, CURRENT_DATE, $2)
+                ON CONFLICT (guild_id, date)
+                DO UPDATE SET server_member_count = $2
+            """, guild_id, member_count)
     
     # ==================== CONSULTAS DE ESTATÍSTICAS ====================
     
