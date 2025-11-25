@@ -70,26 +70,21 @@ class RoleManager:
         except Exception as e:
             logger.error(f"❌ Erro ao sincronizar membros: {e}")
     
-    async def check_and_assign_roles(self, guild: discord.Guild, member: discord.Member) -> int:
+    async def check_and_assign_roles(self, member: discord.Member) -> int:
         """
-        Verifica e atribui cargos automáticos para um membro baseado no tempo.
+        Verifica e atribui cargos automáticos baseados no tempo no servidor.
+        Remove cargos anteriores e atribui apenas o cargo mais alto elegível.
+        Sistema de progressão: cada membro tem apenas UM cargo por vez.
         
         Args:
-            guild: Servidor do Discord
-            member: Membro para verificar
+            member: Membro do Discord para verificar
             
         Returns:
-            Número de cargos atribuídos
+            1 se houve mudança de cargo, 0 caso contrário
         """
         try:
-            # Busca configurações de cargos automáticos
-            auto_roles = await self.db.get_auto_roles(guild.id)
-            
-            if not auto_roles:
-                return 0
-            
-            # Busca data de entrada do membro
-            join_date = await self.db.get_member_join_date(guild.id, member.id)
+            # Busca data de entrada
+            join_date = await self.db.get_member_join_date(member.guild.id, member.id)
             
             if not join_date:
                 # Se não tiver registro, registra agora
@@ -99,35 +94,61 @@ class RoleManager:
             # Calcula dias no servidor (ambos são timezone-aware agora)
             days_in_server = (datetime.now(timezone.utc) - join_date).days
             
-            roles_assigned = 0
+            # Busca configurações de cargos automáticos
+            auto_roles = await self.db.get_auto_roles(member.guild.id)
             
-            # Verifica cada configuração de cargo
+            if not auto_roles:
+                return 0
+            
+            # Ordena por dias necessários (decrescente) para pegar o maior cargo elegível
+            auto_roles.sort(key=lambda x: x['days_required'], reverse=True)
+            
+            # Encontra o cargo mais alto que o membro é elegível
+            highest_eligible_role = None
             for config in auto_roles:
-                role_id = config['role_id']
-                days_required = config['days_required']
-                
-                # Verifica se o membro já tem o cargo
-                role = guild.get_role(role_id)
-                if not role:
-                    logger.warning(f"⚠️ Cargo {role_id} não encontrado no servidor {guild.name}")
-                    continue
-                
-                # Se o membro tem dias suficientes e não tem o cargo ainda
-                if days_in_server >= days_required and role not in member.roles:
-                    try:
-                        await member.add_roles(role, reason=f"Cargo automático: {days_in_server} dias no servidor")
-                        logger.info(f"✅ Cargo {role.name} atribuído a {member.name} ({days_in_server} dias)")
-                        roles_assigned += 1
-                    except discord.Forbidden:
-                        logger.error(f"❌ Sem permissão para atribuir cargo {role.name}")
-                    except discord.HTTPException as e:
-                        logger.error(f"❌ Erro ao atribuir cargo {role.name}: {e}")
+                if days_in_server >= config['days_required']:
+                    highest_eligible_role = config
+                    break
+            
+            if not highest_eligible_role:
+                return 0
+            
+            # Busca o cargo no servidor
+            target_role = member.guild.get_role(highest_eligible_role['role_id'])
+            
+            if not target_role:
+                logger.warning(f"⚠️ Cargo {highest_eligible_role['role_id']} não encontrado no servidor")
+                return 0
+            
+            # Verifica se o membro já tem este cargo
+            if target_role in member.roles:
+                return 0  # Já tem o cargo correto
+            
+            # Remove TODOS os cargos automáticos antigos
+            roles_to_remove = []
+            for config in auto_roles:
+                role = member.guild.get_role(config['role_id'])
+                if role and role in member.roles and role != target_role:
+                    roles_to_remove.append(role)
+            
+            # Remove cargos antigos
+            if roles_to_remove:
+                await member.remove_roles(*roles_to_remove, reason="Progressão de patente")
+                removed_names = [r.name for r in roles_to_remove]
+                logger.info(f"🔽 Removidos cargos de {member.name}: {', '.join(removed_names)}")
+            
+            # Atribui o novo cargo
+            await member.add_roles(target_role, reason=f"Tempo no servidor: {days_in_server} dias")
+            logger.info(f"✅ Cargo {target_role.name} atribuído a {member.name} ({days_in_server} dias)")
             
             # Atualiza última verificação
-            await self.db.update_member_last_checked(guild.id, member.id)
+            await self.db.update_member_last_checked(member.guild.id, member.id)
             
-            return roles_assigned
+            return 1
             
+        except discord.Forbidden:
+            logger.error(f"❌ Sem permissão para gerenciar cargos de {member.name}")
+            return 0
         except Exception as e:
             logger.error(f"❌ Erro ao verificar cargos para {member.name}: {e}")
             return 0
@@ -140,17 +161,19 @@ class RoleManager:
             guild: Servidor do Discord
             
         Returns:
-            Total de cargos atribuídos
+            Total de mudanças de cargo realizadas
         """
         try:
             total_assigned = 0
             
             for member in guild.members:
                 if not member.bot:  # Ignora bots
-                    assigned = await self.check_and_assign_roles(guild, member)
+                    assigned = await self.check_and_assign_roles(member)
                     total_assigned += assigned
             
-            logger.info(f"✅ Verificação completa: {total_assigned} cargos atribuídos em {guild.name}")
+            if total_assigned > 0:
+                logger.info(f"✅ Verificação completa: {total_assigned} mudança(s) de cargo em {guild.name}")
+            
             return total_assigned
             
         except Exception as e:
