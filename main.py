@@ -1,4 +1,4 @@
-# main.py - BOT HÍBRIDO: MODERAÇÃO COM IA + ESTATÍSTICAS
+# main.py - BOT HÍBRIDO: MODERAÇÃO COM IA + ESTATÍSTICAS + CARGOS + SORTEIOS + JOGOS
 
 # --- 1. Importações ---
 import discord
@@ -15,6 +15,14 @@ from threading import Thread
 from database import Database
 from stats_collector import StatsCollector
 from commands.stats_commands import StatsCommands
+
+# Importações dos novos sistemas
+from utils.role_manager import RoleManager
+from utils.giveaway_manager import GiveawayManager
+from utils.activity_tracker import ActivityTracker
+from commands.role_commands import RoleCommands
+from commands.giveaway_commands import GiveawayCommands
+from commands.games_commands import GamesCommands
 
 # --- 2. Configuração Inicial e Constantes ---
 load_dotenv()
@@ -63,6 +71,7 @@ intents.messages = True
 intents.message_content = True
 intents.voice_states = True  # Necessário para estatísticas de voz
 intents.members = True  # Necessário para informações de membros
+intents.presences = True  # Necessário para rastrear jogos/atividades
 
 # Usa CommandTree para suportar slash commands
 class MyClient(discord.Client):
@@ -77,9 +86,12 @@ class MyClient(discord.Client):
 
 client = MyClient(intents=intents)
 
-# Inicializa sistema de estatísticas (será conectado no on_ready)
+# Inicializa sistemas (serão conectados no on_ready)
 db = None
 stats_collector = None
+role_manager = None
+giveaway_manager = None
+activity_tracker = None
 
 
 # --- 4. Função de Análise com IA (Versão em Lote) ---
@@ -89,9 +101,9 @@ async def analisar_lote_com_ia(lista_de_mensagens):
         return []
 
     try:
-        prompt_para_ia = "Analise cada uma das seguintes mensagens de um chat, numeradas de 1 a N. Determine se alguma delas contém linguagem ofensiva, assédio ou discurso de ódio. Responda com o veredito para cada mensagem no formato '1:VEREDITO, 2:VEREDITO, ...'. Use 'SIM' para ofensiva e 'NÃO' para não ofensiva.\n\n"
+        prompt_para_ia = "Analise cada uma das seguintes mensagens de um chat, numeradas de 1 a N. Determine se alguma delas contém linguagem ofensiva, assédio ou discurso de ódio. Responda com o veredito para cada mensagem no formato '1:VEREDITO, 2:VEREDITO, ...'. Use 'SIM' para ofensiva e 'NÃO' para não ofensiva.\\n\\n"
         for i, msg in enumerate(lista_de_mensagens, 1):
-            prompt_para_ia += f"{i}: \"{msg.content}\"\n"
+            prompt_para_ia += f"{i}: \"{msg.content}\"\\n"
 
         response = await model.generate_content_async(prompt_para_ia)
         vereditos_texto = response.text.strip().upper()
@@ -111,42 +123,62 @@ async def analisar_lote_com_ia(lista_de_mensagens):
         return resultados_finais
 
     except Exception as e:
-        print("\n!!! OCORREU UM ERRO NA ANÁLISE EM LOTE !!!")
+        print("\\n!!! OCORREU UM ERRO NA ANÁLISE EM LOTE !!!")
         traceback.print_exc()
-        print("-----------------------------------------\n")
+        print("-----------------------------------------\\n")
         return ["NÃO"] * len(lista_de_mensagens)
 
 
 # --- 5. Eventos do Bot ---
 @client.event
 async def on_ready():
-    global db, stats_collector
+    global db, stats_collector, role_manager, giveaway_manager, activity_tracker
     
     print(f'🤖 Bot conectado como {client.user}!')
     print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
     
-    # Inicializa banco de dados e estatísticas
+    # Inicializa banco de dados e sistemas
     if DATABASE_URL:
         try:
             db = Database(DATABASE_URL)
             await db.connect()
             stats_collector = StatsCollector(db)
             
-            # Registra comandos de estatísticas
+            # Inicializa novos gerenciadores
+            role_manager = RoleManager(db)
+            giveaway_manager = GiveawayManager(db)
+            activity_tracker = ActivityTracker(db)
+            
+            # Registra comandos
             client.tree.add_command(StatsCommands(db))
+            client.tree.add_command(RoleCommands(db, role_manager))
+            client.tree.add_command(GiveawayCommands(db, giveaway_manager))
+            client.tree.add_command(GamesCommands(db))
+            
             await client.tree.sync()
             
             print('📊 Sistema de estatísticas ativado!')
+            print('🏅 Sistema de cargos automáticos ativado!')
+            print('🎉 Sistema de sorteios ativado!')
+            print('🎮 Sistema de rastreamento de jogos ativado!')
+            
+            # Sincroniza membros existentes em todos os servidores
+            for guild in client.guilds:
+                await role_manager.sync_existing_members(guild)
+                logger.info(f'✅ Membros sincronizados em {guild.name}')
+            
         except Exception as e:
-            logger.error(f'❌ Erro ao inicializar estatísticas: {e}')
+            logger.error(f'❌ Erro ao inicializar sistemas: {e}')
             logger.warning('⚠️  Bot continuará apenas com moderação')
     else:
-        logger.warning('⚠️  DATABASE_URL não configurada. Estatísticas desativadas.')
+        logger.warning('⚠️  DATABASE_URL não configurada. Funcionalidades extras desativadas.')
     
     print('✅ Bot totalmente inicializado!')
     print('------')
     client.loop.create_task(processador_em_lote())
     client.loop.create_task(collect_server_stats())
+    client.loop.create_task(check_roles_periodically())
+    client.loop.create_task(check_expired_giveaways())
 
 
 @client.event
@@ -161,6 +193,60 @@ async def on_message(message):
     # Coleta estatísticas (se ativado)
     if stats_collector:
         await stats_collector.on_message(message)
+
+
+@client.event
+async def on_member_join(member):
+    """Registra entrada de novo membro para sistema de cargos."""
+    if role_manager:
+        await role_manager.register_member_join(member)
+
+
+@client.event
+async def on_raw_reaction_add(payload):
+    """Handler para reações adicionadas (sorteios)."""
+    if giveaway_manager and not payload.member.bot:
+        try:
+            channel = client.get_channel(payload.channel_id)
+            if channel:
+                message = await channel.fetch_message(payload.message_id)
+                reaction = discord.utils.get(message.reactions, emoji=payload.emoji.name)
+                if reaction:
+                    await giveaway_manager.on_reaction_add(reaction, payload.member)
+        except Exception as e:
+            logger.error(f"❌ Erro ao processar reação: {e}")
+
+
+@client.event
+async def on_raw_reaction_remove(payload):
+    """Handler para reações removidas (sorteios)."""
+    if giveaway_manager:
+        try:
+            channel = client.get_channel(payload.channel_id)
+            guild = client.get_guild(payload.guild_id)
+            if channel and guild:
+                message = await channel.fetch_message(payload.message_id)
+                user = await guild.fetch_member(payload.user_id)
+                if not user.bot:
+                    reaction = discord.utils.get(message.reactions, emoji=payload.emoji.name)
+                    if reaction:
+                        await giveaway_manager.on_reaction_remove(reaction, user)
+        except Exception as e:
+            logger.error(f"❌ Erro ao processar remoção de reação: {e}")
+
+
+@client.event
+async def on_presence_update(before, after):
+    """Rastreia mudanças de atividade/jogos."""
+    if activity_tracker:
+        await activity_tracker.on_presence_update(before, after)
+
+
+@client.event
+async def on_voice_state_update(member, before, after):
+    """Rastreia atividade de voz para estatísticas."""
+    if stats_collector:
+        await stats_collector.on_voice_state_update(member, before, after)
 
 
 # --- NOVO: O Processador em Lote ---
@@ -206,12 +292,38 @@ async def collect_server_stats():
         await asyncio.sleep(3600)
 
 
-# --- 6. Novo Evento: Rastreamento de Voz ---
-@client.event
-async def on_voice_state_update(member, before, after):
-    """Rastreia atividade de voz para estatísticas."""
-    if stats_collector:
-        await stats_collector.on_voice_state_update(member, before, after)
+async def check_roles_periodically():
+    """Verifica e atribui cargos automáticos periodicamente."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            if role_manager:
+                for guild in client.guilds:
+                    assigned = await role_manager.check_all_members(guild)
+                    if assigned > 0:
+                        logger.info(f"🏅 {assigned} cargos atribuídos em {guild.name}")
+        except Exception as e:
+            logger.error(f"❌ Erro ao verificar cargos: {e}")
+        
+        # Verifica a cada 1 hora
+        await asyncio.sleep(3600)
+
+
+async def check_expired_giveaways():
+    """Verifica e finaliza sorteios expirados."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            if giveaway_manager and db:
+                expired = await db.get_expired_giveaways()
+                for giveaway in expired:
+                    await giveaway_manager.end_giveaway(giveaway['giveaway_id'], client)
+                    logger.info(f"🎉 Sorteio finalizado automaticamente: {giveaway['prize']}")
+        except Exception as e:
+            logger.error(f"❌ Erro ao verificar sorteios expirados: {e}")
+        
+        # Verifica a cada 30 segundos
+        await asyncio.sleep(30)
 
 
 # --- 7. Inicialização do Bot E DO SERVIDOR WEB ---
