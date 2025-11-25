@@ -90,6 +90,12 @@ class RoleManager:
                 # Se não tiver registro, registra agora
                 await self.register_member_join(member)
                 join_date = member.joined_at if member.joined_at else datetime.now(timezone.utc)
+
+            # --- CORREÇÃO DE BLINDAGEM AQUI ---
+            # Se a data veio do banco sem timezone (offset-naive), forçamos UTC
+            if join_date.tzinfo is None:
+                join_date = join_date.replace(tzinfo=timezone.utc)
+            # ----------------------------------
             
             # Calcula dias no servidor (ambos são timezone-aware agora)
             days_in_server = (datetime.now(timezone.utc) - join_date).days
