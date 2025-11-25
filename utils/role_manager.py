@@ -2,7 +2,7 @@
 
 import discord
 from database import Database
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Optional
 
@@ -29,8 +29,9 @@ class RoleManager:
             member: Membro que entrou no servidor
         """
         try:
-            # Usa a data de entrada do Discord
-            joined_at = member.joined_at if member.joined_at else datetime.now()
+            # Usa a data de entrada do Discord (já vem com timezone)
+            # Se não tiver, usa datetime.now() com timezone UTC
+            joined_at = member.joined_at if member.joined_at else datetime.now(timezone.utc)
             
             await self.db.upsert_member_join(
                 guild_id=member.guild.id,
@@ -55,7 +56,8 @@ class RoleManager:
             count = 0
             for member in guild.members:
                 if not member.bot:  # Ignora bots
-                    joined_at = member.joined_at if member.joined_at else datetime.now()
+                    # member.joined_at já vem com timezone do Discord
+                    joined_at = member.joined_at if member.joined_at else datetime.now(timezone.utc)
                     await self.db.upsert_member_join(
                         guild_id=guild.id,
                         user_id=member.id,
@@ -92,10 +94,10 @@ class RoleManager:
             if not join_date:
                 # Se não tiver registro, registra agora
                 await self.register_member_join(member)
-                join_date = member.joined_at if member.joined_at else datetime.now()
+                join_date = member.joined_at if member.joined_at else datetime.now(timezone.utc)
             
-            # Calcula dias no servidor
-            days_in_server = (datetime.now() - join_date).days
+            # Calcula dias no servidor (ambos são timezone-aware agora)
+            days_in_server = (datetime.now(timezone.utc) - join_date).days
             
             roles_assigned = 0
             
@@ -160,9 +162,9 @@ class RoleManager:
         Calcula quantos dias um membro está no servidor.
         
         Args:
-            join_date: Data de entrada do membro
+            join_date: Data de entrada do membro (timezone-aware)
             
         Returns:
             Número de dias no servidor
         """
-        return (datetime.now() - join_date).days
+        return (datetime.now(timezone.utc) - join_date).days
