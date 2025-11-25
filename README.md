@@ -1,6 +1,6 @@
-# 🤖 BMIA - Bot Híbrido para Discord: Moderação com IA + Estatísticas
+# 🤖 BMIA - Bot Híbrido para Discord: Moderação com IA + Estatísticas + Cargos + Sorteios + Jogos
 
-Bot híbrido para Discord que combina **moderação automática com IA** e **sistema completo de estatísticas**. Utiliza Google Gemini para análise de mensagens e PostgreSQL (Supabase) para rastreamento de atividades.
+Bot completo para Discord que combina **moderação automática com IA**, **sistema de estatísticas**, **cargos automáticos por tempo**, **sorteios** e **rastreamento de jogos**. Utiliza Google Gemini para análise de mensagens e PostgreSQL (Supabase) para armazenamento de dados.
 
 ## ✨ Funcionalidades
 
@@ -16,6 +16,26 @@ Bot híbrido para Discord que combina **moderação automática com IA** e **sis
 - Estatísticas do servidor, usuários e canais
 - Rankings de usuários mais ativos
 - Dados armazenados em PostgreSQL (Supabase)
+
+### 🏅 Cargos Automáticos por Tempo
+- Atribuição automática de cargos baseada no tempo no servidor
+- Sistema de patentes configurável (Recruta → General)
+- Verificação periódica e atribuição automática
+- Comandos para gerenciar e visualizar configurações
+
+### 🎉 Sistema de Sorteios (Giveaways)
+- Criação de sorteios com duração personalizável
+- Participação via reação 🎉
+- Seleção automática de vencedores
+- Comandos para gerenciar, finalizar e re-sortear
+- Verificação automática de sorteios expirados
+
+### 🎮 Rastreamento de Jogos e Atividades
+- Monitoramento automático de jogos jogados
+- Estatísticas de tempo jogado por jogo
+- Retrospectiva anual de jogos mais populares
+- Rankings de jogos mais jogados no servidor
+- Estatísticas individuais por usuário
 
 ## 🔧 Tecnologias
 
@@ -81,7 +101,37 @@ DATABASE_URL=postgresql://postgres:senha@db.xxxxx.supabase.co:5432/postgres
 
 O bot criará as tabelas automaticamente na primeira execução!
 
-### 5. Execute o Bot
+### 5. Configure Permissões do Bot no Discord
+
+1. Acesse o [Discord Developer Portal](https://discord.com/developers/applications)
+2. Selecione seu bot
+3. Vá em **Bot** → **Privileged Gateway Intents**
+4. Ative os seguintes intents:
+   - ✅ **Presence Intent** (para rastrear jogos)
+   - ✅ **Server Members Intent** (para informações de membros)
+   - ✅ **Message Content Intent** (para moderação)
+
+### 6. Configure Cargos Automáticos (Opcional)
+
+Após criar os cargos manualmente no Discord:
+
+```bash
+python setup_roles.py
+```
+
+Siga as instruções para configurar as patentes automaticamente.
+
+**Patentes padrão:**
+- Recruta: 0-7 dias
+- Soldado: 7-28 dias
+- Sargento: 28-91 dias
+- Tenente: 91-182 dias
+- Capitão: 182-365 dias
+- Major: 365-730 dias
+- Coronel: 730-1095 dias
+- General: 1095+ dias
+
+### 7. Execute o Bot
 
 ```bash
 python main.py
@@ -99,9 +149,41 @@ python main.py
 | `/stats top [limit] [days]` | Ranking de usuários mais ativos | Todos |
 | `/stats channels [limit] [days]` | Canais mais ativos | Todos |
 
+### Comandos de Cargos Automáticos (`/autorole`)
+
+| Comando | Descrição | Permissão |
+|---------|-----------|-----------|
+| `/autorole add <cargo> <dias>` | Adiciona cargo automático | Gerenciar Cargos |
+| `/autorole remove <cargo>` | Remove cargo automático | Gerenciar Cargos |
+| `/autorole list` | Lista cargos configurados | Todos |
+| `/autorole check [@membro]` | Verifica status de um membro | Todos |
+| `/autorole sync` | Sincroniza membros existentes | Administrador |
+
+### Comandos de Sorteios (`/giveaway`)
+
+| Comando | Descrição | Permissão |
+|---------|-----------|-----------|
+| `/giveaway create <premio> <duracao> [vencedores]` | Cria novo sorteio | Gerenciar Servidor |
+| `/giveaway end <message_id>` | Finaliza sorteio manualmente | Gerenciar Servidor |
+| `/giveaway reroll <message_id> [quantidade]` | Sorteia novos vencedores | Gerenciar Servidor |
+| `/giveaway list` | Lista sorteios ativos | Todos |
+| `/giveaway delete <message_id>` | Cancela e deleta sorteio | Gerenciar Servidor |
+
+**Formato de duração:** `1h` (horas), `30m` (minutos), `2d` (dias), `1w` (semanas)
+
+### Comandos de Jogos (`/games`)
+
+| Comando | Descrição | Permissão |
+|---------|-----------|-----------|
+| `/games top [limit] [days]` | Jogos mais jogados no servidor | Todos |
+| `/games user [@usuario] [days]` | Jogos de um usuário específico | Todos |
+| `/games yearly [year]` | Retrospectiva anual de jogos | Todos |
+| `/games stats` | Estatísticas gerais de atividades | Todos |
+
 **Parâmetros opcionais:**
 - `days`: Período em dias (padrão: 30)
 - `limit`: Quantidade de resultados (padrão: 10, máx: 25)
+- `year`: Ano para retrospectiva (padrão: ano atual)
 
 ## 🚀 Deploy (ShardCloud/Render)
 

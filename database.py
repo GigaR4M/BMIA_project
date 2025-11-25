@@ -115,6 +115,71 @@ class Database:
                 )
             """)
             
+            # Tabela de datas de entrada de membros
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS member_join_dates (
+                    guild_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    joined_at TIMESTAMP NOT NULL,
+                    last_checked TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (guild_id, user_id)
+                )
+            """)
+            
+            # Tabela de configuração de cargos automáticos
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS auto_role_config (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    role_id BIGINT NOT NULL,
+                    days_required INTEGER NOT NULL,
+                    enabled BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(guild_id, role_id)
+                )
+            """)
+            
+            # Tabela de sorteios
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS giveaways (
+                    giveaway_id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    channel_id BIGINT NOT NULL,
+                    message_id BIGINT UNIQUE,
+                    prize TEXT NOT NULL,
+                    winner_count INTEGER DEFAULT 1,
+                    host_user_id BIGINT NOT NULL,
+                    ends_at TIMESTAMP NOT NULL,
+                    ended BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            
+            # Tabela de participantes de sorteios
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS giveaway_entries (
+                    giveaway_id INTEGER NOT NULL REFERENCES giveaways(giveaway_id) ON DELETE CASCADE,
+                    user_id BIGINT NOT NULL,
+                    entered_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (giveaway_id, user_id)
+                )
+            """)
+            
+            # Tabela de atividades de usuários (jogos/presença)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_activities (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(user_id),
+                    guild_id BIGINT NOT NULL,
+                    activity_name TEXT NOT NULL,
+                    activity_type TEXT,
+                    started_at TIMESTAMP NOT NULL,
+                    ended_at TIMESTAMP,
+                    duration_seconds INTEGER
+                )
+            """)
+
+            
             # Índices para melhor performance
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id)")
@@ -123,6 +188,17 @@ class Database:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_voice_user ON voice_activity(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_voice_guild ON voice_activity(guild_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_stats_guild_date ON daily_stats(guild_id, date)")
+            
+            # Índices para novas tabelas
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_member_join_guild ON member_join_dates(guild_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_auto_role_guild ON auto_role_config(guild_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_giveaways_guild ON giveaways(guild_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_giveaways_ended ON giveaways(ended, ends_at)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_user ON user_activities(user_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_guild ON user_activities(guild_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_name ON user_activities(activity_name)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_started ON user_activities(started_at)")
+
             
             logger.info("✅ Schema do banco de dados inicializado")
     
@@ -339,5 +415,270 @@ class Database:
                 GROUP BY hour
                 ORDER BY hour
             """, guild_id, cutoff_date)
+            
+            return [dict(row) for row in rows]
+    
+    # ==================== MEMBER JOIN TRACKING ====================
+    
+    async def upsert_member_join(self, guild_id: int, user_id: int, joined_at: datetime):
+        """Registra ou atualiza a data de entrada de um membro."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO member_join_dates (guild_id, user_id, joined_at)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, user_id)
+                DO UPDATE SET joined_at = EXCLUDED.joined_at
+            """, guild_id, user_id, joined_at)
+    
+    async def get_member_join_date(self, guild_id: int, user_id: int) -> Optional[datetime]:
+        """Retorna a data de entrada de um membro."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("""
+                SELECT joined_at FROM member_join_dates
+                WHERE guild_id = $1 AND user_id = $2
+            """, guild_id, user_id)
+    
+    async def update_member_last_checked(self, guild_id: int, user_id: int):
+        """Atualiza a última vez que verificamos os cargos de um membro."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE member_join_dates
+                SET last_checked = NOW()
+                WHERE guild_id = $1 AND user_id = $2
+            """, guild_id, user_id)
+    
+    # ==================== AUTO ROLE CONFIG ====================
+    
+    async def add_auto_role(self, guild_id: int, role_id: int, days_required: int):
+        """Adiciona uma configuração de cargo automático."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO auto_role_config (guild_id, role_id, days_required)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (guild_id, role_id)
+                DO UPDATE SET days_required = EXCLUDED.days_required, enabled = TRUE
+            """, guild_id, role_id, days_required)
+    
+    async def remove_auto_role(self, guild_id: int, role_id: int):
+        """Remove uma configuração de cargo automático."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                DELETE FROM auto_role_config
+                WHERE guild_id = $1 AND role_id = $2
+            """, guild_id, role_id)
+    
+    async def get_auto_roles(self, guild_id: int) -> List[Dict[str, Any]]:
+        """Retorna todas as configurações de cargos automáticos de um servidor."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT role_id, days_required, enabled
+                FROM auto_role_config
+                WHERE guild_id = $1 AND enabled = TRUE
+                ORDER BY days_required ASC
+            """, guild_id)
+            return [dict(row) for row in rows]
+    
+    async def get_members_needing_roles(self, guild_id: int) -> List[Dict[str, Any]]:
+        """Retorna membros que precisam ter cargos verificados."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT user_id, joined_at,
+                       EXTRACT(EPOCH FROM (NOW() - joined_at))::INTEGER / 86400 as days_in_server
+                FROM member_join_dates
+                WHERE guild_id = $1
+            """, guild_id)
+            return [dict(row) for row in rows]
+    
+    # ==================== GIVEAWAYS ====================
+    
+    async def create_giveaway(self, guild_id: int, channel_id: int, message_id: int,
+                             prize: str, winner_count: int, host_user_id: int,
+                             ends_at: datetime) -> int:
+        """Cria um novo sorteio e retorna seu ID."""
+        async with self.pool.acquire() as conn:
+            giveaway_id = await conn.fetchval("""
+                INSERT INTO giveaways (guild_id, channel_id, message_id, prize, 
+                                      winner_count, host_user_id, ends_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING giveaway_id
+            """, guild_id, channel_id, message_id, prize, winner_count, host_user_id, ends_at)
+            return giveaway_id
+    
+    async def end_giveaway(self, giveaway_id: int):
+        """Marca um sorteio como finalizado."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE giveaways
+                SET ended = TRUE
+                WHERE giveaway_id = $1
+            """, giveaway_id)
+    
+    async def get_giveaway(self, giveaway_id: int) -> Optional[Dict[str, Any]]:
+        """Retorna informações de um sorteio."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT * FROM giveaways
+                WHERE giveaway_id = $1
+            """, giveaway_id)
+            return dict(row) if row else None
+    
+    async def get_giveaway_by_message(self, message_id: int) -> Optional[Dict[str, Any]]:
+        """Retorna um sorteio pelo ID da mensagem."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT * FROM giveaways
+                WHERE message_id = $1
+            """, message_id)
+            return dict(row) if row else None
+    
+    async def get_active_giveaways(self, guild_id: int) -> List[Dict[str, Any]]:
+        """Retorna todos os sorteios ativos de um servidor."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM giveaways
+                WHERE guild_id = $1 AND ended = FALSE
+                ORDER BY ends_at ASC
+            """, guild_id)
+            return [dict(row) for row in rows]
+    
+    async def get_expired_giveaways(self) -> List[Dict[str, Any]]:
+        """Retorna sorteios que expiraram mas ainda não foram finalizados."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM giveaways
+                WHERE ended = FALSE AND ends_at <= NOW()
+            """)
+            return [dict(row) for row in rows]
+    
+    async def delete_giveaway(self, giveaway_id: int):
+        """Deleta um sorteio (cascade deleta participantes também)."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                DELETE FROM giveaways
+                WHERE giveaway_id = $1
+            """, giveaway_id)
+    
+    async def add_giveaway_entry(self, giveaway_id: int, user_id: int):
+        """Adiciona um participante a um sorteio."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO giveaway_entries (giveaway_id, user_id)
+                VALUES ($1, $2)
+                ON CONFLICT (giveaway_id, user_id) DO NOTHING
+            """, giveaway_id, user_id)
+    
+    async def remove_giveaway_entry(self, giveaway_id: int, user_id: int):
+        """Remove um participante de um sorteio."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                DELETE FROM giveaway_entries
+                WHERE giveaway_id = $1 AND user_id = $2
+            """, giveaway_id, user_id)
+    
+    async def get_giveaway_entries(self, giveaway_id: int) -> List[int]:
+        """Retorna lista de user_ids dos participantes de um sorteio."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT user_id FROM giveaway_entries
+                WHERE giveaway_id = $1
+            """, giveaway_id)
+            return [row['user_id'] for row in rows]
+    
+    async def get_giveaway_entry_count(self, giveaway_id: int) -> int:
+        """Retorna o número de participantes de um sorteio."""
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval("""
+                SELECT COUNT(*) FROM giveaway_entries
+                WHERE giveaway_id = $1
+            """, giveaway_id)
+    
+    # ==================== USER ACTIVITIES ====================
+    
+    async def start_activity(self, user_id: int, guild_id: int, activity_name: str, 
+                            activity_type: str) -> int:
+        """Registra início de uma atividade e retorna seu ID."""
+        async with self.pool.acquire() as conn:
+            activity_id = await conn.fetchval("""
+                INSERT INTO user_activities (user_id, guild_id, activity_name, 
+                                            activity_type, started_at)
+                VALUES ($1, $2, $3, $4, NOW())
+                RETURNING id
+            """, user_id, guild_id, activity_name, activity_type)
+            return activity_id
+    
+    async def end_activity(self, activity_id: int):
+        """Finaliza uma atividade."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE user_activities
+                SET ended_at = NOW(),
+                    duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INTEGER
+                WHERE id = $1 AND ended_at IS NULL
+            """, activity_id)
+    
+    async def get_top_activities(self, guild_id: int, limit: int = 10, 
+                                days: int = 30) -> List[Dict[str, Any]]:
+        """Retorna as atividades/jogos mais populares."""
+        async with self.pool.acquire() as conn:
+            cutoff_date = datetime.now() - timedelta(days=days)
+            
+            rows = await conn.fetch("""
+                SELECT 
+                    activity_name,
+                    COUNT(DISTINCT user_id) as unique_users,
+                    COUNT(*) as session_count,
+                    SUM(duration_seconds) as total_seconds,
+                    AVG(duration_seconds) as avg_seconds
+                FROM user_activities
+                WHERE guild_id = $1 
+                  AND started_at >= $2
+                  AND duration_seconds IS NOT NULL
+                GROUP BY activity_name
+                ORDER BY total_seconds DESC
+                LIMIT $3
+            """, guild_id, cutoff_date, limit)
+            
+            return [dict(row) for row in rows]
+    
+    async def get_user_activities(self, user_id: int, guild_id: int, 
+                                 days: int = 30) -> List[Dict[str, Any]]:
+        """Retorna as atividades de um usuário específico."""
+        async with self.pool.acquire() as conn:
+            cutoff_date = datetime.now() - timedelta(days=days)
+            
+            rows = await conn.fetch("""
+                SELECT 
+                    activity_name,
+                    COUNT(*) as session_count,
+                    SUM(duration_seconds) as total_seconds,
+                    AVG(duration_seconds) as avg_seconds
+                FROM user_activities
+                WHERE user_id = $1 
+                  AND guild_id = $2
+                  AND started_at >= $3
+                  AND duration_seconds IS NOT NULL
+                GROUP BY activity_name
+                ORDER BY total_seconds DESC
+            """, user_id, guild_id, cutoff_date)
+            
+            return [dict(row) for row in rows]
+    
+    async def get_yearly_activities(self, guild_id: int, year: int) -> List[Dict[str, Any]]:
+        """Retorna retrospectiva anual de atividades."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT 
+                    activity_name,
+                    COUNT(DISTINCT user_id) as unique_users,
+                    COUNT(*) as session_count,
+                    SUM(duration_seconds) as total_seconds,
+                    EXTRACT(MONTH FROM started_at)::INTEGER as month
+                FROM user_activities
+                WHERE guild_id = $1 
+                  AND EXTRACT(YEAR FROM started_at) = $2
+                  AND duration_seconds IS NOT NULL
+                GROUP BY activity_name, month
+                ORDER BY total_seconds DESC
+            """, guild_id, year)
             
             return [dict(row) for row in rows]
