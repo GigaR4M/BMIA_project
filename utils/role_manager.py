@@ -67,30 +67,26 @@ class RoleManager:
             logger.error(f"❌ Erro ao sincronizar membros: {e}")
     
     async def check_and_assign_roles(self, member: discord.Member) -> int:
-        """Verifica e atribui cargos automáticos."""
+        """Verifica e atribui cargos automáticos (Versão com Limpeza Forçada)."""
         try:
-            # Busca data de entrada
+            # --- 1. Preparar Datas (com a correção de timezone) ---
             join_date = await self.db.get_member_join_date(member.guild.id, member.id)
             
             if not join_date:
                 await self.register_member_join(member)
-                # Pega a data atual já em UTC Naive para o cálculo abaixo
                 join_date = datetime.now(timezone.utc).replace(tzinfo=None)
             
-            # CORREÇÃO 3: Lidar com a leitura do Banco
-            # Se a data do banco vier Naive (sem fuso), adicionamos UTC para fazer contas
             if join_date.tzinfo is None:
                 join_date = join_date.replace(tzinfo=timezone.utc)
 
-            # Agora podemos subtrair com segurança (Aware - Aware)
             days_in_server = (datetime.now(timezone.utc) - join_date).days
             
-            # --- Resto da lógica original (sem alterações) ---
+            # --- 2. Encontrar o Cargo Alvo ---
             auto_roles = await self.db.get_auto_roles(member.guild.id)
-            
             if not auto_roles:
                 return 0
             
+            # Ordena do maior para o menor
             auto_roles.sort(key=lambda x: x['days_required'], reverse=True)
             
             highest_eligible_role = None
@@ -103,29 +99,36 @@ class RoleManager:
                 return 0
             
             target_role = member.guild.get_role(highest_eligible_role['role_id'])
-            
             if not target_role:
                 logger.warning(f"⚠️ Cargo {highest_eligible_role['role_id']} não encontrado")
                 return 0
             
-            if target_role in member.roles:
-                return 0
-            
+            changes_made = False
+
+            # --- 3. LIMPEZA: Remover cargos antigos (AQUI ESTAVA O PROBLEMA) ---
+            # Removemos o "return 0" prematuro. Agora ele verifica a limpeza sempre.
             roles_to_remove = []
             for config in auto_roles:
                 role = member.guild.get_role(config['role_id'])
-                if role and role in member.roles and role != target_role:
+                # Se o membro tem o cargo, E não é o cargo alvo -> LIXO, REMOVER
+                if role and role in member.roles and role.id != target_role.id:
                     roles_to_remove.append(role)
             
             if roles_to_remove:
-                await member.remove_roles(*roles_to_remove, reason="Progressão de patente")
+                await member.remove_roles(*roles_to_remove, reason="Limpeza de patentes antigas")
+                removed_names = [r.name for r in roles_to_remove]
+                logger.info(f"🔽 Removidos cargos excedentes de {member.name}: {', '.join(removed_names)}")
+                changes_made = True
             
-            await member.add_roles(target_role, reason=f"Tempo no servidor: {days_in_server} dias")
-            logger.info(f"✅ Cargo {target_role.name} atribuído a {member.name} ({days_in_server} dias)")
+            # --- 4. ATRIBUIÇÃO: Dar o cargo novo (se faltar) ---
+            if target_role not in member.roles:
+                await member.add_roles(target_role, reason=f"Tempo no servidor: {days_in_server} dias")
+                logger.info(f"✅ Cargo {target_role.name} atribuído a {member.name} ({days_in_server} dias)")
+                changes_made = True
             
             await self.db.update_member_last_checked(member.guild.id, member.id)
             
-            return 1
+            return 1 if changes_made else 0
             
         except discord.Forbidden:
             logger.error(f"❌ Sem permissão para gerenciar cargos de {member.name}")
