@@ -151,9 +151,16 @@ class Database:
                     host_user_id BIGINT NOT NULL,
                     ends_at TIMESTAMP NOT NULL,
                     ended BOOLEAN DEFAULT FALSE,
+                    image_url TEXT,
                     created_at TIMESTAMP DEFAULT NOW()
                 )
             """)
+            
+            # Adiciona coluna image_url se não existir (migração manual)
+            try:
+                await conn.execute("ALTER TABLE giveaways ADD COLUMN IF NOT EXISTS image_url TEXT")
+            except Exception as e:
+                logger.warning(f"⚠️ Erro ao tentar adicionar coluna image_url: {e}")
             
             # Tabela de participantes de sorteios
             await conn.execute("""
@@ -266,9 +273,10 @@ class Database:
         """Atualiza a contagem de membros do dia."""
         async with self.pool.acquire() as conn:
             try:
+                # Use Brazil timezone (America/Sao_Paulo) instead of server timezone
                 result = await conn.execute("""
                     INSERT INTO daily_stats (guild_id, date, server_member_count)
-                    VALUES ($1, CURRENT_DATE, $2)
+                    VALUES ($1, (NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE, $2)
                     ON CONFLICT (guild_id, date)
                     DO UPDATE SET server_member_count = EXCLUDED.server_member_count
                 """, guild_id, member_count)
@@ -493,15 +501,15 @@ class Database:
     
     async def create_giveaway(self, guild_id: int, channel_id: int, message_id: int,
                              prize: str, winner_count: int, host_user_id: int,
-                             ends_at: datetime) -> int:
+                             ends_at: datetime, image_url: Optional[str] = None) -> int:
         """Cria um novo sorteio e retorna seu ID."""
         async with self.pool.acquire() as conn:
             giveaway_id = await conn.fetchval("""
                 INSERT INTO giveaways (guild_id, channel_id, message_id, prize, 
-                                      winner_count, host_user_id, ends_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                      winner_count, host_user_id, ends_at, image_url)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 RETURNING giveaway_id
-            """, guild_id, channel_id, message_id, prize, winner_count, host_user_id, ends_at)
+            """, guild_id, channel_id, message_id, prize, winner_count, host_user_id, ends_at, image_url)
             return giveaway_id
     
     async def end_giveaway(self, giveaway_id: int):
