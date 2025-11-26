@@ -82,7 +82,8 @@ class GiveawayManager:
         return ", ".join(parts) if parts else "menos de 1 minuto"
     
     def create_giveaway_embed(self, prize: str, ends_at: datetime, 
-                             host: discord.Member, entry_count: int = 0) -> discord.Embed:
+                             host: discord.Member, entry_count: int = 0,
+                             image_url: Optional[str] = None) -> discord.Embed:
         """
         Cria embed para mensagem de sorteio.
         
@@ -126,11 +127,14 @@ class GiveawayManager:
             icon_url=host.avatar.url if host.avatar else None
         )
         
+        if image_url:
+            embed.set_image(url=image_url)
+        
         return embed
     
     async def create_giveaway(self, channel: discord.TextChannel, prize: str,
                              duration: timedelta, winner_count: int,
-                             host: discord.Member) -> Optional[int]:
+                             host: discord.Member, image_url: Optional[str] = None) -> Optional[int]:
         """
         Cria um novo sorteio.
         
@@ -148,7 +152,7 @@ class GiveawayManager:
             ends_at = datetime.now() + duration
             
             # Cria embed
-            embed = self.create_giveaway_embed(prize, ends_at, host)
+            embed = self.create_giveaway_embed(prize, ends_at, host, image_url=image_url)
             
             # Envia mensagem
             message = await channel.send(embed=embed)
@@ -164,7 +168,8 @@ class GiveawayManager:
                 prize=prize,
                 winner_count=winner_count,
                 host_user_id=host.id,
-                ends_at=ends_at
+                ends_at=ends_at,
+                image_url=image_url
             )
             
             logger.info(f"✅ Sorteio criado: {prize} (ID: {giveaway_id})")
@@ -299,7 +304,8 @@ class GiveawayManager:
                 giveaway['prize'],
                 giveaway['ends_at'],
                 host,
-                entry_count
+                entry_count,
+                image_url=giveaway.get('image_url')
             )
             
             await reaction.message.edit(embed=embed)
@@ -343,7 +349,8 @@ class GiveawayManager:
                 giveaway['prize'],
                 giveaway['ends_at'],
                 host,
-                entry_count
+                entry_count,
+                image_url=giveaway.get('image_url')
             )
             
             await reaction.message.edit(embed=embed)

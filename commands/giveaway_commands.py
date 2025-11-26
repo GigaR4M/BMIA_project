@@ -22,11 +22,13 @@ class GiveawayCommands(app_commands.Group):
     @app_commands.describe(
         premio="O que será sorteado",
         duracao="Duração do sorteio (ex: 1h, 30m, 2d, 1w)",
-        vencedores="Número de vencedores (padrão: 1)"
+        vencedores="Número de vencedores (padrão: 1)",
+        imagem="Imagem opcional para o sorteio"
     )
     @app_commands.checks.has_permissions(manage_guild=True)
     async def create_giveaway(self, interaction: discord.Interaction, 
-                             premio: str, duracao: str, vencedores: int = 1):
+                             premio: str, duracao: str, vencedores: int = 1,
+                             imagem: discord.Attachment = None):
         """Cria um novo sorteio."""
         await interaction.response.defer()
         
@@ -50,12 +52,15 @@ class GiveawayCommands(app_commands.Group):
                 return
             
             # Cria sorteio
+            image_url = imagem.url if imagem else None
+            
             giveaway_id = await self.giveaway_manager.create_giveaway(
                 channel=interaction.channel,
                 prize=premio,
                 duration=duration_td,
                 winner_count=vencedores,
-                host=interaction.user
+                host=interaction.user,
+                image_url=image_url
             )
             
             if giveaway_id:
