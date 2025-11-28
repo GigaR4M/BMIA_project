@@ -690,3 +690,26 @@ class Database:
             """, guild_id, year)
             
             return [dict(row) for row in rows]
+
+    # ==================== EMBED REQUESTS ====================
+
+    async def get_pending_embeds(self) -> List[Dict[str, Any]]:
+        """Retorna solicitações de embed pendentes."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM embed_requests
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+            """)
+            return [dict(row) for row in rows]
+
+    async def update_embed_status(self, request_id: str, status: str, error_message: Optional[str] = None):
+        """Atualiza o status de uma solicitação de embed."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE embed_requests
+                SET status = $1,
+                    error_message = $2
+                WHERE id = $3
+            """, status, error_message, request_id)
+
