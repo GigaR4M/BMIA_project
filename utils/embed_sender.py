@@ -40,7 +40,8 @@ class EmbedSender:
 
             channel = guild.get_channel(channel_id)
             if not channel:
-                await self.db.update_embed_status(request_id, 'failed', 'Channel not found')
+                logger.error(f"DEBUG: Channel {channel_id} not found in guild {guild_id}. Available channels: {[c.id for c in guild.channels]}")
+                await self.db.update_embed_status(request_id, 'failed', f'Channel {channel_id} not found')
                 return
 
             # Construct Embed

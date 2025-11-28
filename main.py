@@ -127,19 +127,6 @@ async def analisar_lote_com_ia(lista_de_mensagens):
     except Exception as e:
         print("\\n!!! OCORREU UM ERRO NA ANÁLISE EM LOTE !!!")
         traceback.print_exc()
-        print("-----------------------------------------\\n")
-        return ["NÃO"] * len(lista_de_mensagens)
-
-
-# --- 5. Eventos do Bot ---
-@client.event
-async def on_ready():
-    global db, stats_collector, role_manager, giveaway_manager, activity_tracker
-    
-    print(f'🤖 Bot conectado como {client.user}!')
-    print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
-    
-    # Inicializa banco de dados e sistemas
     if DATABASE_URL:
         try:
             db = Database(DATABASE_URL)
