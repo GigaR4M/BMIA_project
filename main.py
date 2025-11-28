@@ -172,6 +172,15 @@ async def on_ready():
             for guild in client.guilds:
                 await role_manager.sync_existing_members(guild)
                 logger.info(f'✅ Membros sincronizados em {guild.name}')
+                
+                # Sincroniza canais
+                count = 0
+                for channel in guild.channels:
+                    if isinstance(channel, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
+                        channel_type = str(channel.type)
+                        await db.upsert_channel(channel.id, channel.name, channel_type, guild.id)
+                        count += 1
+                logger.info(f'✅ {count} canais sincronizados em {guild.name}')
             
         except Exception as e:
             logger.error(f'❌ Erro ao inicializar sistemas: {e}')
