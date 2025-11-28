@@ -22,7 +22,6 @@ from utils.giveaway_manager import GiveawayManager
 from utils.activity_tracker import ActivityTracker
 from commands.role_commands import RoleCommands
 from commands.giveaway_commands import GiveawayCommands
-from commands.giveaway_commands import GiveawayCommands
 from commands.games_commands import GamesCommands
 from utils.embed_sender import EmbedSender
 
@@ -93,7 +92,6 @@ db = None
 stats_collector = None
 role_manager = None
 giveaway_manager = None
-giveaway_manager = None
 activity_tracker = None
 embed_sender = None
 
@@ -151,7 +149,6 @@ async def on_ready():
             # Inicializa novos gerenciadores
             role_manager = RoleManager(db)
             giveaway_manager = GiveawayManager(db)
-            giveaway_manager = GiveawayManager(db)
             activity_tracker = ActivityTracker(db)
             embed_sender = EmbedSender(db)
             
@@ -191,187 +188,6 @@ async def on_ready():
     print('✅ Bot totalmente inicializado!')
     print('------')
     client.loop.create_task(processador_em_lote())
-    client.loop.create_task(collect_server_stats())
-    client.loop.create_task(check_roles_periodically())
-    client.loop.create_task(collect_server_stats())
-    client.loop.create_task(check_roles_periodically())
-    client.loop.create_task(check_expired_giveaways())
-    client.loop.create_task(check_embed_queue())
-
-
-@client.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    
-    # Adiciona ao buffer de moderação
-    buffer_mensagens.append(message)
-    print(f"Mensagem de {message.author} adicionada ao buffer (Tamanho atual: {len(buffer_mensagens)})")
-    
-    # Coleta estatísticas (se ativado)
-    if stats_collector:
-        await stats_collector.on_message(message)
-
-
-@client.event
-async def on_member_join(member):
-    """Registra entrada de novo membro para sistema de cargos."""
-    if role_manager:
-        await role_manager.register_member_join(member)
-
-
-@client.event
-async def on_raw_reaction_add(payload):
-    """Handler para reações adicionadas (sorteios)."""
-    if giveaway_manager and not payload.member.bot:
-        try:
-            channel = client.get_channel(payload.channel_id)
-            if channel:
-                message = await channel.fetch_message(payload.message_id)
-                reaction = discord.utils.get(message.reactions, emoji=payload.emoji.name)
-                if reaction:
-                    await giveaway_manager.on_reaction_add(reaction, payload.member)
-        except Exception as e:
-            logger.error(f"❌ Erro ao processar reação: {e}")
-
-
-@client.event
-async def on_raw_reaction_remove(payload):
-    """Handler para reações removidas (sorteios)."""
-    if giveaway_manager:
-        try:
-            channel = client.get_channel(payload.channel_id)
-            guild = client.get_guild(payload.guild_id)
-            if channel and guild:
-                message = await channel.fetch_message(payload.message_id)
-                user = await guild.fetch_member(payload.user_id)
-                if not user.bot:
-                    reaction = discord.utils.get(message.reactions, emoji=payload.emoji.name)
-                    if reaction:
-                        await giveaway_manager.on_reaction_remove(reaction, user)
-        except Exception as e:
-            logger.error(f"❌ Erro ao processar remoção de reação: {e}")
-
-
-@client.event
-async def on_presence_update(before, after):
-    """Rastreia mudanças de atividade/jogos."""
-    if activity_tracker:
-        await activity_tracker.on_presence_update(before, after)
-
-
-@client.event
-async def on_voice_state_update(member, before, after):
-    """Rastreia atividade de voz para estatísticas."""
-    if stats_collector:
-        await stats_collector.on_voice_state_update(member, before, after)
-
-
-# --- NOVO: O Processador em Lote ---
-async def processador_em_lote():
-    while True:
-        await asyncio.sleep(INTERVALO_ANALISE)
-        if buffer_mensagens:
-            mensagens_para_analisar = list(buffer_mensagens)
-            buffer_mensagens.clear()
-            vereditos = await analisar_lote_com_ia(mensagens_para_analisar)
-
-            for msg, veredito in zip(mensagens_para_analisar, vereditos):
-                if veredito == "SIM":
-                    print(f"Ofensa encontrada na mensagem de {msg.author}: '{msg.content}'. Removendo...")
-                    try:
-                        # Marca como moderada nas estatísticas ANTES de deletar
-                        if stats_collector:
-                            await stats_collector.mark_message_as_moderated(msg.id)
-                        
-                        await msg.delete()
-                        aviso = (
-                            f"Ei {msg.author.mention}, uma de suas mensagens recentes foi removida por violar as diretrizes da comunidade."
-                        )
-                        await msg.channel.send(aviso, delete_after=10)
-                    except Exception as e:
-                        print(f"Falha ao moderar mensagem de {msg.author}. Erro: {e}")
-
-
-async def collect_server_stats():
-    """Coleta estatísticas do servidor periodicamente."""
-    await client.wait_until_ready()
-    while not client.is_closed():
-        try:
-            if db:
-                for guild in client.guilds:
-                    # Atualiza contagem de membros
-                    await db.update_daily_member_count(guild.id, guild.member_count)
-                    logger.info(f"📊 Estatísticas atualizadas para {guild.name}: {guild.member_count} membros")
-        except Exception as e:
-            logger.error(f"❌ Erro ao coletar estatísticas do servidor: {e}")
-        
-        # Espera 1 hora antes da próxima atualização
-        await asyncio.sleep(3600)
-
-
-async def check_roles_periodically():
-    """Verifica e atribui cargos automáticos periodicamente."""
-    await client.wait_until_ready()
-    while not client.is_closed():
-        try:
-            if role_manager:
-                for guild in client.guilds:
-                    assigned = await role_manager.check_all_members(guild)
-                    if assigned > 0:
-                        logger.info(f"🏅 {assigned} cargos atribuídos em {guild.name}")
-        except Exception as e:
-            logger.error(f"❌ Erro ao verificar cargos: {e}")
-        
-        # Verifica a cada 1 hora
-    global db, stats_collector, role_manager, giveaway_manager, activity_tracker
-    
-    print(f'🤖 Bot conectado como {client.user}!')
-    print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
-    
-    # Inicializa banco de dados e sistemas
-    if DATABASE_URL:
-        try:
-            db = Database(DATABASE_URL)
-            await db.connect()
-            stats_collector = StatsCollector(db)
-            
-            # Inicializa novos gerenciadores
-            role_manager = RoleManager(db)
-            giveaway_manager = GiveawayManager(db)
-            giveaway_manager = GiveawayManager(db)
-            activity_tracker = ActivityTracker(db)
-            embed_sender = EmbedSender(db)
-            
-            # Registra comandos
-            client.tree.add_command(StatsCommands(db))
-            client.tree.add_command(RoleCommands(db, role_manager))
-            client.tree.add_command(GiveawayCommands(db, giveaway_manager))
-            client.tree.add_command(GamesCommands(db))
-            
-            await client.tree.sync()
-            
-            print('📊 Sistema de estatísticas ativado!')
-            print('🏅 Sistema de cargos automáticos ativado!')
-            print('🎉 Sistema de sorteios ativado!')
-            print('🎮 Sistema de rastreamento de jogos ativado!')
-            
-            # Sincroniza membros existentes em todos os servidores
-            for guild in client.guilds:
-                await role_manager.sync_existing_members(guild)
-                logger.info(f'✅ Membros sincronizados em {guild.name}')
-            
-        except Exception as e:
-            logger.error(f'❌ Erro ao inicializar sistemas: {e}')
-            logger.warning('⚠️  Bot continuará apenas com moderação')
-    else:
-        logger.warning('⚠️  DATABASE_URL não configurada. Funcionalidades extras desativadas.')
-    
-    print('✅ Bot totalmente inicializado!')
-    print('------')
-    client.loop.create_task(processador_em_lote())
-    client.loop.create_task(collect_server_stats())
-    client.loop.create_task(check_roles_periodically())
     client.loop.create_task(collect_server_stats())
     client.loop.create_task(check_roles_periodically())
     client.loop.create_task(check_expired_giveaways())
