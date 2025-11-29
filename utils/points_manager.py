@@ -11,11 +11,11 @@ class PointsManager:
         self.voice_sessions = {}
         self.activity_sessions = {}
 
-    async def add_points(self, user_id: int, points: int, interaction_type: str):
+    async def add_points(self, user_id: int, points: int, interaction_type: str, username: str = "Unknown", discriminator: str = "0000"):
         """Adds points to a user for a specific interaction type."""
         try:
             # Ensure user exists
-            await self.db.upsert_user(user_id, "Unknown", "0000")
+            await self.db.upsert_user(user_id, username, discriminator)
             
             query = """
                 INSERT INTO interaction_points (user_id, points, interaction_type)

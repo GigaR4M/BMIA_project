@@ -288,7 +288,7 @@ async def on_message(message):
         1335674852681453650  # prints-e-clips
     ]
     if points_manager and message.channel.id in ALLOWED_CHANNELS:
-        await points_manager.add_points(message.author.id, 1, 'message')
+        await points_manager.add_points(message.author.id, 1, 'message', message.author.name, message.author.discriminator)
 
     # Adiciona ao buffer de moderação
     buffer_mensagens.append(message)
@@ -306,7 +306,10 @@ async def on_raw_reaction_add(payload):
 
     # Pontos por reação
     if points_manager:
-        await points_manager.add_points(payload.user_id, 1, 'reaction')
+        user = client.get_user(payload.user_id)
+        username = user.name if user else "Unknown"
+        discriminator = user.discriminator if user else "0000"
+        await points_manager.add_points(payload.user_id, 1, 'reaction', username, discriminator)
 
     if giveaway_manager:
         try:

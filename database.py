@@ -219,8 +219,8 @@ class Database:
                 VALUES ($1, $2, $3, NOW())
                 ON CONFLICT (user_id) 
                 DO UPDATE SET 
-                    username = EXCLUDED.username,
-                    discriminator = EXCLUDED.discriminator,
+                    username = CASE WHEN EXCLUDED.username != 'Unknown' THEN EXCLUDED.username ELSE users.username END,
+                    discriminator = CASE WHEN EXCLUDED.discriminator != '0000' THEN EXCLUDED.discriminator ELSE users.discriminator END,
                     last_seen = NOW()
             """, user_id, username, discriminator)
     
