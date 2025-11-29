@@ -127,6 +127,18 @@ async def analisar_lote_com_ia(lista_de_mensagens):
     except Exception as e:
         print("\\n!!! OCORREU UM ERRO NA ANÁLISE EM LOTE !!!")
         traceback.print_exc()
+        return ["NÃO"] * len(lista_de_mensagens)
+
+
+# --- 5. Eventos do Bot ---
+@client.event
+async def on_ready():
+    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender
+    
+    print(f'🤖 Bot conectado como {client.user}!')
+    print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
+    
+    # Inicializa banco de dados e sistemas
     if DATABASE_URL:
         try:
             db = Database(DATABASE_URL)
@@ -321,7 +333,6 @@ async def check_expired_giveaways():
                     logger.info(f"🎉 Sorteio finalizado automaticamente: {giveaway['prize']}")
         except Exception as e:
             logger.error(f"❌ Erro ao verificar sorteios expirados: {e}")
-        
         # Verifica a cada 30 segundos
         await asyncio.sleep(30)
 
@@ -329,10 +340,14 @@ async def check_expired_giveaways():
 async def check_embed_queue():
     """Verifica e envia embeds da fila."""
     await client.wait_until_ready()
+    print("DEBUG: check_embed_queue started")
     while not client.is_closed():
         try:
             if embed_sender and db:
+                # print("DEBUG: Processing embed queue...")
                 await embed_sender.process_pending_requests(client)
+            else:
+                print(f"DEBUG: embed_sender={embed_sender}, db={db}")
         except Exception as e:
             logger.error(f"❌ Erro ao verificar fila de embeds: {e}")
         
