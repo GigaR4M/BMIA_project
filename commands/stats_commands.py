@@ -146,6 +146,25 @@ class StatsCommands(app_commands.Group):
                 "❌ Erro ao buscar canais. Tente novamente mais tarde.",
                 ephemeral=True
             )
+
+    @app_commands.command(name="leaderboard", description="Mostra o ranking de pontos de interação")
+    @app_commands.describe(limit="Número de usuários para mostrar (padrão: 10)")
+    async def leaderboard(self, interaction: discord.Interaction, limit: int = 10):
+        """Mostra o leaderboard de pontos."""
+        await interaction.response.defer()
+        
+        try:
+            limit = max(1, min(limit, 25))
+            leaderboard = await self.db.get_leaderboard(limit)
+            embed = self.embed_builder.build_leaderboard(leaderboard)
+            await interaction.followup.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Erro ao buscar leaderboard: {e}")
+            await interaction.followup.send(
+                "❌ Erro ao buscar leaderboard. Tente novamente mais tarde.",
+                ephemeral=True
+            )
     
     @user_stats.error
     async def user_stats_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

@@ -217,3 +217,42 @@ class StatsEmbedBuilder:
         )
         
         return embed
+
+    def build_leaderboard(self, leaderboard: List[Dict[str, Any]]) -> discord.Embed:
+        """
+        Constrói embed com leaderboard de pontos.
+        
+        Args:
+            leaderboard: Lista de usuários com pontos
+            
+        Returns:
+            Embed formatado
+        """
+        embed = discord.Embed(
+            title="🏆 Leaderboard de Pontos",
+            description="Ranking de interação do servidor",
+            color=0xffd700, # Gold
+            timestamp=datetime.now()
+        )
+        
+        if not leaderboard:
+            embed.description = "Nenhum dado disponível."
+            return embed
+        
+        # Emojis de medalhas
+        medals = ["🥇", "🥈", "🥉"]
+        
+        ranking_text = ""
+        for i, user in enumerate(leaderboard, 1):
+            medal = medals[i-1] if i <= 3 else f"**{i}.**"
+            username = user['username']
+            points = user['total_points']
+            ranking_text += f"{medal} **{username}** - {points:,} pontos\n"
+        
+        embed.add_field(
+            name="🌟 Top Membros",
+            value=ranking_text,
+            inline=False
+        )
+        
+        return embed

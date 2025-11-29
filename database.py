@@ -713,3 +713,13 @@ class Database:
                 WHERE id = $3
             """, status, error_message, request_id)
 
+    # ==================== INTERACTION POINTS ====================
+
+    async def get_leaderboard(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Retorna o leaderboard de pontos."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM get_leaderboard($1)
+            """, limit)
+            return [dict(row) for row in rows]
+
