@@ -17,11 +17,7 @@ class PointsManager:
             # Ensure user exists
             await self.db.upsert_user(user_id, username, discriminator)
             
-            query = """
-                INSERT INTO interaction_points (user_id, points, interaction_type)
-                VALUES ($1, $2, $3)
-            """
-            await self.db.execute(query, user_id, points, interaction_type)
+            await self.db.add_interaction_point(user_id, points, interaction_type)
             logger.info(f"Added {points} points to user {user_id} for {interaction_type}")
         except Exception as e:
             logger.error(f"Error adding points for user {user_id}: {e}")

@@ -187,6 +187,17 @@ class Database:
             """)
 
             
+            # Tabela de pontos de interação
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS interaction_points (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL REFERENCES users(user_id),
+                    points INTEGER NOT NULL,
+                    interaction_type TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            
             # Índices para melhor performance
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id)")
@@ -205,6 +216,7 @@ class Database:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_guild ON user_activities(guild_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_name ON user_activities(activity_name)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_started ON user_activities(started_at)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_interaction_points_user ON interaction_points(user_id)")
 
             
             logger.info("✅ Schema do banco de dados inicializado")
@@ -223,6 +235,14 @@ class Database:
                     discriminator = CASE WHEN EXCLUDED.discriminator != '0000' THEN EXCLUDED.discriminator ELSE users.discriminator END,
                     last_seen = NOW()
             """, user_id, username, discriminator)
+            
+    async def add_interaction_point(self, user_id: int, points: int, interaction_type: str):
+        """Adiciona pontos de interação para um usuário."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO interaction_points (user_id, points, interaction_type)
+                VALUES ($1, $2, $3)
+            """, user_id, points, interaction_type)
     
     async def upsert_channel(self, channel_id: int, channel_name: str, channel_type: str, guild_id: int):
         """Insere ou atualiza um canal."""
