@@ -148,14 +148,25 @@ class StatsCommands(app_commands.Group):
             )
 
     @app_commands.command(name="leaderboard", description="Mostra o ranking de pontos de interação")
-    @app_commands.describe(limit="Número de usuários para mostrar (padrão: 10)")
-    async def leaderboard(self, interaction: discord.Interaction, limit: int = 10):
+    @app_commands.describe(
+        limit="Número de usuários para mostrar (padrão: 10)",
+        days="Número de dias para análise (padrão: Ano Atual)"
+    )
+    async def leaderboard(self, interaction: discord.Interaction, limit: int = 10, days: Optional[int] = None):
         """Mostra o leaderboard de pontos."""
         await interaction.response.defer()
         
         try:
             limit = max(1, min(limit, 25))
-            leaderboard = await self.db.get_leaderboard(limit)
+            
+            # Se days não for especificado, calcula dias desde o início do ano
+            if days is None:
+                from datetime import datetime
+                now = datetime.now()
+                start_of_year = datetime(now.year, 1, 1)
+                days = (now - start_of_year).days + 1
+            
+            leaderboard = await self.db.get_leaderboard(limit, days)
             embed = self.embed_builder.build_leaderboard(leaderboard)
             await interaction.followup.send(embed=embed)
             

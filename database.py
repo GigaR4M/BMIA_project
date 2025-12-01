@@ -735,11 +735,11 @@ class Database:
 
     # ==================== INTERACTION POINTS ====================
 
-    async def get_leaderboard(self, limit: int = 10) -> List[Dict[str, Any]]:
+    async def get_leaderboard(self, limit: int = 10, days: Optional[int] = None) -> List[Dict[str, Any]]:
         """Retorna o leaderboard de pontos."""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT * FROM get_leaderboard($1)
-            """, limit)
+                SELECT * FROM get_leaderboard($1, $2)
+            """, limit, days)
             return [dict(row) for row in rows]
 
