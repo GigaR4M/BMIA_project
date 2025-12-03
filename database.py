@@ -53,10 +53,18 @@ class Database:
                     user_id BIGINT PRIMARY KEY,
                     username TEXT NOT NULL,
                     discriminator TEXT,
+                    is_bot BOOLEAN DEFAULT FALSE,
                     first_seen TIMESTAMP DEFAULT NOW(),
                     last_seen TIMESTAMP DEFAULT NOW()
                 )
             """)
+            
+            # Adiciona coluna is_bot se não existir (migração manual)
+            try:
+                await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot BOOLEAN DEFAULT FALSE")
+            except Exception as e:
+                logger.warning(f"⚠️ Erro ao tentar adicionar coluna is_bot: {e}")
+
             
             # Tabela de canais
             await conn.execute("""
@@ -223,18 +231,19 @@ class Database:
     
     # ==================== INSERÇÃO DE DADOS ====================
     
-    async def upsert_user(self, user_id: int, username: str, discriminator: str = None):
+    async def upsert_user(self, user_id: int, username: str, discriminator: str = None, is_bot: bool = False):
         """Insere ou atualiza um usuário."""
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO users (user_id, username, discriminator, last_seen)
-                VALUES ($1, $2, $3, NOW())
+                INSERT INTO users (user_id, username, discriminator, is_bot, last_seen)
+                VALUES ($1, $2, $3, $4, NOW())
                 ON CONFLICT (user_id) 
                 DO UPDATE SET 
                     username = CASE WHEN EXCLUDED.username != 'Unknown' THEN EXCLUDED.username ELSE users.username END,
                     discriminator = CASE WHEN EXCLUDED.discriminator != '0000' THEN EXCLUDED.discriminator ELSE users.discriminator END,
+                    is_bot = EXCLUDED.is_bot,
                     last_seen = NOW()
-            """, user_id, username, discriminator)
+            """, user_id, username, discriminator, is_bot)
             
     async def add_interaction_point(self, user_id: int, points: int, interaction_type: str):
         """Adiciona pontos de interação para um usuário."""
@@ -288,6 +297,16 @@ class Database:
                   AND channel_id = $2 
                   AND left_at IS NULL
             """, user_id, channel_id)
+
+    async def get_open_voice_sessions(self) -> List[Dict[str, Any]]:
+        """Retorna todas as sessões de voz abertas (sem left_at)."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT user_id, joined_at
+                FROM voice_activity
+                WHERE left_at IS NULL
+            """)
+            return [dict(row) for row in rows]
 
     async def update_daily_member_count(self, guild_id: int, member_count: int):
         """Atualiza a contagem de membros do dia."""

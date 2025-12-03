@@ -257,6 +257,9 @@ async def on_ready():
                         count += 1
                 logger.info(f'✅ {count} canais sincronizados em {guild.name}')
             
+            # Recupera sessões de voz ativas
+            await points_manager.recover_sessions()
+            
         except Exception as e:
             logger.error(f'❌ Erro ao inicializar sistemas: {e}')
             logger.warning('⚠️  Bot continuará apenas com moderação')

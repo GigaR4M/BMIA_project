@@ -31,6 +31,15 @@ class StatsCollector:
         """
         # Ignora mensagens de bots
         if message.author.bot:
+            try:
+                await self.db.upsert_user(
+                    user_id=message.author.id,
+                    username=message.author.name,
+                    discriminator=message.author.discriminator,
+                    is_bot=True
+                )
+            except Exception as e:
+                logger.error(f"❌ Erro ao registrar bot {message.author.name}: {e}")
             return
         
         # Ignora mensagens sem guild (DMs)
@@ -42,7 +51,8 @@ class StatsCollector:
             await self.db.upsert_user(
                 user_id=message.author.id,
                 username=message.author.name,
-                discriminator=message.author.discriminator
+                discriminator=message.author.discriminator,
+                is_bot=False
             )
             
             # Atualiza canal
@@ -83,6 +93,15 @@ class StatsCollector:
         """
         # Ignora bots
         if member.bot:
+            try:
+                await self.db.upsert_user(
+                    user_id=member.id,
+                    username=member.name,
+                    discriminator=member.discriminator,
+                    is_bot=True
+                )
+            except Exception as e:
+                logger.error(f"❌ Erro ao registrar bot de voz {member.name}: {e}")
             return
         
         try:
@@ -90,7 +109,8 @@ class StatsCollector:
             await self.db.upsert_user(
                 user_id=member.id,
                 username=member.name,
-                discriminator=member.discriminator
+                discriminator=member.discriminator,
+                is_bot=False
             )
             
             # Usuário entrou em um canal de voz
