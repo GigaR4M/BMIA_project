@@ -277,6 +277,15 @@ class Database:
                 ON CONFLICT (message_id) DO NOTHING
             """, message_id, user_id, channel_id, guild_id, content_length, 
                has_attachments, has_embeds, was_moderated)
+
+    async def update_message_moderation_status(self, message_id: int, was_moderated: bool):
+        """Atualiza o status de moderação de uma mensagem."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE messages
+                SET was_moderated = $1
+                WHERE message_id = $2
+            """, was_moderated, message_id)
     
     async def insert_voice_join(self, user_id: int, channel_id: int, guild_id: int):
         """Registra entrada em canal de voz."""
@@ -761,4 +770,67 @@ class Database:
                 SELECT * FROM get_leaderboard($1, $2)
             """, limit, days)
             return [dict(row) for row in rows]
+
+    # ==================== EVENTS ====================
+
+    async def upsert_event(self, event_id: int, guild_id: int, name: str, description: str,
+                          start_time, end_time, status: str, creator_id: int,
+                          entity_type: str, location: str = None):
+        """Insere ou atualiza um evento agendado."""
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO scheduled_events (
+                        event_id, guild_id, name, description, start_time, end_time,
+                        status, creator_id, entity_type, location
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    ON CONFLICT (event_id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        start_time = EXCLUDED.start_time,
+                        end_time = EXCLUDED.end_time,
+                        status = EXCLUDED.status,
+                        entity_type = EXCLUDED.entity_type,
+                        location = EXCLUDED.location
+                """, event_id, guild_id, name, description, start_time, end_time,
+                   status, creator_id, entity_type, location)
+        except Exception as e:
+            logger.error(f"Erro ao salvar evento {event_id}: {e}")
+
+    async def update_event_status(self, event_id: int, status: str):
+        """Atualiza o status de um evento."""
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE scheduled_events
+                    SET status = $2
+                    WHERE event_id = $1
+                """, event_id, status)
+        except Exception as e:
+            logger.error(f"Erro ao atualizar status do evento {event_id}: {e}")
+
+    async def add_event_participant(self, event_id: int, user_id: int, status: str = 'interested'):
+        """Adiciona um participante a um evento."""
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO event_participants (event_id, user_id, status)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (event_id, user_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        joined_at = NOW()
+                """, event_id, user_id, status)
+        except Exception as e:
+            logger.error(f"Erro ao adicionar participante {user_id} ao evento {event_id}: {e}")
+
+    async def remove_event_participant(self, event_id: int, user_id: int):
+        """Remove um participante de um evento."""
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    DELETE FROM event_participants
+                    WHERE event_id = $1 AND user_id = $2
+                """, event_id, user_id)
+        except Exception as e:
+            logger.error(f"Erro ao remover participante {user_id} do evento {event_id}: {e}")
 

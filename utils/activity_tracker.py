@@ -22,6 +22,29 @@ class ActivityTracker:
         # Cache de atividades em andamento: {(user_id, guild_id, activity_name): activity_id}
         self.active_activities: Dict[tuple, int] = {}
     
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        """
+        Handler para mudanças de estado de voz (para detectar compartilhamento de tela).
+        """
+        if member.bot:
+            return
+
+        try:
+            # Detecta início de compartilhamento de tela (Go Live)
+            if not before.self_stream and after.self_stream:
+                await self._start_activity(member, "Screen Share", "screen_share")
+            
+            # Detecta fim de compartilhamento de tela
+            elif before.self_stream and not after.self_stream:
+                await self._end_activity(member, "Screen Share")
+                
+            # Se saiu do canal de voz, encerra screen share se estiver ativo
+            if before.channel and not after.channel:
+                await self._end_activity(member, "Screen Share")
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao processar atualização de voz no ActivityTracker: {e}")
+
     async def on_presence_update(self, before: discord.Member, after: discord.Member):
         """
         Handler para mudanças de presença (atividades/jogos).

@@ -22,6 +22,7 @@ from utils.activity_tracker import ActivityTracker
 from utils.embed_sender import EmbedSender
 from utils.points_manager import PointsManager
 from utils.spam_detector import SpamDetector
+from utils.event_monitor import EventMonitor
 
 # Configuração de logging
 logging.basicConfig(
@@ -65,6 +66,7 @@ activity_tracker = None
 embed_sender = None
 points_manager = None
 spam_detector = None
+event_monitor = None
 buffer_mensagens = []
 INTERVALO_ANALISE = 30
 TAMANHO_LOTE_MINIMO = 5
@@ -209,8 +211,33 @@ async def processador_em_lote():
 # --- Eventos do Discord ---
 
 @client.event
+async def on_scheduled_event_create(event):
+    if event_monitor:
+        await event_monitor.on_scheduled_event_create(event)
+
+@client.event
+async def on_scheduled_event_update(before, after):
+    if event_monitor:
+        await event_monitor.on_scheduled_event_update(before, after)
+
+@client.event
+async def on_scheduled_event_delete(event):
+    if event_monitor:
+        await event_monitor.on_scheduled_event_delete(event)
+
+@client.event
+async def on_scheduled_event_user_add(event, user):
+    if event_monitor:
+        await event_monitor.on_scheduled_event_user_add(event, user)
+
+@client.event
+async def on_scheduled_event_user_remove(event, user):
+    if event_monitor:
+        await event_monitor.on_scheduled_event_user_remove(event, user)
+
+@client.event
 async def on_ready():
-    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector
+    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor
     
     print(f'🤖 Bot conectado como {client.user}!')
     print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
@@ -229,6 +256,7 @@ async def on_ready():
             embed_sender = EmbedSender(db)
             points_manager = PointsManager(db)
             spam_detector = SpamDetector()
+            event_monitor = EventMonitor(db)
             
             # Registra comandos
             client.tree.add_command(StatsCommands(db))
@@ -345,6 +373,10 @@ async def on_voice_state_update(member, before, after):
     """Rastreia atividade de voz para estatísticas."""
     if stats_collector:
         await stats_collector.on_voice_state_update(member, before, after)
+    
+    # Rastreia compartilhamento de tela (Go Live)
+    if activity_tracker:
+        await activity_tracker.on_voice_state_update(member, before, after)
     
     # Rastreia tempo de voz para pontos
     if points_manager:
