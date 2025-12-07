@@ -56,7 +56,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 # Configura a API do Google Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(model_name="models/gemini-2.0-flash-lite")
+model = genai.GenerativeModel(model_name="models/gemma-3-27b-it")
 
 # Variáveis Globais
 db = None
@@ -69,8 +69,8 @@ points_manager = None
 spam_detector = None
 event_monitor = None
 buffer_mensagens = []
-INTERVALO_ANALISE = 120
-TAMANHO_LOTE_MINIMO = 15
+INTERVALO_ANALISE = 60
+TAMANHO_LOTE_MINIMO = 10
 
 # Configuração do Cliente do Discord
 intents = discord.Intents.default()
