@@ -193,9 +193,11 @@ async def processador_em_lote():
     """Processa mensagens em lotes para moderação por IA."""
     while True:
         await asyncio.sleep(INTERVALO_ANALISE)
-        if len(buffer_mensagens) >= TAMANHO_LOTE_MINIMO:
-            mensagens_para_analise = buffer_mensagens[:TAMANHO_LOTE_MINIMO]
-            buffer_mensagens[:] = buffer_mensagens[TAMANHO_LOTE_MINIMO:]
+        if len(buffer_mensagens) > 0:
+            # Processa o que tiver no buffer, limitado ao tamanho do lote
+            qtd_para_processar = min(len(buffer_mensagens), TAMANHO_LOTE_MINIMO)
+            mensagens_para_analise = buffer_mensagens[:qtd_para_processar]
+            buffer_mensagens[:] = buffer_mensagens[qtd_para_processar:]
             
             vereditos = await analisar_lote_com_ia(mensagens_para_analise)
             
