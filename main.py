@@ -68,8 +68,8 @@ points_manager = None
 spam_detector = None
 event_monitor = None
 buffer_mensagens = []
-INTERVALO_ANALISE = 30
-TAMANHO_LOTE_MINIMO = 5
+INTERVALO_ANALISE = 60
+TAMANHO_LOTE_MINIMO = 10
 
 # Configuração do Cliente do Discord
 intents = discord.Intents.default()
