@@ -5,6 +5,7 @@ import discord
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
+from google.api_core.exceptions import ResourceExhausted
 import asyncio
 import traceback
 import logging
@@ -68,8 +69,8 @@ points_manager = None
 spam_detector = None
 event_monitor = None
 buffer_mensagens = []
-INTERVALO_ANALISE = 60
-TAMANHO_LOTE_MINIMO = 10
+INTERVALO_ANALISE = 120
+TAMANHO_LOTE_MINIMO = 15
 
 # Configuração do Cliente do Discord
 intents = discord.Intents.default()
@@ -180,6 +181,9 @@ async def analisar_lote_com_ia(lista_de_mensagens):
 
         return resultados_finais
 
+    except ResourceExhausted as e:
+        logger.warning(f"⚠️ Cota da API do Gemini excedida. Ignorando lote de {len(lista_de_mensagens)} mensagens. Tente novamente mais tarde.")
+        return ["NÃO"] * len(lista_de_mensagens)
     except Exception as e:
         print("\n!!! OCORREU UM ERRO NA ANÁLISE EM LOTE !!!")
         traceback.print_exc()
