@@ -36,13 +36,20 @@ class StatsCommands(app_commands.Group):
                 ephemeral=True
             )
     
-    @app_commands.command(name="me", description="Suas estatísticas pessoais")
-    @app_commands.describe(days="Número de dias para análise (padrão: 30)")
-    async def my_stats(self, interaction: discord.Interaction, days: int = 30):
-        """Mostra estatísticas pessoais do usuário."""
+    @app_commands.command(name="me", description="Suas estatísticas pessoais e ficha de pontos")
+    @app_commands.describe(days="Número de dias para análise (padrão: Ano Atual)")
+    async def my_stats(self, interaction: discord.Interaction, days: Optional[int] = None):
+        """Mostra estatísticas pessoais e auditoria de pontos."""
         await interaction.response.defer(ephemeral=True)
         
         try:
+            # Se days não for especificado, calcula dias desde o início do ano
+            if days is None:
+                from datetime import datetime
+                now = datetime.now()
+                start_of_year = datetime(now.year, 1, 1)
+                days = (now - start_of_year).days + 1
+            
             stats = await self.db.get_user_stats(
                 interaction.user.id, 
                 interaction.guild.id, 
@@ -65,15 +72,21 @@ class StatsCommands(app_commands.Group):
     @app_commands.command(name="user", description="Estatísticas de um usuário específico")
     @app_commands.describe(
         user="Usuário para ver estatísticas",
-        days="Número de dias para análise (padrão: 30)"
+        days="Número de dias para análise (padrão: Ano Atual)"
     )
     @app_commands.checks.has_permissions(manage_guild=True)
     async def user_stats(self, interaction: discord.Interaction, 
-                        user: discord.Member, days: int = 30):
+                        user: discord.Member, days: Optional[int] = None):
         """Mostra estatísticas de um usuário específico (apenas admins)."""
         await interaction.response.defer()
         
         try:
+            if days is None:
+                from datetime import datetime
+                now = datetime.now()
+                start_of_year = datetime(now.year, 1, 1)
+                days = (now - start_of_year).days + 1
+
             stats = await self.db.get_user_stats(user.id, interaction.guild.id, days)
             embed = self.embed_builder.build_user_stats(
                 stats, 

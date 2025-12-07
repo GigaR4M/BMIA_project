@@ -72,18 +72,12 @@ class StatsEmbedBuilder:
     def build_user_stats(self, stats: Dict[str, Any], username: str, 
                         avatar_url: Optional[str] = None) -> discord.Embed:
         """
-        Constrói embed com estatísticas de um usuário.
-        
-        Args:
-            stats: Dicionário com estatísticas
-            username: Nome do usuário
-            avatar_url: URL do avatar (opcional)
-            
-        Returns:
-            Embed formatado
+        Constrói embed com estatísticas detalhadas de um usuário para auditoria.
         """
+        total_points = stats.get('total_points', 0)
+        
         embed = discord.Embed(
-            title=f"📊 Estatísticas de {username}",
+            title=f"📊 Ficha de: {username}",
             color=self.COLOR_INFO,
             timestamp=datetime.now()
         )
@@ -91,28 +85,60 @@ class StatsEmbedBuilder:
         if avatar_url:
             embed.set_thumbnail(url=avatar_url)
         
+        # Período
         period = stats.get('period_days', 30)
+        period_text = "Ano Atual" if period > 365 else f"Últimos {period} dias"
+        embed.add_field(name="📅 Período", value=period_text, inline=True)
+        
+        # Total Real de Pontos
+        embed.add_field(name="🏆 Total de Pontos", value=f"**{total_points:,}**", inline=True)
+        
+        # Quebra de linha para separar o cabeçalho dos detalhes
+        embed.add_field(name="\u200b", value="\u200b", inline=False)
+        
+        # Auditoria (Detalhamento)
+        total_msgs = stats.get('total_messages', 0)
+        voice_mins = stats.get('voice_minutes', 0)
+        
+        # Formata tempo de voz
+        voice_time_str = f"{voice_mins} min"
+        if voice_mins >= 60:
+            voice_time_str = f"{voice_mins // 60}h {voice_mins % 60}m"
+
+        breakdown = stats.get('points_breakdown', {})
+        points_msg = breakdown.get('message', 0)
+        points_voice = breakdown.get('voice', 0)
+        
+        audit_text = (
+            f"📝 **Mensagens:** {total_msgs:,} enviadas\n"
+            f"🗣️ **Voz:** {voice_time_str}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"**Pontos de Mensagem:** {points_msg:,}\n"
+            f"**Pontos de Voz:** {points_voice:,}\n"
+        )
+        
+        # Adiciona outros tipos de pontos se houver (ex: daily, bonus)
+        other_points = total_points - (points_msg + points_voice)
+        if other_points > 0:
+            audit_text += f"**Outros/Bônus:** {other_points:,}\n"
+            
+        audit_text += f"━━━━━━━━━━━━━━━━━━━━\n**TOTAL:** {total_points:,} pontos"
+
         embed.add_field(
-            name="📅 Período",
-            value=f"Últimos {period} dias",
+            name="📋 Auditoria de Pontos",
+            value=audit_text,
             inline=False
         )
         
-        embed.add_field(
-            name="💬 Total de Mensagens",
-            value=f"**{stats.get('total_messages', 0):,}**",
-            inline=True
-        )
-        
-        # Top canais do usuário
+        # Top canais
         top_channels = stats.get('top_channels', [])
         if top_channels:
             channels_text = "\n".join([
-                f"**#{ch['channel_name']}**: {ch['count']:,} mensagens"
+                f"**#{ch['channel_name']}**: {ch['count']:,} msgs"
                 for ch in top_channels[:3]
             ])
             embed.add_field(
-                name="📺 Canais Favoritos",
+                name="📺 Canais Mais Ativos",
                 value=channels_text,
                 inline=False
             )

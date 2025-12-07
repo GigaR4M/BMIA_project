@@ -414,16 +414,43 @@ class Database:
     
     async def get_user_stats(self, user_id: int, guild_id: int, days: int = 30) -> Dict[str, Any]:
         """Retorna estatísticas de um usuário específico."""
+        return await self.get_detailed_user_stats(user_id, guild_id, days)
+
+    async def get_detailed_user_stats(self, user_id: int, guild_id: int, days: int = 30) -> Dict[str, Any]:
+        """Retorna estatísticas detalhadas de um usuário específico para auditoria."""
         async with self.pool.acquire() as conn:
             cutoff_date = datetime.now() - timedelta(days=days)
             
-            # Total de mensagens
+            # 1. Total de mensagens
             total_messages = await conn.fetchval("""
                 SELECT COUNT(*) FROM messages 
                 WHERE user_id = $1 AND guild_id = $2 AND created_at >= $3
             """, user_id, guild_id, cutoff_date)
             
-            # Canais mais usados
+            # 2. Tempo em voz (minutos)
+            voice_minutes = await conn.fetchval("""
+                SELECT COALESCE(SUM(duration_seconds), 0) / 60 
+                FROM voice_activity 
+                WHERE user_id = $1 AND guild_id = $2 AND joined_at >= $3
+            """, user_id, guild_id, cutoff_date)
+            
+            # 3. Pontos Totais (Auditados)
+            # Soma pontos da tabela de pontos de interação
+            total_points = await conn.fetchval("""
+                SELECT COALESCE(SUM(points), 0)
+                FROM interaction_points
+                WHERE user_id = $1 AND created_at >= $2
+            """, user_id, cutoff_date)
+
+            # 4. Detalhamento dos pontos (por tipo)
+            points_breakdown = await conn.fetch("""
+                SELECT interaction_type, COALESCE(SUM(points), 0) as points
+                FROM interaction_points
+                WHERE user_id = $1 AND created_at >= $2
+                GROUP BY interaction_type
+            """, user_id, cutoff_date)
+
+            # 5. Canais mais usados
             top_channels = await conn.fetch("""
                 SELECT c.channel_name, COUNT(*) as count
                 FROM messages m
@@ -436,6 +463,9 @@ class Database:
             
             return {
                 'total_messages': total_messages,
+                'voice_minutes': int(voice_minutes) if voice_minutes else 0,
+                'total_points': total_points,
+                'points_breakdown': {row['interaction_type']: row['points'] for row in points_breakdown},
                 'top_channels': [dict(row) for row in top_channels],
                 'period_days': days
             }
