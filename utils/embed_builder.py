@@ -72,12 +72,12 @@ class StatsEmbedBuilder:
     def build_user_stats(self, stats: Dict[str, Any], username: str, 
                         avatar_url: Optional[str] = None) -> discord.Embed:
         """
-        Constrói embed com estatísticas detalhadas de um usuário para auditoria.
+        Constrói embed com estatísticas de um usuário.
         """
         total_points = stats.get('total_points', 0)
         
         embed = discord.Embed(
-            title=f"📊 Ficha de: {username}",
+            title=f"📊 Estatísticas de {username}",
             color=self.COLOR_INFO,
             timestamp=datetime.now()
         )
@@ -89,59 +89,64 @@ class StatsEmbedBuilder:
         period = stats.get('period_days', 30)
         period_text = "Ano Atual" if period > 365 else f"Últimos {period} dias"
         embed.add_field(name="📅 Período", value=period_text, inline=True)
-        
-        # Total Real de Pontos
         embed.add_field(name="🏆 Total de Pontos", value=f"**{total_points:,}**", inline=True)
         
-        # Quebra de linha para separar o cabeçalho dos detalhes
         embed.add_field(name="\u200b", value="\u200b", inline=False)
         
-        # Auditoria (Detalhamento)
+        # 1. Estatísticas de Uso
         total_msgs = stats.get('total_messages', 0)
         voice_mins = stats.get('voice_minutes', 0)
+        game_mins = stats.get('game_minutes', 0)
         
-        # Formata tempo de voz
-        voice_time_str = f"{voice_mins} min"
-        if voice_mins >= 60:
-            voice_time_str = f"{voice_mins // 60}h {voice_mins % 60}m"
+        def format_time(minutes):
+            if minutes >= 60:
+                return f"{minutes // 60}h {minutes % 60}m"
+            return f"{minutes} min"
 
+        usage_text = (
+            f"📨 **Mensagens:** {total_msgs:,}\n"
+            f"🎙️ **Tempo em Voz:** {format_time(voice_mins)}\n"
+            f"🎮 **Tempo em Jogo:** {format_time(game_mins)}"
+        )
+        embed.add_field(name="📈 Atividade", value=usage_text, inline=True)
+
+        # 2. Detalhamento de Pontos
         breakdown = stats.get('points_breakdown', {})
         points_msg = breakdown.get('message', 0)
         points_voice = breakdown.get('voice', 0)
-        
-        audit_text = (
-            f"📝 **Mensagens:** {total_msgs:,} enviadas\n"
-            f"🗣️ **Voz:** {voice_time_str}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"**Pontos de Mensagem:** {points_msg:,}\n"
-            f"**Pontos de Voz:** {points_voice:,}\n"
-        )
-        
-        # Adiciona outros tipos de pontos se houver (ex: daily, bonus)
         other_points = total_points - (points_msg + points_voice)
-        if other_points > 0:
-            audit_text += f"**Outros/Bônus:** {other_points:,}\n"
-            
-        audit_text += f"━━━━━━━━━━━━━━━━━━━━\n**TOTAL:** {total_points:,} pontos"
-
-        embed.add_field(
-            name="📋 Auditoria de Pontos",
-            value=audit_text,
-            inline=False
-        )
         
-        # Top canais
-        top_channels = stats.get('top_channels', [])
-        if top_channels:
-            channels_text = "\n".join([
-                f"**#{ch['channel_name']}**: {ch['count']:,} msgs"
-                for ch in top_channels[:3]
-            ])
-            embed.add_field(
-                name="📺 Canais Mais Ativos",
-                value=channels_text,
-                inline=False
-            )
+        points_text = (
+            f"💬 **Mensagens:** {points_msg:,} pts\n"
+            f"🗣️ **Voz:** {points_voice:,} pts\n"
+        )
+        if other_points > 0:
+            points_text += f"✨ **Bônus/Outros:** {other_points:,} pts"
+            
+        embed.add_field(name="⭐ Pontuação", value=points_text, inline=True)
+        
+        embed.add_field(name="\u200b", value="\u200b", inline=False)
+
+        # 3. Favoritos
+        top_text = stats.get('top_text_channels', [])
+        top_voice = stats.get('top_voice_channels', [])
+        top_games = stats.get('top_activities', [])
+
+        favs_text = ""
+        if top_text:
+            ch = top_text[0]
+            favs_text += f"📝 **Chat:** #{ch['channel_name']} ({ch['count']} msgs)\n"
+        
+        if top_voice:
+            ch = top_voice[0]
+            favs_text += f"🔊 **Call:** {ch['channel_name']} ({format_time(int(ch['minutes']))})\n"
+            
+        if top_games:
+            game = top_games[0]
+            favs_text += f"🎮 **Jogo:** {game['activity_name']} ({format_time(int(game['minutes']))})"
+            
+        if favs_text:
+            embed.add_field(name="❤️ Favoritos", value=favs_text, inline=False)
         
         return embed
     

@@ -450,8 +450,15 @@ class Database:
                 GROUP BY interaction_type
             """, user_id, cutoff_date)
 
-            # 5. Canais mais usados
-            top_channels = await conn.fetch("""
+            # 5. Tempo total em jogos (minutos)
+            game_minutes = await conn.fetchval("""
+                SELECT COALESCE(SUM(duration_seconds), 0) / 60
+                FROM user_activities
+                WHERE user_id = $1 AND guild_id = $2 AND started_at >= $3
+            """, user_id, guild_id, cutoff_date)
+
+            # 6. Canais de Texto Favoritos
+            top_text_channels = await conn.fetch("""
                 SELECT c.channel_name, COUNT(*) as count
                 FROM messages m
                 JOIN channels c ON m.channel_id = c.channel_id
@@ -460,13 +467,37 @@ class Database:
                 ORDER BY count DESC
                 LIMIT 3
             """, user_id, guild_id, cutoff_date)
+
+            # 7. Canais de Voz Favoritos
+            top_voice_channels = await conn.fetch("""
+                SELECT c.channel_name, SUM(v.duration_seconds)/60 as minutes
+                FROM voice_activity v
+                JOIN channels c ON v.channel_id = c.channel_id
+                WHERE v.user_id = $1 AND v.guild_id = $2 AND v.joined_at >= $3
+                GROUP BY c.channel_name
+                ORDER BY minutes DESC
+                LIMIT 3
+            """, user_id, guild_id, cutoff_date)
+
+            # 8. Atividade Favorita
+            top_activities = await conn.fetch("""
+                SELECT activity_name, SUM(duration_seconds)/60 as minutes
+                FROM user_activities
+                WHERE user_id = $1 AND guild_id = $2 AND started_at >= $3
+                GROUP BY activity_name
+                ORDER BY minutes DESC
+                LIMIT 3
+            """, user_id, guild_id, cutoff_date)
             
             return {
                 'total_messages': total_messages,
                 'voice_minutes': int(voice_minutes) if voice_minutes else 0,
+                'game_minutes': int(game_minutes) if game_minutes else 0,
                 'total_points': total_points,
                 'points_breakdown': {row['interaction_type']: row['points'] for row in points_breakdown},
-                'top_channels': [dict(row) for row in top_channels],
+                'top_text_channels': [dict(row) for row in top_text_channels],
+                'top_voice_channels': [dict(row) for row in top_voice_channels],
+                'top_activities': [dict(row) for row in top_activities],
                 'period_days': days
             }
     
