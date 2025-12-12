@@ -72,6 +72,19 @@ buffer_mensagens = []
 INTERVALO_ANALISE = 60
 TAMANHO_LOTE_MINIMO = 10
 
+# --- Constantes de Canais ---
+ALLOWED_CHANNELS = [
+    1327836428524191765, # chat-principal
+    1327836428524191766, # sugestao-de-jogos
+    1327836428524191767, # mensagens-aleatorias
+    1335674852681453650  # prints-e-clips
+]
+
+IGNORED_VOICE_CHANNELS = [
+    1356045946743689236, # Três mosqueteiros
+    1335352978986635468  # AFK
+]
+
 # Configuração do Cliente do Discord
 intents = discord.Intents.default()
 intents.guilds = True
@@ -318,12 +331,6 @@ async def on_message(message):
         return
 
     # Adiciona pontos se estiver em canal permitido
-    ALLOWED_CHANNELS = [
-        1327836428524191765, # chat-principal
-        1327836428524191766, # sugestao-de-jogos
-        1327836428524191767, # mensagens-aleatorias
-        1335674852681453650  # prints-e-clips
-    ]
     if points_manager and message.channel.id in ALLOWED_CHANNELS:
         await points_manager.add_points(message.author.id, 1, 'message', message.author.name, message.author.discriminator)
 
@@ -343,10 +350,11 @@ async def on_raw_reaction_add(payload):
 
     # Pontos por reação
     if points_manager:
-        user = client.get_user(payload.user_id)
-        username = user.name if user else "Unknown"
-        discriminator = user.discriminator if user else "0000"
-        await points_manager.add_points(payload.user_id, 1, 'reaction', username, discriminator)
+        if payload.channel_id in ALLOWED_CHANNELS:
+            user = client.get_user(payload.user_id)
+            username = user.name if user else "Unknown"
+            discriminator = user.discriminator if user else "0000"
+            await points_manager.add_points(payload.user_id, 1, 'reaction', username, discriminator)
 
     if giveaway_manager:
         try:
@@ -386,8 +394,7 @@ async def on_voice_state_update(member, before, after):
     
     # Rastreia tempo de voz para pontos
     if points_manager:
-        # Canais ignorados (Três mosqueteiros, AFK)
-        IGNORED_VOICE_CHANNELS = [1356045946743689236, 1335352978986635468]
+
         
         # Entrou em canal de voz (e não é ignorado)
         if after.channel and after.channel.id not in IGNORED_VOICE_CHANNELS:

@@ -508,11 +508,11 @@ class Database:
             
             rows = await conn.fetch("""
                 SELECT 
-                    DATE(created_at) as date,
+                    DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') as date,
                     COUNT(*) as message_count
                 FROM messages
                 WHERE guild_id = $1 AND created_at >= $2
-                GROUP BY DATE(created_at)
+                GROUP BY date
                 ORDER BY date
             """, guild_id, cutoff_date)
             
@@ -525,7 +525,7 @@ class Database:
             
             rows = await conn.fetch("""
                 SELECT 
-                    EXTRACT(HOUR FROM created_at)::INTEGER as hour,
+                    EXTRACT(HOUR FROM (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'))::INTEGER as hour,
                     COUNT(*) as message_count
                 FROM messages
                 WHERE guild_id = $1 AND created_at >= $2
@@ -789,10 +789,10 @@ class Database:
                     COUNT(DISTINCT user_id) as unique_users,
                     COUNT(*) as session_count,
                     SUM(duration_seconds) as total_seconds,
-                    EXTRACT(MONTH FROM started_at)::INTEGER as month
+                    EXTRACT(MONTH FROM (started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'))::INTEGER as month
                 FROM user_activities
                 WHERE guild_id = $1 
-                  AND EXTRACT(YEAR FROM started_at) = $2
+                  AND EXTRACT(YEAR FROM (started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) = $2
                   AND duration_seconds IS NOT NULL
                 GROUP BY activity_name, month
                 ORDER BY total_seconds DESC
