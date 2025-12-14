@@ -24,6 +24,7 @@ from utils.embed_sender import EmbedSender
 from utils.points_manager import PointsManager
 from utils.spam_detector import SpamDetector
 from utils.event_monitor import EventMonitor
+from utils.leaderboard_updater import LeaderboardUpdater
 
 # Configuração de logging
 logging.basicConfig(
@@ -68,6 +69,7 @@ embed_sender = None
 points_manager = None
 spam_detector = None
 event_monitor = None
+leaderboard_updater = None
 buffer_mensagens = []
 INTERVALO_ANALISE = 60
 TAMANHO_LOTE_MINIMO = 10
@@ -256,7 +258,7 @@ async def on_scheduled_event_user_remove(event, user):
 
 @client.event
 async def on_ready():
-    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor
+    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor, leaderboard_updater
     
     print(f'🤖 Bot conectado como {client.user}!')
     print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
@@ -276,9 +278,10 @@ async def on_ready():
             points_manager = PointsManager(db)
             spam_detector = SpamDetector()
             event_monitor = EventMonitor(db)
+            leaderboard_updater = LeaderboardUpdater(client, db)
             
             # Registra comandos
-            client.tree.add_command(StatsCommands(db))
+            client.tree.add_command(StatsCommands(db, leaderboard_updater))
             client.tree.add_command(RoleCommands(db, role_manager))
             client.tree.add_command(GiveawayCommands(db, giveaway_manager))
             client.tree.add_command(GamesCommands(db))
@@ -320,6 +323,8 @@ async def on_ready():
     client.loop.create_task(check_roles_periodically())
     client.loop.create_task(check_expired_giveaways())
     client.loop.create_task(check_embed_queue())
+    if leaderboard_updater:
+        client.loop.create_task(leaderboard_updater.start_loop())
 
 @client.event
 async def on_message(message):

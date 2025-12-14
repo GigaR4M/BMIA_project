@@ -206,6 +206,16 @@ class Database:
                 )
             """)
             
+            # Tabela de configuração do leaderboard persistente
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS leaderboard_config (
+                    guild_id BIGINT PRIMARY KEY,
+                    channel_id BIGINT NOT NULL,
+                    message_id BIGINT NOT NULL,
+                    last_updated TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            
             # Índices para melhor performance
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id)")
@@ -831,6 +841,30 @@ class Database:
                 SELECT * FROM get_leaderboard($1, $2)
             """, limit, days)
             return [dict(row) for row in rows]
+            
+    async def upsert_leaderboard_config(self, guild_id: int, channel_id: int, message_id: int):
+        """Salva ou atualiza a configuração do leaderboard persistente."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO leaderboard_config (guild_id, channel_id, message_id, last_updated)
+                VALUES ($1, $2, $3, NOW())
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET 
+                    channel_id = EXCLUDED.channel_id,
+                    message_id = EXCLUDED.message_id,
+                    last_updated = NOW()
+            """, guild_id, channel_id, message_id)
+            
+    async def get_leaderboard_configs(self) -> List[Dict[str, Any]]:
+        """Retorna todas as configurações de leaderboard."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM leaderboard_config")
+            return [dict(row) for row in rows]
+            
+    async def delete_leaderboard_config(self, guild_id: int):
+        """Remove a configuração de leaderboard."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM leaderboard_config WHERE guild_id = $1", guild_id)
 
     # ==================== EVENTS ====================
 

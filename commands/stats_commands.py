@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from database import Database
 from utils.embed_builder import StatsEmbedBuilder
-from typing import Optional
+from typing import Optional, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,10 +13,61 @@ logger = logging.getLogger(__name__)
 class StatsCommands(app_commands.Group):
     """Grupo de comandos de estatísticas."""
     
-    def __init__(self, db: Database):
+    
+    def __init__(self, db: Database, leaderboard_updater: Any = None):
         super().__init__(name="stats", description="Comandos de estatísticas do servidor")
         self.db = db
+        self.leaderboard_updater = leaderboard_updater
         self.embed_builder = StatsEmbedBuilder()
+    
+    @app_commands.command(name="setup_leaderboard", description="Configura um leaderboard persistente neste canal")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def setup_leaderboard(self, interaction: discord.Interaction):
+        """Cria e fixa uma mensagem de leaderboard que se atualiza automaticamente."""
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Envia mensagem inicial
+            embed = discord.Embed(
+                title="📊 Leaderboard em Construção",
+                description="O ranking será gerado em instantes...",
+                color=discord.Color.gold()
+            )
+            message = await interaction.channel.send(embed=embed)
+            
+            # Tenta fixar (pin) a mensagem
+            try:
+                await message.pin(reason="Leaderboard de Pontos")
+            except Exception:
+                pass # Ignora se falhar pin (pode não ter permissão ou canal cheio)
+
+            # Salva no banco
+            await self.db.upsert_leaderboard_config(
+                interaction.guild.id, 
+                interaction.channel.id, 
+                message.id
+            )
+            
+            # Força atualização imediata se o updater estiver disponível
+            if self.leaderboard_updater:
+                config = {
+                    'guild_id': interaction.guild.id,
+                    'channel_id': interaction.channel.id,
+                    'message_id': message.id
+                }
+                await self.leaderboard_updater.update_guild(config)
+                
+            await interaction.followup.send(
+                f"✅ Leaderboard configurado com sucesso no canal {interaction.channel.mention}!",
+                ephemeral=True
+            )
+            
+        except Exception as e:
+            logger.error(f"Erro ao configurar leaderboard: {e}")
+            await interaction.followup.send(
+                "❌ Erro ao configurar leaderboard. Verifique minhas permissões.",
+                ephemeral=True
+            )
     
     @app_commands.command(name="server", description="Estatísticas gerais do servidor")
     @app_commands.describe(days="Número de dias para análise (padrão: 30)")
