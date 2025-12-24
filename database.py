@@ -855,12 +855,12 @@ class Database:
                 FROM users u
                 JOIN interaction_points p ON u.user_id = p.user_id
                 WHERE u.is_bot = FALSE
-                  AND p.created_at >= $3
-                  AND ($4::bigint IS NULL OR p.guild_id = $4 OR p.guild_id IS NULL)
+                  AND p.created_at >= $2
+                  AND ($3::bigint IS NULL OR p.guild_id = $3 OR p.guild_id IS NULL)
                 GROUP BY u.user_id, u.username
                 ORDER BY total_points DESC
                 LIMIT $1
-            """, limit, days, cutoff_date, guild_id)
+            """, limit, cutoff_date, guild_id)
             
             return [dict(row) for row in rows]
             

@@ -65,7 +65,7 @@ class LeaderboardUpdater:
         days = (now - start_of_year).days + 1
 
         # Buscar dados atuais
-        leaderboard = await self.db.get_leaderboard(limit=10, days=days)
+        leaderboard = await self.db.get_leaderboard(limit=10, days=days, guild_id=guild_id)
         new_embed = self.embed_builder.build_leaderboard(leaderboard) # Assumes default title logic if not passed? 
         # Actually build_leaderboard might need title adjustment or verification.
         # Let's check embed_builder.py content first? I haven't read it.
