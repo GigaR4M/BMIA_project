@@ -1,5 +1,10 @@
 import discord
 from typing import List
+import logging
+from database import Database
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class PointsManager:
     def __init__(self, db: Database):
