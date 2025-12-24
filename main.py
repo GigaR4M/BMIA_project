@@ -234,7 +234,8 @@ async def processador_em_lote():
                             if msg.reference:
                                 points_to_remove += 1
                                 
-                            await points_manager.remove_points(msg.author.id, points_to_remove, "moderation_deletion")
+                            if msg.guild:
+                                await points_manager.remove_points(msg.author.id, points_to_remove, msg.guild.id, "moderation_deletion")
 
                     except discord.Forbidden:
                         logger.warning(f"Sem permissão para deletar mensagem em {msg.channel.name}")
@@ -388,7 +389,8 @@ async def on_message(message):
             except:
                 pass
 
-        await points_manager.add_points(message.author.id, points, 'message', message.author.name, message.author.discriminator)
+        if message.guild:
+            await points_manager.add_points(message.author.id, points, 'message', message.guild.id, message.author.name, message.author.discriminator)
 
     # Adiciona ao buffer de moderação
     buffer_mensagens.append(message)
@@ -412,7 +414,8 @@ async def on_raw_reaction_add(payload):
             if user_reactor:
                 username = user_reactor.name
                 discriminator = user_reactor.discriminator
-                await points_manager.add_points(payload.user_id, 1, 'reaction_given', username, discriminator)
+                if payload.guild_id:
+                    await points_manager.add_points(payload.user_id, 1, 'reaction_given', payload.guild_id, username, discriminator)
             
             # Ponto para o autor da mensagem
             try:
@@ -421,7 +424,8 @@ async def on_raw_reaction_add(payload):
                 message = await channel.fetch_message(payload.message_id) 
                 # Evita farm em si mesmo
                 if message.author.id != payload.user_id:
-                     await points_manager.add_points(message.author.id, 1, 'reaction_received', message.author.name, message.author.discriminator, message.author.bot)
+                     if payload.guild_id:
+                        await points_manager.add_points(message.author.id, 1, 'reaction_received', payload.guild_id, message.author.name, message.author.discriminator, message.author.bot)
             except Exception as e:
                 logger.error(f"Erro ao dar ponto de reação para autor: {e}")
 

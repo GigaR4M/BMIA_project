@@ -14,7 +14,7 @@ class PointsManager:
         self.voice_sessions = {}
         self.activity_sessions = {}
 
-    async def add_points(self, user_id: int, points: int, interaction_type: str, username: str = "Unknown", discriminator: str = "0000", is_bot: bool = False):
+    async def add_points(self, user_id: int, points: int, interaction_type: str, guild_id: int, username: str = "Unknown", discriminator: str = "0000", is_bot: bool = False):
         """Adds points to a user for a specific interaction type."""
         try:
             if is_bot:
@@ -23,17 +23,17 @@ class PointsManager:
             # Ensure user exists
             await self.db.upsert_user(user_id, username, discriminator, is_bot)
             
-            await self.db.add_interaction_point(user_id, points, interaction_type)
+            await self.db.add_interaction_point(user_id, points, interaction_type, guild_id)
             logger.info(f"Added {points} points to user {user_id} for {interaction_type}")
         except Exception as e:
             logger.error(f"Error adding points for user {user_id}: {e}")
 
-    async def remove_points(self, user_id: int, points: int, reason: str = None):
+    async def remove_points(self, user_id: int, points: int, guild_id: int, reason: str = None):
         """Remove pontos de um usuário (usado para moderação)."""
         try:
             # Para simplificar, adicionar pontos negativos é uma forma de remover
             # Assumindo que o DB suporta incrementos negativos ou criar método específico no DB se precisar
-            await self.db.add_interaction_point(user_id, -points, "penalty") 
+            await self.db.add_interaction_point(user_id, -points, "penalty", guild_id) 
             logger.info(f"Removed {points} points from user {user_id}. Reason: {reason}")
         except Exception as e:
             logger.error(f"Error removing points for user {user_id}: {e}")
@@ -228,7 +228,7 @@ class PointsManager:
                         current_points += 1
                     
                     if current_points > 0:
-                        await self.add_points(member.id, current_points, "minute_tick", member.name, member.discriminator)
+                        await self.add_points(member.id, current_points, "minute_tick", guild.id, member.name, member.discriminator)
                         
         except Exception as e:
             logger.error(f"Error in execute_points_loop: {e}")

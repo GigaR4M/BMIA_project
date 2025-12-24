@@ -230,7 +230,7 @@ class StatsCommands(app_commands.Group):
                 start_of_year = datetime(now.year, 1, 1)
                 days = (now - start_of_year).days + 1
             
-            leaderboard = await self.db.get_leaderboard(limit, days)
+            leaderboard = await self.db.get_leaderboard(limit, days, interaction.guild.id)
             embed = self.embed_builder.build_leaderboard(leaderboard)
             await interaction.followup.send(embed=embed)
             

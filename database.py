@@ -255,13 +255,13 @@ class Database:
                     last_seen = NOW()
             """, user_id, username, discriminator, is_bot)
             
-    async def add_interaction_point(self, user_id: int, points: int, interaction_type: str):
+    async def add_interaction_point(self, user_id: int, points: int, interaction_type: str, guild_id: int):
         """Adiciona pontos de interação para um usuário."""
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO interaction_points (user_id, points, interaction_type)
-                VALUES ($1, $2, $3)
-            """, user_id, points, interaction_type)
+                INSERT INTO interaction_points (user_id, points, interaction_type, guild_id)
+                VALUES ($1, $2, $3, $4)
+            """, user_id, points, interaction_type, guild_id)
     
     async def upsert_channel(self, channel_id: int, channel_name: str, channel_type: str, guild_id: int):
         """Insere ou atualiza um canal."""
@@ -383,7 +383,7 @@ class Database:
             }
     
     async def get_top_users_by_messages(self, guild_id: int, limit: int = 10, days: int = 30) -> List[Dict[str, Any]]:
-        """Retorna os usuários mais ativos por mensagens."""
+        """Retorna os usuários mais ativos por mensagens (excluindo bots)."""
         async with self.pool.acquire() as conn:
             cutoff_date = datetime.now() - timedelta(days=days)
             
@@ -394,7 +394,9 @@ class Database:
                     COUNT(m.message_id) as message_count
                 FROM users u
                 JOIN messages m ON u.user_id = m.user_id
-                WHERE m.guild_id = $1 AND m.created_at >= $2
+                WHERE m.guild_id = $1 
+                  AND m.created_at >= $2
+                  AND u.is_bot = FALSE
                 GROUP BY u.user_id, u.username
                 ORDER BY message_count DESC
                 LIMIT $3
@@ -450,15 +452,17 @@ class Database:
                 SELECT COALESCE(SUM(points), 0)
                 FROM interaction_points
                 WHERE user_id = $1 AND created_at >= $2
-            """, user_id, cutoff_date)
+                  AND ($3::bigint IS NULL OR guild_id = $3 OR guild_id IS NULL)
+            """, user_id, cutoff_date, guild_id)
 
             # 4. Detalhamento dos pontos (por tipo)
             points_breakdown = await conn.fetch("""
                 SELECT interaction_type, COALESCE(SUM(points), 0) as points
                 FROM interaction_points
                 WHERE user_id = $1 AND created_at >= $2
+                  AND ($3::bigint IS NULL OR guild_id = $3 OR guild_id IS NULL)
                 GROUP BY interaction_type
-            """, user_id, cutoff_date)
+            """, user_id, cutoff_date, guild_id)
 
             # 5. Tempo total em jogos (minutos)
             game_minutes = await conn.fetchval("""
@@ -739,7 +743,7 @@ class Database:
             await conn.execute("""
                 UPDATE user_activities
                 SET ended_at = NOW(),
-                    duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INTEGER
+                duration_seconds = EXTRACT(EPOCH FROM (NOW() - started_at))::INTEGER
                 WHERE id = $1 AND ended_at IS NULL
             """, activity_id)
     
@@ -834,12 +838,30 @@ class Database:
 
     # ==================== INTERACTION POINTS ====================
 
-    async def get_leaderboard(self, limit: int = 10, days: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Retorna o leaderboard de pontos."""
+    async def get_leaderboard(self, limit: int = 10, days: Optional[int] = None, guild_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Retorna o leaderboard de pontos (excluindo bots, SQL direto)."""
         async with self.pool.acquire() as conn:
+            cutoff_date = datetime.now() - timedelta(days=days if days else 3650) # fallback grande
+            
+            # Se days for especificado, usamos, senão pegamos tudo (ou ano atual se viesse dos comandos)
+            # No Python do stats_commands já tratamos o 'days', aqui ele chega como int ou None (que vira 10 anos)
+
             rows = await conn.fetch("""
-                SELECT * FROM get_leaderboard($1, $2)
-            """, limit, days)
+                SELECT 
+                    u.username,
+                    u.user_id,
+                    COALESCE(SUM(p.points), 0) as total_points,
+                    RANK() OVER (ORDER BY COALESCE(SUM(p.points), 0) DESC) as rank
+                FROM users u
+                JOIN interaction_points p ON u.user_id = p.user_id
+                WHERE u.is_bot = FALSE
+                  AND p.created_at >= $3
+                  AND ($4::bigint IS NULL OR p.guild_id = $4 OR p.guild_id IS NULL)
+                GROUP BY u.user_id, u.username
+                ORDER BY total_points DESC
+                LIMIT $1
+            """, limit, days, cutoff_date, guild_id)
+            
             return [dict(row) for row in rows]
             
     async def upsert_leaderboard_config(self, guild_id: int, channel_id: int, message_id: int):
