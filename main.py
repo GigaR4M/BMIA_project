@@ -17,6 +17,7 @@ from commands.stats_commands import StatsCommands
 from commands.role_commands import RoleCommands
 from commands.giveaway_commands import GiveawayCommands
 from commands.games_commands import GamesCommands
+from commands.info_commands import InfoCommands
 from utils.role_manager import RoleManager
 from utils.giveaway_manager import GiveawayManager
 from utils.activity_tracker import ActivityTracker
@@ -222,6 +223,19 @@ async def processador_em_lote():
                         await msg.delete()
                         await msg.channel.send(f"⚠️ Mensagem de {msg.author.mention} removida por conter linguagem inadequada.", delete_after=10)
                         await db.update_message_moderation_status(msg.id, True)
+                        
+                        # Remove os pontos que o usuário ganhou por essa mensagem
+                        if points_manager:
+                            points_to_remove = 1
+                            if len(msg.content) >= 10:
+                                points_to_remove = 2
+                            # Se era reply, tira +1? Difícil saber aqui sem checar msg.reference antes de deletar.
+                            # Vamos simplificar e remover o base calculate.
+                            if msg.reference:
+                                points_to_remove += 1
+                                
+                            await points_manager.remove_points(msg.author.id, points_to_remove, "moderation_deletion")
+
                     except discord.Forbidden:
                         logger.warning(f"Sem permissão para deletar mensagem em {msg.channel.name}")
                     except Exception as e:
@@ -285,6 +299,7 @@ async def on_ready():
             client.tree.add_command(RoleCommands(db, role_manager))
             client.tree.add_command(GiveawayCommands(db, giveaway_manager))
             client.tree.add_command(GamesCommands(db))
+            client.tree.add_command(InfoCommands())
             
             await client.tree.sync()
             
@@ -325,6 +340,21 @@ async def on_ready():
     client.loop.create_task(check_embed_queue())
     if leaderboard_updater:
         client.loop.create_task(leaderboard_updater.start_loop())
+    
+    # Inicia loop de verificação de pontos (voz/atividade)
+    client.loop.create_task(check_voice_points_periodically())
+    
+async def check_voice_points_periodically():
+    """Loop para verificar e atribuir pontos de voz/atividade a cada 60s."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            if points_manager:
+                await points_manager.execute_points_loop(client.guilds)
+        except Exception as e:
+            logger.error(f"❌ Erro no loop de pontos periódicos: {e}")
+        
+        await asyncio.sleep(60)
 
 @client.event
 async def on_message(message):
@@ -337,7 +367,28 @@ async def on_message(message):
 
     # Adiciona pontos se estiver em canal permitido
     if points_manager and message.channel.id in ALLOWED_CHANNELS:
-        await points_manager.add_points(message.author.id, 1, 'message', message.author.name, message.author.discriminator)
+        # Lógica de pontos atualizada
+        points = 1
+        # Mensagens longas (>10 chars) valem 2 pontos
+        if len(message.content) >= 10:
+            points = 2
+        
+        # Bônus por resposta (Replying to someone)
+        if message.reference:
+            # Verifica se não é resposta para si mesmo ou bot (idealmente)
+            # Como message.reference.resolved pode ser nulo se mensagem original foi deletada, usamos try/catch
+            try:
+                if message.reference.cached_message:
+                     ref_msg = message.reference.cached_message
+                     if ref_msg.author.id != message.author.id and not ref_msg.author.bot:
+                         points += 1
+                else:
+                    # Se não tá no cache, assumimos que vale o ponto extra se existir ref
+                    points += 1
+            except:
+                pass
+
+        await points_manager.add_points(message.author.id, points, 'message', message.author.name, message.author.discriminator)
 
     # Adiciona ao buffer de moderação
     buffer_mensagens.append(message)
@@ -356,10 +407,23 @@ async def on_raw_reaction_add(payload):
     # Pontos por reação
     if points_manager:
         if payload.channel_id in ALLOWED_CHANNELS:
-            user = client.get_user(payload.user_id)
-            username = user.name if user else "Unknown"
-            discriminator = user.discriminator if user else "0000"
-            await points_manager.add_points(payload.user_id, 1, 'reaction', username, discriminator)
+            # Ponto para quem reagiu
+            user_reactor = client.get_user(payload.user_id)
+            if user_reactor:
+                username = user_reactor.name
+                discriminator = user_reactor.discriminator
+                await points_manager.add_points(payload.user_id, 1, 'reaction_given', username, discriminator)
+            
+            # Ponto para o autor da mensagem
+            try:
+                channel = client.get_channel(payload.channel_id)
+                # Tenta pegar do cache ou fetch
+                message = await channel.fetch_message(payload.message_id) 
+                # Evita farm em si mesmo
+                if message.author.id != payload.user_id:
+                     await points_manager.add_points(message.author.id, 1, 'reaction_received', message.author.name, message.author.discriminator, message.author.bot)
+            except Exception as e:
+                logger.error(f"Erro ao dar ponto de reação para autor: {e}")
 
     if giveaway_manager:
         try:
@@ -379,13 +443,8 @@ async def on_presence_update(before, after):
         await activity_tracker.on_presence_update(before, after)
     
     # Rastreia tempo de atividade para pontos
-    if points_manager:
-        # Se começou a jogar algo
-        if not before.activity and after.activity:
-            points_manager.start_activity_session(after.id)
-        # Se parou de jogar
-        elif before.activity and not after.activity:
-            await points_manager.end_activity_session(after.id)
+    # REMOVIDO: Pontos de atividade agora são verificados periodicamente em check_voice_points_periodically
+    pass
 
 @client.event
 async def on_voice_state_update(member, before, after):
@@ -398,20 +457,8 @@ async def on_voice_state_update(member, before, after):
         await activity_tracker.on_voice_state_update(member, before, after)
     
     # Rastreia tempo de voz para pontos
-    if points_manager:
-
-        
-        # Entrou em canal de voz (e não é ignorado)
-        if after.channel and after.channel.id not in IGNORED_VOICE_CHANNELS:
-            if not before.channel: # Entrou agora
-                points_manager.start_voice_session(member.id)
-            elif before.channel.id in IGNORED_VOICE_CHANNELS: # Veio de canal ignorado
-                points_manager.start_voice_session(member.id)
-        
-        # Saiu de canal de voz (ou foi para ignorado)
-        if before.channel and (not after.channel or after.channel.id in IGNORED_VOICE_CHANNELS):
-             if before.channel.id not in IGNORED_VOICE_CHANNELS:
-                await points_manager.end_voice_session(member.id)
+    # REMOVIDO: Pontos de voz agora são verificados periodicamente em check_voice_points_periodically
+    pass
 
 # --- 7. Inicialização do Bot E DO SERVIDOR WEB ---
 keep_alive()  # Inicia o servidor web em segundo plano
