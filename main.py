@@ -290,7 +290,7 @@ async def on_ready():
             giveaway_manager = GiveawayManager(db)
             activity_tracker = ActivityTracker(db)
             embed_sender = EmbedSender(db)
-            points_manager = PointsManager(db)
+            points_manager = PointsManager(db, IGNORED_VOICE_CHANNELS)
             spam_detector = SpamDetector()
             event_monitor = EventMonitor(db)
             leaderboard_updater = LeaderboardUpdater(client, db)

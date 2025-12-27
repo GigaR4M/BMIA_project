@@ -7,8 +7,9 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 class PointsManager:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, ignored_channels: List[int] = None):
         self.db = db
+        self.ignored_channels = ignored_channels if ignored_channels else []
         # Cache for voice/activity start times: {user_id: start_time}
         # Depreciado para cálculo de pontos, mantido se necessário para legacy analytics
         self.voice_sessions = {}
@@ -46,6 +47,10 @@ class PointsManager:
         try:
             for guild in guilds:
                 for channel in guild.voice_channels:
+                    # Verifica se canal está na lista de ignorados
+                    if channel.id in self.ignored_channels:
+                        continue
+
                     # Filtra membros válidos no canal (não bots)
                     members_in_channel = [m for m in channel.members if not m.bot]
                     count_users = len(members_in_channel)
@@ -139,16 +144,23 @@ class PointsManager:
                     
                     # --- Lógica de VOZ ---
                     if member.voice and member.voice.channel and member.voice.channel.id: # Está em call
-                        # Verifica self_deaf
-                        if not member.voice.self_deaf:
-                            # Base
-                            points += 1
-                            
-                            # Crowd Bonus (pessoas na mesma sala)
-                            #channel = member.voice.channel # Pode ser None se acabou de sair? Não, estamos no loop sincrono do cache
-                            # members_in_channel = [m for m in channel.members if not m.bot] # Ineficiente recalcular para cada membro
-                            # Melhor pré-calcular mapas de canais.
-                            pass
+                        # Verifica se canal está na lista de ignorados
+                        if member.voice.channel.id in self.ignored_channels:
+                            pass # Pula lógica de voz mas pode pontuar por atividade? 
+                            # Requisito não especifica, mas geralmente "ignored from points" em voz
+                            # implica não ganhar por estar lá. Por atividade jogando talvez ganhe?
+                            # Vamos assumir que ignore invalida SÓ parte de voz.
+                        else:
+                            # Verifica self_deaf
+                            if not member.voice.self_deaf:
+                                # Base
+                                points += 1
+                                
+                                # Crowd Bonus (pessoas na mesma sala)
+                                #channel = member.voice.channel # Pode ser None se acabou de sair? Não, estamos no loop sincrono do cache
+                                # members_in_channel = [m for m in channel.members if not m.bot] # Ineficiente recalcular para cada membro
+                                # Melhor pré-calcular mapas de canais.
+                                pass
 
         except Exception as e:
             logger.error(f"Erro no process_voice_points: {e}")
@@ -166,6 +178,10 @@ class PointsManager:
                 channel_games = {} # channel_id -> {game_name: set(user_ids)}
                 
                 for channel in guild.voice_channels:
+                    # Verifica se canal está na lista de ignorados
+                    if channel.id in self.ignored_channels:
+                        continue
+
                     valid_members = [m for m in channel.members if not m.bot]
                     channel_counts[channel.id] = len(valid_members)
                     
@@ -185,6 +201,11 @@ class PointsManager:
                     
                     # 1. VOZ
                     in_voice = member.voice and member.voice.channel and member.voice.channel.id
+                    if in_voice:
+                        # Verifica se canal é ignorado
+                        if member.voice.channel.id in self.ignored_channels:
+                            in_voice = False # Trata como se não estivesse em voz para fins de pontos
+                    
                     if in_voice and not member.voice.self_deaf:
                         # Base
                         current_points += 1
