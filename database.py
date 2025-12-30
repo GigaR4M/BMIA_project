@@ -428,6 +428,21 @@ class Database:
         """Retorna estatísticas de um usuário específico."""
         return await self.get_detailed_user_stats(user_id, guild_id, days)
 
+    async def get_daily_points(self, user_id: int, interaction_type: str, guild_id: int) -> int:
+        """Retorna a quantidade de pontos que um usuário ganhou hoje para um tipo específico."""
+        async with self.pool.acquire() as conn:
+            # Use data baseada no timezone do Brasil (-3) para 'hoje'
+            total = await conn.fetchval("""
+                SELECT COALESCE(SUM(points), 0)
+                FROM interaction_points
+                WHERE user_id = $1 
+                  AND interaction_type = $2
+                  AND guild_id = $3
+                  AND created_at >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE
+            """, user_id, interaction_type, guild_id)
+            return total
+
+
     async def get_detailed_user_stats(self, user_id: int, guild_id: int, days: int = 30) -> Dict[str, Any]:
         """Retorna estatísticas detalhadas de um usuário específico para auditoria."""
         async with self.pool.acquire() as conn:

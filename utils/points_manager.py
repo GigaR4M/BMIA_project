@@ -172,7 +172,10 @@ class PointsManager:
     async def execute_points_loop(self, guilds: List[discord.Guild]):
         """Executa a verificação periódica de pontos."""
         try:
-             for guild in guilds:
+            # Check for even minute
+            is_even_minute = datetime.now().minute % 2 == 0
+
+            for guild in guilds:
                 # Pré-cálculo de contagens de canais para evitar O(N^2)
                 channel_counts = {} # channel_id -> count of non-bot users
                 channel_games = {} # channel_id -> {game_name: set(user_ids)}
@@ -200,13 +203,14 @@ class PointsManager:
                     current_points = 0
                     
                     # 1. VOZ
-                    in_voice = member.voice and member.voice.channel and member.voice.channel.id
-                    if in_voice:
-                        # Verifica se canal é ignorado
-                        if member.voice.channel.id in self.ignored_channels:
-                            in_voice = False # Trata como se não estivesse em voz para fins de pontos
+                    # Verifica se está em voz E em canal válido
+                    in_voice_valid = False
+                    if member.voice and member.voice.channel and member.voice.channel.id:
+                        if member.voice.channel.id not in self.ignored_channels:
+                            in_voice_valid = True
                     
-                    if in_voice and not member.voice.self_deaf:
+                    # Pontos de Voz (1/min)
+                    if in_voice_valid and not member.voice.self_deaf:
                         # Base
                         current_points += 1
                         
@@ -222,7 +226,6 @@ class PointsManager:
                              current_points += 1
                              
                         # Bonus de Sinergia (dentro da call)
-                        # Se o usuário está jogando algum jogo que tem >= 2 pessoas jogando nesse canal
                         has_synergy = False
                         if channel_id in channel_games:
                             for act in member.activities:
@@ -233,11 +236,10 @@ class PointsManager:
                         if has_synergy:
                             current_points += 1
 
-                    # 2. ATIVIDADE (Jogando) - Conta mesmo fora da call?
-                    # "manteremos a pontuação 1 ponto/min em jogo/atividade detectada pelo discord, mesmo se o usuario não estiver em call."
-                    # E se estiver em call E jogando? Acumula?
-                    # O sistema anterior (on_presence) acumulava SEPARADO (add_points(..., 'voice') e add_points(..., 'activity')).
-                    # Então SIM, acumula.
+                    # 2. ATIVIDADE (Jogando)
+                    # Lógica atualizada: 
+                    # - Se estiver em call: 1 ponto/min (acumula com voz)
+                    # - Se NÃO estiver em call: 1 ponto a cada 2 mins (even minutes only)
                     
                     is_playing = False
                     for act in member.activities:
@@ -246,7 +248,13 @@ class PointsManager:
                             break
                     
                     if is_playing:
-                        current_points += 1
+                        if in_voice_valid:
+                            # Jogando E em call válida -> 1 ponto/min
+                            current_points += 1
+                        elif is_even_minute:
+                            # Jogando mas FORA de call -> 1 ponto/2 min
+                            current_points += 1
+                        # Se não for minuto par e não estiver em call, não ganha ponto de jogo
                     
                     if current_points > 0:
                         await self.add_points(member.id, current_points, "minute_tick", guild.id, member.name, member.discriminator)

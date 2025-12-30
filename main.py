@@ -367,30 +367,44 @@ async def on_message(message):
         return
 
     # Adiciona pontos se estiver em canal permitido
+    # Adiciona pontos se estiver em canal permitido
     if points_manager and message.channel.id in ALLOWED_CHANNELS:
         # Lógica de pontos atualizada
         points = 1
-        # Mensagens longas (>10 chars) valem 2 pontos
-        if len(message.content) >= 10:
-            points = 2
+        interaction_type = 'message'
         
-        # Bônus por resposta (Replying to someone)
-        if message.reference:
-            # Verifica se não é resposta para si mesmo ou bot (idealmente)
-            # Como message.reference.resolved pode ser nulo se mensagem original foi deletada, usamos try/catch
-            try:
-                if message.reference.cached_message:
-                     ref_msg = message.reference.cached_message
-                     if ref_msg.author.id != message.author.id and not ref_msg.author.bot:
-                         points += 1
-                else:
-                    # Se não tá no cache, assumimos que vale o ponto extra se existir ref
-                    points += 1
-            except:
-                pass
+        # Mensagens curtas (<= 10 chars) têm limite diário de 30 pontos
+        if len(message.content) <= 10:
+            interaction_type = 'message_short'
+            # Verifica quantos pontos já ganhou hoje com mensagens curtas
+            if message.guild:
+                daily_points = await db.get_daily_points(message.author.id, 'message_short', message.guild.id)
+                if daily_points >= 30:
+                    points = 0
+                    print(f"🚫 {message.author.name} atingiu o limite diário de pontos por mensagens curtas.")
+        # Mensagens longas (> 10 chars) valem 2 pontos
+        else: # > 10
+            points = 2
+            interaction_type = 'message_long'
+        
+        if points > 0:
+            # Bônus por resposta (Replying to someone)
+            if message.reference:
+                # Verifica se não é resposta para si mesmo ou bot (idealmente)
+                # Como message.reference.resolved pode ser nulo se mensagem original foi deletada, usamos try/catch
+                try:
+                    if message.reference.cached_message:
+                         ref_msg = message.reference.cached_message
+                         if ref_msg.author.id != message.author.id and not ref_msg.author.bot:
+                             points += 1
+                    else:
+                        # Se não tá no cache, assumimos que vale o ponto extra se existir ref
+                        points += 1
+                except:
+                    pass
 
-        if message.guild:
-            await points_manager.add_points(message.author.id, points, 'message', message.guild.id, message.author.name, message.author.discriminator)
+            if message.guild:
+                await points_manager.add_points(message.author.id, points, interaction_type, message.guild.id, message.author.name, message.author.discriminator)
 
     # Adiciona ao buffer de moderação
     buffer_mensagens.append(message)
