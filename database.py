@@ -215,6 +215,18 @@ class Database:
                     last_updated TIMESTAMP DEFAULT NOW()
                 )
             """)
+
+            # Tabela de log de podium periódico (mensal/anual)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS periodic_leaderboard_log (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    period_type TEXT NOT NULL,
+                    period_identifier TEXT NOT NULL,
+                    sent_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(guild_id, period_type, period_identifier)
+                )
+            """)
             
             # Índices para melhor performance
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
@@ -441,6 +453,44 @@ class Database:
                   AND created_at >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE
             """, user_id, interaction_type, guild_id)
             return total
+
+
+    async def get_top_users_date_range(self, guild_id: int, start_date: datetime, end_date: datetime, limit: int = 3) -> List[Dict[str, Any]]:
+        """Retorna os top usuários por pontos num intervalo de datas."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT 
+                    u.user_id,
+                    u.username,
+                    u.discriminator,
+                    COALESCE(SUM(ip.points), 0) as total_points
+                FROM interaction_points ip
+                JOIN users u ON ip.user_id = u.user_id
+                WHERE ip.guild_id = $1 
+                  AND ip.created_at >= $2
+                  AND ip.created_at < $3
+                GROUP BY u.user_id, u.username, u.discriminator
+                ORDER BY total_points DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+            return [dict(row) for row in rows]
+
+    async def check_periodic_leaderboard_sent(self, guild_id: int, period_type: str, period_identifier: str) -> bool:
+        """Verifica se o podium já foi enviado para esse período."""
+        async with self.pool.acquire() as conn:
+            val = await conn.fetchval("""
+                SELECT 1 FROM periodic_leaderboard_log
+                WHERE guild_id = $1 AND period_type = $2 AND period_identifier = $3
+            """, guild_id, period_type, period_identifier)
+            return val is not None
+
+    async def log_periodic_leaderboard_sent(self, guild_id: int, period_type: str, period_identifier: str):
+        """Registra que o podium foi enviado."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO periodic_leaderboard_log (guild_id, period_type, period_identifier)
+                VALUES ($1, $2, $3)
+            """, guild_id, period_type, period_identifier)
 
 
     async def get_detailed_user_stats(self, user_id: int, guild_id: int, days: int = 30) -> Dict[str, Any]:

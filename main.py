@@ -26,6 +26,8 @@ from utils.points_manager import PointsManager
 from utils.spam_detector import SpamDetector
 from utils.event_monitor import EventMonitor
 from utils.leaderboard_updater import LeaderboardUpdater
+from utils.image_generator import PodiumBuilder
+from datetime import datetime, timedelta
 
 # Configuração de logging
 logging.basicConfig(
@@ -134,6 +136,89 @@ async def check_roles_periodically():
                         logger.info(f"🏅 {assigned} cargos atribuídos em {guild.name}")
         except Exception as e:
             logger.error(f"❌ Erro ao verificar cargos: {e}")
+        
+        # Verifica a cada 1 hora
+        await asyncio.sleep(3600)
+
+async def check_monthly_podium():
+    """Verifica se é dia 1 e envia o podium mensal/anual."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            if db:
+                # Usa timezone Brasil para determinar o dia certo
+                now = datetime.now() - timedelta(hours=3) # Ajuste simples UTC-3 se o servidor estiver UTC, mas melhor usar pytz se possivel. 
+                # Assumindo servidor local ou UTC. Se servidor for UTC:
+                # O ideal é usar datetime.now() do sistema e assumir configuração correta ou converter.
+                # O código original usa: (NOW() AT TIME ZONE 'America/Sao_Paulo') no banco.
+                # Vamos simplificar e usar datetime.now() local do bot.
+                
+                # Se for dia 1
+                if now.day == 1:
+                    # Determina o período
+                    if now.month == 1:
+                        # Podium Anual (Ano anterior)
+                        period_type = 'YEARLY'
+                        year = now.year - 1
+                        period_identifier = str(year)
+                        start_date = datetime(year, 1, 1)
+                        end_date = datetime(now.year, 1, 1)
+                        title = f"🏆 PODIUM DE {year} 🏆"
+                    else:
+                        # Podium Mensal (Mês anterior)
+                        period_type = 'MONTHLY'
+                        # Primeiro dia deste mês - 1 dia = último dia do mês anterior
+                        last_month_end = now.replace(day=1) - timedelta(days=1)
+                        month_num = last_month_end.month
+                        year_num = last_month_end.year
+                        period_identifier = f"{year_num}-{month_num:02d}"
+                        start_date = last_month_end.replace(day=1) # dia 1 do mês anterior
+                        end_date = now.replace(day=1) # dia 1 deste mês (exclusive)
+                        
+                        month_names = {
+                            1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL",
+                            5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
+                            9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO"
+                        }
+                        title = f"🏆 PODIUM DE {month_names.get(month_num, '')}/{year_num} 🏆"
+
+                    # Itera por todas as guilds
+                    for guild in client.guilds:
+                        # Verifica se já enviou
+                        if not await db.check_periodic_leaderboard_sent(guild.id, period_type, period_identifier):
+                            logger.info(f"Gerando podium {period_type} para {guild.name}...")
+                            
+                            # Busca Top 3
+                            top_users = await db.get_top_users_date_range(guild.id, start_date, end_date, limit=3)
+                            
+                            if top_users:
+                                # Gera Imagem
+                                builder = PodiumBuilder()
+                                image_bio = await builder.generate_podium(guild, top_users)
+                                
+                                # Envia no Chat Principal
+                                target_channel = None
+                                for channel_id in ALLOWED_CHANNELS:
+                                    channel = guild.get_channel(channel_id)
+                                    if channel:
+                                        target_channel = channel
+                                        break
+                                
+                                if target_channel:
+                                    file = discord.File(fp=image_bio, filename="podium.png")
+                                    await target_channel.send(f"**{title}**\nParabéns aos mais ativos do período! 🎉", file=file)
+                                    await db.log_periodic_leaderboard_sent(guild.id, period_type, period_identifier)
+                                    logger.info(f"✅ Podium enviado para {guild.name}")
+                                else:
+                                    logger.warning(f"⚠️ Sem canal permitido para podium em {guild.name}")
+                            else:
+                                # Marca como enviado para não repetir sem dados
+                                await db.log_periodic_leaderboard_sent(guild.id, period_type, period_identifier)
+                                logger.info(f"Sem dados para podium em {guild.name}")
+
+        except Exception as e:
+            logger.error(f"❌ Erro no check_monthly_podium: {e}")
+            traceback.print_exc()
         
         # Verifica a cada 1 hora
         await asyncio.sleep(3600)
@@ -339,6 +424,7 @@ async def on_ready():
     client.loop.create_task(check_roles_periodically())
     client.loop.create_task(check_expired_giveaways())
     client.loop.create_task(check_embed_queue())
+    client.loop.create_task(check_monthly_podium())
     if leaderboard_updater:
         client.loop.create_task(leaderboard_updater.start_loop())
     
