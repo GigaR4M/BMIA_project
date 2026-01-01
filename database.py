@@ -450,7 +450,7 @@ class Database:
                 WHERE user_id = $1 
                   AND interaction_type = $2
                   AND guild_id = $3
-                  AND created_at >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE
+                  AND created_at >= ((NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE AT TIME ZONE 'America/Sao_Paulo')
             """, user_id, interaction_type, guild_id)
             return total
 

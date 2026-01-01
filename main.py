@@ -161,8 +161,8 @@ async def check_monthly_podium():
                         period_type = 'YEARLY'
                         year = now.year - 1
                         period_identifier = str(year)
-                        start_date = datetime(year, 1, 1)
-                        end_date = datetime(now.year, 1, 1)
+                        start_date = datetime(year, 1, 1) + timedelta(hours=3)
+                        end_date = datetime(now.year, 1, 1) + timedelta(hours=3)
                         title = f"🏆 PODIUM DE {year} 🏆"
                     else:
                         # Podium Mensal (Mês anterior)
@@ -172,8 +172,8 @@ async def check_monthly_podium():
                         month_num = last_month_end.month
                         year_num = last_month_end.year
                         period_identifier = f"{year_num}-{month_num:02d}"
-                        start_date = last_month_end.replace(day=1) # dia 1 do mês anterior
-                        end_date = now.replace(day=1) # dia 1 deste mês (exclusive)
+                        start_date = last_month_end.replace(day=1) + timedelta(hours=3) # dia 1 do mês anterior
+                        end_date = now.replace(day=1) + timedelta(hours=3) # dia 1 deste mês (exclusive)
                         
                         month_names = {
                             1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL",
