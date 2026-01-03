@@ -12,10 +12,11 @@ class PodiumBuilder:
         self.SILVER = (192, 192, 192)
         self.BRONZE = (205, 127, 50)
         
-    async def generate_podium(self, guild: discord.Guild, top_users: list) -> BytesIO:
+    async def generate_podium(self, guild: discord.Guild, top_users: list, period_text: str = None) -> BytesIO:
         """
         Gera uma imagem de pódio com os top 3 usuários.
         top_users: lista de dicts com 'user_id', 'username', 'total_points'
+        period_text: texto opcional para exibir periodo (ex: "Novembro 2025")
         """
         # 1. Configurar Canvas (800x500)
         img = Image.new('RGB', (800, 500), color=self.BACKGROUND_COLOR)
@@ -37,8 +38,22 @@ class PodiumBuilder:
             font_name = ImageFont.truetype(font_path, 30)
             font_score = ImageFont.truetype(font_path, 24)
         except:
-            font_name = ImageFont.load_default()
             font_score = ImageFont.load_default()
+
+        # Desenhar o texto do período se fornecido
+        if period_text:
+            try:
+                # Tenta uma fonte maior para o título
+                font_title = ImageFont.truetype(font_path, 40)
+            except:
+                font_title = font_name
+            
+            # Centralizar texto "Ranking: {period_text}" ou apenas o texto
+            title = f"Ranking: {period_text}"
+            # Posição aproximada centralizada no topo (800 largura / 2 = 400)
+            # Ajuste fino: subtrair metado do tamanho estimado do texto (aprox 15px por char com fonte 40)
+            text_width = len(title) * 20 
+            draw.text((400 - (text_width // 2), 50), title, fill=self.GOLD, font=font_title)
 
         # 2. Desenhar cada vencedor
         for i, user_data in enumerate(top_users):

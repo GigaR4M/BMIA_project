@@ -22,20 +22,10 @@ class InfoCommands(app_commands.Group):
         embed.add_field(
             name="💬 Chat de Texto",
             value=(
-                "• **Mensagens curtas** (<10 caracteres): **1 ponto**\n"
+                "• **Mensagens curtas** (<10 caracteres): **1 ponto** (Máx 30/dia)\n"
                 "• **Mensagens longas** (≥10 caracteres): **2 pontos**\n"
                 "• **Responder alguém** (Reply): **+1 ponto extra**\n"
                 "• *Mensagens apagadas por moderação perdem os pontos!*"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="😄 Reações",
-            value=(
-                "• **Reagir** a uma mensagem: **1 ponto**\n"
-                "• **Receber reação** na sua mensagem: **1 ponto**\n"
-                "• *Auto-reações não contam.*"
             ),
             inline=False
         )
@@ -45,7 +35,7 @@ class InfoCommands(app_commands.Group):
             value=(
                 "• **Na Call** (falando/ouvindo): **1 ponto/min**\n"
                 "• **Bônus de Galera** (2+ pessoas na call): **+1 ponto/min**\n"
-                "• **Fazendo Live** (Streaming paiado): **+1 ponto/min**\n"
+                "• **Fazendo Live** (Streaming p/ 2+ pessoas): **+1 ponto/min**\n"
                 "• *Estar mutado E ensurdecido (self-deaf) não gera pontos.*"
             ),
             inline=False
@@ -54,8 +44,9 @@ class InfoCommands(app_commands.Group):
         embed.add_field(
             name="🎮 Jogos & Atividades",
             value=(
-                "• **Jogando** (qualquer jogo detectado): **1 ponto/min**\n"
-                "• **Sinergia** (Jogando o mesmo jogo com amigos na call): **+1 ponto/min**"
+                "• **Jogando na Call**: **1 ponto/min**\n"
+                "• **Jogando fora da Call**: **1 ponto a cada 2 min**\n"
+                "• **Sinergia** (Jogando mesmo jogo com amigos na call): **+1 ponto/min**"
             ),
             inline=False
         )

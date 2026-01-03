@@ -403,11 +403,11 @@ class Database:
                 SELECT 
                     u.user_id,
                     u.username,
-                    COUNT(m.message_id) as message_count
+                    COALESCE(SUM(s.messages_count), 0) as message_count
                 FROM users u
-                JOIN messages m ON u.user_id = m.user_id
-                WHERE m.guild_id = $1 
-                  AND m.created_at >= $2
+                JOIN daily_user_stats s ON u.user_id = s.user_id
+                WHERE s.guild_id = $1 
+                  AND s.date >= $2::DATE
                   AND u.is_bot = FALSE
                 GROUP BY u.user_id, u.username
                 ORDER BY message_count DESC
@@ -500,15 +500,15 @@ class Database:
             
             # 1. Total de mensagens
             total_messages = await conn.fetchval("""
-                SELECT COUNT(*) FROM messages 
-                WHERE user_id = $1 AND guild_id = $2 AND created_at >= $3
+                SELECT COALESCE(SUM(messages_count), 0) FROM daily_user_stats
+                WHERE user_id = $1 AND guild_id = $2 AND date >= $3::DATE
             """, user_id, guild_id, cutoff_date)
             
             # 2. Tempo em voz (minutos)
             voice_minutes = await conn.fetchval("""
-                SELECT COALESCE(SUM(duration_seconds), 0) / 60 
-                FROM voice_activity 
-                WHERE user_id = $1 AND guild_id = $2 AND joined_at >= $3
+                SELECT COALESCE(SUM(voice_seconds), 0) / 60 
+                FROM daily_user_stats
+                WHERE user_id = $1 AND guild_id = $2 AND date >= $3::DATE
             """, user_id, guild_id, cutoff_date)
             
             # 3. Pontos Totais (Auditados)
@@ -587,10 +587,10 @@ class Database:
             
             rows = await conn.fetch("""
                 SELECT 
-                    DATE(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') as date,
-                    COUNT(*) as message_count
-                FROM messages
-                WHERE guild_id = $1 AND created_at >= $2
+                    date,
+                    SUM(messages_count) as message_count
+                FROM daily_user_stats
+                WHERE guild_id = $1 AND date >= $2::DATE
                 GROUP BY date
                 ORDER BY date
             """, guild_id, cutoff_date)
