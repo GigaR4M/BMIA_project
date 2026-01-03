@@ -112,8 +112,25 @@ class StatsEmbedBuilder:
 
         # 2. Detalhamento de Pontos
         breakdown = stats.get('points_breakdown', {})
-        points_msg = breakdown.get('message', 0)
-        points_voice = breakdown.get('voice', 0)
+
+        
+        # Agrega pontos de mensagem (legacy 'message', 'message_short', 'message_long')
+        points_msg = (
+            breakdown.get('message', 0) + 
+            breakdown.get('message_short', 0) + 
+            breakdown.get('message_long', 0)
+        )
+        
+        # Agrega pontos de voz (legacy 'voice', 'voice_base', etc. e novo 'minute_tick')
+        # 'minute_tick' engloba voz e jogos atualmente
+        points_voice = (
+            breakdown.get('voice', 0) +
+            breakdown.get('voice_base', 0) +
+            breakdown.get('voice_crowd_bonus', 0) +
+            breakdown.get('streaming_bonus', 0) +
+            breakdown.get('minute_tick', 0)
+        )
+        
         other_points = total_points - (points_msg + points_voice)
         
         points_text = (
