@@ -710,7 +710,7 @@ class Database:
             return [r['user_id'] for r in rows]
 
     async def get_top_users_streaming_time_year(self, guild_id: int, year: int) -> List[int]:
-        """Retorna usuários com maior tempo de streaming (game_time type 'streaming')."""
+        """Retorna usuários com maior tempo de streaming (game_time type 'streaming' ou 'screen_share')."""
         async with self.pool.acquire() as conn:
             start_date = datetime(year, 1, 1)
             end_date = datetime(year + 1, 1, 1)
@@ -720,7 +720,7 @@ class Database:
                     SELECT user_id, SUM(duration_seconds) as total_seconds
                     FROM user_activities
                     WHERE guild_id = $1 
-                      AND activity_type = 'streaming'
+                      AND (activity_type = 'streaming' OR activity_type = 'screen_share' OR activity_name = 'Screen Share')
                       AND started_at >= $2 AND started_at < $3
                     GROUP BY user_id
                 ),
@@ -830,6 +830,7 @@ class Database:
                     WHERE guild_id = $1 
                       AND activity_type = 'playing'
                       AND started_at >= $2 AND started_at < $3
+                      AND duration_seconds > 60 -- Ignora jogos abertos por menos de 1 minuto
                     GROUP BY user_id
                 ),
                 MaxDistinct AS (
