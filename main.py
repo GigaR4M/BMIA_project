@@ -90,6 +90,19 @@ IGNORED_VOICE_CHANNELS = [
     1335352978986635468  # AFK
 ]
 
+DYNAMIC_ROLES_CONFIG = {
+    'top_1': 1457429534210261167,
+    'top_2': 1457429841103290643,
+    'top_3': 1457430517145403547,
+    'voz': 1457430624217596026,
+    'streamer': 1457430749329232036,
+    'mensagens': 1457430923825123440,
+    'toxico': 1457430992993259695,
+    'gamer': 1457431074073350215,
+    'camaleao': 1457431198862282763,
+    'maratonista': 1457431299374579722
+}
+
 # Configuração do Cliente do Discord
 intents = discord.Intents.default()
 intents.guilds = True
@@ -125,15 +138,21 @@ async def collect_server_stats():
         await asyncio.sleep(3600)
 
 async def check_roles_periodically():
-    """Verifica e atribui cargos automáticos periodicamente."""
+    """Verifica e atribui cargos automáticos e dinâmicos periodicamente."""
     await client.wait_until_ready()
     while not client.is_closed():
         try:
             if role_manager:
                 for guild in client.guilds:
+                    # 1. Cargos Automáticos (Tempo de casa)
                     assigned = await role_manager.check_all_members(guild)
                     if assigned > 0:
-                        logger.info(f"🏅 {assigned} cargos atribuídos em {guild.name}")
+                        logger.info(f"🏅 {assigned} cargos por tempo atribuídos em {guild.name}")
+                    
+                    # 2. Cargos Dinâmicos (Estatísticas do Ano)
+                    role_manager.set_dynamic_role_ids(DYNAMIC_ROLES_CONFIG)
+                    await role_manager.sync_dynamic_roles(guild)
+
         except Exception as e:
             logger.error(f"❌ Erro ao verificar cargos: {e}")
         
@@ -371,7 +390,7 @@ async def on_ready():
             stats_collector = StatsCollector(db)
             
             # Inicializa novos gerenciadores
-            role_manager = RoleManager(db)
+            role_manager = RoleManager(db, IGNORED_VOICE_CHANNELS)
             giveaway_manager = GiveawayManager(db)
             activity_tracker = ActivityTracker(db)
             embed_sender = EmbedSender(db)

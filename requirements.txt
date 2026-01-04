@@ -1,0 +1,7 @@
+discord.py
+google-generativeai
+python-dotenv
+flask
+asyncpg
+Pillow
+aiohttp

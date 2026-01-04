@@ -12,8 +12,22 @@ logger = logging.getLogger(__name__)
 class RoleManager:
     """Gerenciador de cargos automáticos baseados em tempo no servidor."""
     
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, ignored_channels: Optional[list] = None):
         self.db = db
+        self.ignored_channels = ignored_channels if ignored_channels else []
+        self.dynamic_roles_config = {
+             # Category Key: Role ID (will be populated from config/env)
+            'top_1': None,
+            'top_2': None,
+            'top_3': None,
+            'voz': None,
+            'streamer': None,
+            'mensagens': None,
+            'toxico': None,
+            'gamer': None,
+            'camaleao': None,
+            'maratonista': None
+        }
     
     def _to_naive_utc(self, dt: datetime) -> datetime:
         """
@@ -158,3 +172,84 @@ class RoleManager:
         if join_date.tzinfo is None:
             join_date = join_date.replace(tzinfo=timezone.utc)
         return (datetime.now(timezone.utc) - join_date).days
+
+    # ==================== DYNAMIC ROLES LOGIC ====================
+
+    def set_dynamic_role_ids(self, config: dict):
+        """Atualiza a configuração com os IDs reais dos cargos."""
+        for key, role_id in config.items():
+            if key in self.dynamic_roles_config:
+                self.dynamic_roles_config[key] = role_id
+    
+    async def sync_dynamic_roles(self, guild: discord.Guild):
+        """Sincroniza os cargos dinâmicos baseado nas estatísticas do ano."""
+        logger.info(f"🔄 Iniciando sincronização de cargos dinâmicos para {guild.name}")
+        
+        current_year = datetime.now().year
+        
+        # 1. Calcular vencedores para cada categoria
+        # Retorna lista de user_ids para cada chave
+        winners_map = {}
+        
+        try:
+            # Top 1, 2, 3 Absoluto
+            winners_map['top_1'] = await self.db.get_top_users_total_points_rank(guild.id, current_year, 1, self.ignored_channels)
+            winners_map['top_2'] = await self.db.get_top_users_total_points_rank(guild.id, current_year, 2, self.ignored_channels)
+            winners_map['top_3'] = await self.db.get_top_users_total_points_rank(guild.id, current_year, 3, self.ignored_channels)
+            
+            # Voz do Servidor
+            winners_map['voz'] = await self.db.get_top_users_voice_time_year(guild.id, current_year, self.ignored_channels)
+            
+            # Streamer
+            winners_map['streamer'] = await self.db.get_top_users_streaming_time_year(guild.id, current_year)
+            
+            # Mestre da Conversa
+            winners_map['mensagens'] = await self.db.get_top_users_messages_year(guild.id, current_year, self.ignored_channels)
+            
+            # Boca Suja (Moderated)
+            winners_map['toxico'] = await self.db.get_top_users_moderated_year(guild.id, current_year)
+            
+            # Top Player (Tempo Jogo)
+            winners_map['gamer'] = await self.db.get_top_users_game_time_year(guild.id, current_year)
+            
+            # Camaleão (Jogos Distintos)
+            winners_map['camaleao'] = await self.db.get_top_users_distinct_games_year(guild.id, current_year)
+            
+            # Maratonista
+            winners_map['maratonista'] = await self.db.get_top_users_longest_session_year(guild.id, current_year, self.ignored_channels)
+            
+            # 2. Aplicar mudanças
+            for key, role_id in self.dynamic_roles_config.items():
+                if not role_id:
+                    continue
+                    
+                role = guild.get_role(role_id)
+                if not role:
+                    logger.warning(f"⚠️ Cargo dinâmico {key} (ID: {role_id}) não encontrado no servidor.")
+                    continue
+                
+                current_winners = winners_map.get(key, [])
+                
+                # Adicionar cargo para vencedores
+                for user_id in current_winners:
+                    member = guild.get_member(user_id)
+                    if member and role not in member.roles:
+                        try:
+                            await member.add_roles(role, reason=f"Vencedor dinâmico: {key}")
+                            logger.info(f"➕ Cargo {role.name} adicionado a {member.name}")
+                        except discord.Forbidden:
+                            logger.error(f"❌ Sem permissão para dar cargo a {member.name}")
+
+                # Remover cargo de quem NÃO é vencedor
+                for member in role.members:
+                    if member.id not in current_winners:
+                        try:
+                            await member.remove_roles(role, reason=f"Perdeu posto: {key}")
+                            logger.info(f"➖ Cargo {role.name} removido de {member.name}")
+                        except discord.Forbidden:
+                            logger.error(f"❌ Sem permissão para remover cargo de {member.name}")
+                            
+            logger.info("✅ Sincronização de cargos dinâmicos concluída.")
+
+        except Exception as e:
+            logger.error(f"❌ Erro na sincronização de cargos dinâmicos: {e}")

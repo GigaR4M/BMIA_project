@@ -614,6 +614,268 @@ class Database:
             
             return [dict(row) for row in rows]
     
+    # ==================== DYNAMIC ROLES QUERIES ====================
+
+    async def get_top_users_total_points_year(self, guild_id: int, year: int, ignored_channels: List[int] = None) -> List[int]:
+        """Retorna a lista de usuários empatados com a maior pontuação no ano."""
+        # Nota: Pontos são calculados na tabela interaction_points. Ignored channels já são filtrados na inserção dos pontos.
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            
+            # Buscar maior pontuação primeiro
+            max_points = await conn.fetchval("""
+                SELECT COALESCE(SUM(points), 0) as total
+                FROM interaction_points
+                WHERE guild_id = $1 
+                  AND created_at >= $2 AND created_at < $3
+                GROUP BY user_id
+                ORDER BY total DESC
+                LIMIT 1
+            """, guild_id, start_date, end_date)
+            
+            if not max_points:
+                return []
+                
+            # Buscar todos com essa pontuação
+            rows = await conn.fetch("""
+                SELECT user_id
+                FROM interaction_points
+                WHERE guild_id = $1 
+                  AND created_at >= $2 AND created_at < $3
+                GROUP BY user_id
+                HAVING COALESCE(SUM(points), 0) = $4
+            """, guild_id, start_date, end_date, max_points)
+            
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_total_points_rank(self, guild_id: int, year: int, rank: int, ignored_channels: List[int] = None) -> List[int]:
+        """Retorna usuários num determinado Rank (1, 2, 3...) de pontos."""
+        # Essa query é mais complexa pois precisa lidar com empates no rank anterior.
+        # Vamos usar DENSE_RANK()
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            
+            rows = await conn.fetch("""
+                WITH UserPoints AS (
+                    SELECT user_id, COALESCE(SUM(points), 0) as total
+                    FROM interaction_points
+                    WHERE guild_id = $1 AND created_at >= $2 AND created_at < $3
+                    GROUP BY user_id
+                ),
+                RankedUsers AS (
+                    SELECT user_id, total, DENSE_RANK() OVER (ORDER BY total DESC) as rk
+                    FROM UserPoints
+                )
+                SELECT user_id FROM RankedUsers WHERE rk = $4
+            """, guild_id, start_date, end_date, rank)
+            
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_voice_time_year(self, guild_id: int, year: int, ignored_channels: List[int] = None) -> List[int]:
+        """Retorna usuários com maior tempo de voz no ano."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            ignored = ignored_channels if ignored_channels else []
+
+            # Subquery para filtrar canais
+            channel_filter = ""
+            if ignored:
+                channel_filter = "AND channel_id != ALL($4::bigint[])"
+
+            query = f"""
+                WITH UserVoice AS (
+                    SELECT user_id, SUM(duration_seconds) as total_seconds
+                    FROM voice_activity
+                    WHERE guild_id = $1 
+                      AND joined_at >= $2 AND joined_at < $3
+                      {channel_filter}
+                    GROUP BY user_id
+                ),
+                MaxVoice AS (
+                    SELECT MAX(total_seconds) as max_val FROM UserVoice
+                )
+                SELECT uv.user_id 
+                FROM UserVoice uv, MaxVoice mv 
+                WHERE uv.total_seconds = mv.max_val AND mv.max_val > 0
+            """
+            
+            args = [guild_id, start_date, end_date]
+            if ignored:
+                args.append(ignored)
+                
+            rows = await conn.fetch(query, *args)
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_streaming_time_year(self, guild_id: int, year: int) -> List[int]:
+        """Retorna usuários com maior tempo de streaming (game_time type 'streaming')."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            
+            rows = await conn.fetch("""
+                WITH UserStream AS (
+                    SELECT user_id, SUM(duration_seconds) as total_seconds
+                    FROM user_activities
+                    WHERE guild_id = $1 
+                      AND activity_type = 'streaming'
+                      AND started_at >= $2 AND started_at < $3
+                    GROUP BY user_id
+                ),
+                MaxStream AS (
+                    SELECT MAX(total_seconds) as max_val FROM UserStream
+                )
+                SELECT us.user_id 
+                FROM UserStream us, MaxStream ms 
+                WHERE us.total_seconds = ms.max_val AND ms.max_val > 0
+            """, guild_id, start_date, end_date)
+            
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_messages_year(self, guild_id: int, year: int, ignored_channels: List[int] = None) -> List[int]:
+        """Retorna usuários com maior número de mensagens."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            ignored = ignored_channels if ignored_channels else []
+            
+            channel_filter = ""
+            if ignored:
+                channel_filter = "AND channel_id != ALL($4::bigint[])"
+
+            query = f"""
+                WITH UserMsgs AS (
+                    SELECT user_id, COUNT(*) as total_msgs
+                    FROM messages
+                    WHERE guild_id = $1 
+                      AND created_at >= $2 AND created_at < $3
+                      {channel_filter}
+                    GROUP BY user_id
+                ),
+                MaxMsgs AS (
+                    SELECT MAX(total_msgs) as max_val FROM UserMsgs
+                )
+                SELECT um.user_id 
+                FROM UserMsgs um, MaxMsgs mm 
+                WHERE um.total_msgs = mm.max_val AND mm.max_val > 0
+            """
+            args = [guild_id, start_date, end_date]
+            if ignored:
+                args.append(ignored)
+                
+            rows = await conn.fetch(query, *args)
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_moderated_year(self, guild_id: int, year: int) -> List[int]:
+        """Retorna usuários com mais mensagens moderadas."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            
+            rows = await conn.fetch("""
+                WITH UserMod AS (
+                    SELECT user_id, COUNT(*) as total_mod
+                    FROM messages
+                    WHERE guild_id = $1 
+                      AND created_at >= $2 AND created_at < $3
+                      AND was_moderated = TRUE
+                    GROUP BY user_id
+                ),
+                MaxMod AS (
+                    SELECT MAX(total_mod) as max_val FROM UserMod
+                )
+                SELECT um.user_id 
+                FROM UserMod um, MaxMod mm 
+                WHERE um.total_mod = mm.max_val AND mm.max_val > 0
+            """, guild_id, start_date, end_date)
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_game_time_year(self, guild_id: int, year: int) -> List[int]:
+        """Retorna usuários com maior tempo jogado (any activity not streaming/listening etc if distinct)."""
+        # Assumindo activity_type 'playing'
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            
+            rows = await conn.fetch("""
+                WITH UserGame AS (
+                    SELECT user_id, SUM(duration_seconds) as total_seconds
+                    FROM user_activities
+                    WHERE guild_id = $1 
+                      AND activity_type = 'playing'
+                      AND started_at >= $2 AND started_at < $3
+                    GROUP BY user_id
+                ),
+                MaxGame AS (
+                    SELECT MAX(total_seconds) as max_val FROM UserGame
+                )
+                SELECT ug.user_id 
+                FROM UserGame ug, MaxGame mg 
+                WHERE ug.total_seconds = mg.max_val AND mg.max_val > 0
+            """, guild_id, start_date, end_date)
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_distinct_games_year(self, guild_id: int, year: int) -> List[int]:
+        """Retorna usuários com maior diversidade de jogos."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            
+            rows = await conn.fetch("""
+                WITH UserDistinct AS (
+                    SELECT user_id, COUNT(DISTINCT activity_name) as distinct_count
+                    FROM user_activities
+                    WHERE guild_id = $1 
+                      AND activity_type = 'playing'
+                      AND started_at >= $2 AND started_at < $3
+                    GROUP BY user_id
+                ),
+                MaxDistinct AS (
+                    SELECT MAX(distinct_count) as max_val FROM UserDistinct
+                )
+                SELECT ud.user_id 
+                FROM UserDistinct ud, MaxDistinct md 
+                WHERE ud.distinct_count = md.max_val AND md.max_val > 0
+            """, guild_id, start_date, end_date)
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_longest_session_year(self, guild_id: int, year: int, ignored_channels: List[int] = None) -> List[int]:
+        """Retorna usuários com a maior sessão única de voz."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            ignored = ignored_channels if ignored_channels else []
+
+            channel_filter = ""
+            if ignored:
+                channel_filter = "AND channel_id != ALL($4::bigint[])"
+
+            query = f"""
+                WITH UserMaxSession AS (
+                    SELECT user_id, MAX(duration_seconds) as max_session
+                    FROM voice_activity
+                    WHERE guild_id = $1 
+                      AND joined_at >= $2 AND joined_at < $3
+                      {channel_filter}
+                    GROUP BY user_id
+                ),
+                GlobalMax AS (
+                    SELECT MAX(max_session) as max_val FROM UserMaxSession
+                )
+                SELECT us.user_id 
+                FROM UserMaxSession us, GlobalMax gm 
+                WHERE us.max_session = gm.max_val AND gm.max_val > 0
+            """
+            
+            args = [guild_id, start_date, end_date]
+            if ignored:
+                args.append(ignored)
+                
+            rows = await conn.fetch(query, *args)
+            return [r['user_id'] for r in rows]
+    
     # ==================== MEMBER JOIN TRACKING ====================
     
     async def upsert_member_join(self, guild_id: int, user_id: int, joined_at: datetime):
