@@ -27,6 +27,7 @@ from utils.spam_detector import SpamDetector
 from utils.event_monitor import EventMonitor
 from utils.leaderboard_updater import LeaderboardUpdater
 from utils.image_generator import PodiumBuilder
+from utils.chat_handler import ChatHandler
 from datetime import datetime, timedelta
 
 # Configuração de logging
@@ -57,6 +58,8 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 DATABASE_URL = os.getenv('DATABASE_URL')
+GEMINI_CHAT_API_KEY = os.getenv('GEMINI_CHAT_API_KEY')
+GEMINI_CHAT_MODEL = os.getenv('GEMINI_CHAT_MODEL', 'gemini-2.5-flash')
 
 # Configura a API do Google Gemini
 genai.configure(api_key=GEMINI_API_KEY)
@@ -73,6 +76,7 @@ points_manager = None
 spam_detector = None
 event_monitor = None
 leaderboard_updater = None
+chat_handler = None
 buffer_mensagens = []
 INTERVALO_ANALISE = 60
 TAMANHO_LOTE_MINIMO = 10
@@ -377,7 +381,7 @@ async def on_scheduled_event_user_remove(event, user):
 
 @client.event
 async def on_ready():
-    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor, leaderboard_updater
+    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor, leaderboard_updater, chat_handler
     
     print(f'🤖 Bot conectado como {client.user}!')
     print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
@@ -398,6 +402,7 @@ async def on_ready():
             spam_detector = SpamDetector()
             event_monitor = EventMonitor(db)
             leaderboard_updater = LeaderboardUpdater(client, db)
+            chat_handler = ChatHandler(api_key=GEMINI_CHAT_API_KEY or GEMINI_API_KEY, model_name=GEMINI_CHAT_MODEL)
             
             # Registra comandos
             client.tree.add_command(StatsCommands(db, leaderboard_updater))
@@ -467,9 +472,28 @@ async def on_message(message):
     if message.author.bot:
         return
     
-    # Verifica Spam
     if spam_detector and spam_detector.is_spam(message.author.id):
         return
+
+    # Chat Response for Mentions
+    if client.user.mentioned_in(message) and not message.mention_everyone:
+        # Avoid replying to itself (already checked above) or other specific conditions
+        # Also ensure we have the handler
+        if chat_handler:
+            async with message.channel.typing():
+                try:
+                    # Get context
+                    history_msgs = [msg async for msg in message.channel.history(limit=10, before=message)]
+                    # Reverse to chronological order
+                    history_msgs.reverse()
+                    
+                    formatted_history = chat_handler.format_history(history_msgs, client.user)
+                    response_text = await chat_handler.generate_response(message.content, history=formatted_history)
+                    
+                    await message.reply(response_text)
+                except Exception as e:
+                    logger.error(f"Error calling ChatHandler: {e}")
+                    await message.reply("Desculpe, tive um problema ao tentar responder.")
 
     # Adiciona pontos se estiver em canal permitido
     # Adiciona pontos se estiver em canal permitido
