@@ -22,6 +22,7 @@ from utils.role_manager import RoleManager
 from utils.giveaway_manager import GiveawayManager
 from utils.activity_tracker import ActivityTracker
 from utils.embed_sender import EmbedSender
+from commands.context_commands import ContextCommands
 from utils.points_manager import PointsManager
 from utils.spam_detector import SpamDetector
 from utils.event_monitor import EventMonitor
@@ -432,6 +433,9 @@ async def on_ready():
             client.tree.add_command(GiveawayCommands(db, giveaway_manager))
             client.tree.add_command(GamesCommands(db))
             client.tree.add_command(InfoCommands())
+            
+            if memory_manager:
+                client.tree.add_command(ContextCommands(db, memory_manager))
             
             await client.tree.sync()
             
