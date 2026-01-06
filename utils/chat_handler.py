@@ -91,18 +91,24 @@ class ChatHandler:
 
         self.model = genai.GenerativeModel(self.model_name)
 
-    async def generate_response(self, prompt, history=[]):
+    async def generate_response(self, prompt, history=[], system_instruction=None):
         """
         Generates a response given the current prompt and message history.
         history: list of dicts with 'role' ('user' or 'model') and 'parts' (list of strings).
+        system_instruction: Optional string to define the bot's persona/behavior for this turn.
         """
-        if not self.model:
-            return "Error: Chat model not initialized."
-
         try:
-            chat = self.model.start_chat(history=history)
+            # If system_instruction provided, we might need a model instance with that instruction.
+            # Creating a GenerativeModel is lightweight.
+            if system_instruction:
+                model = genai.GenerativeModel(self.model_name, system_instruction=system_instruction)
+            else:
+                if not self.model: # Fallback to default setup if available
+                     self.model = genai.GenerativeModel(self.model_name)
+                model = self.model
+
+            chat = model.start_chat(history=history)
             response = await chat.send_message_async(prompt)
-            # Access text safely
             return response.text
         except ResourceExhausted:
             logger.warning("ChatHandler: Quota exceeded.")

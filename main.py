@@ -27,7 +27,22 @@ from utils.spam_detector import SpamDetector
 from utils.event_monitor import EventMonitor
 from utils.leaderboard_updater import LeaderboardUpdater
 from utils.image_generator import PodiumBuilder
+
 from utils.chat_handler import ChatHandler
+import re
+
+# Import Memory Manager
+# Note: Ideally this should be imported from utils.memory_manager but we need to ensure the file exists and is importable.
+# Assuming standard structure.
+try:
+    from utils.memory_manager import MemoryManager
+except ImportError:
+    # If not found yet (race condition in dev), define a dummy or wait.
+    MemoryManager = None
+    logger.warning("Could not import MemoryManager.")
+
+# ... existing code ...
+
 from datetime import datetime, timedelta
 
 # Configuração de logging
@@ -73,10 +88,13 @@ giveaway_manager = None
 activity_tracker = None
 embed_sender = None
 points_manager = None
+embed_sender = None
+points_manager = None
 spam_detector = None
 event_monitor = None
 leaderboard_updater = None
 chat_handler = None
+memory_manager = None
 buffer_mensagens = []
 INTERVALO_ANALISE = 60
 TAMANHO_LOTE_MINIMO = 10
@@ -381,7 +399,7 @@ async def on_scheduled_event_user_remove(event, user):
 
 @client.event
 async def on_ready():
-    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor, leaderboard_updater, chat_handler
+    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor, leaderboard_updater, chat_handler, memory_manager
     
     print(f'🤖 Bot conectado como {client.user}!')
     print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
@@ -403,6 +421,10 @@ async def on_ready():
             event_monitor = EventMonitor(db)
             leaderboard_updater = LeaderboardUpdater(client, db)
             chat_handler = ChatHandler(api_key=GEMINI_CHAT_API_KEY or GEMINI_API_KEY, model_name=GEMINI_CHAT_MODEL)
+            if MemoryManager:
+                memory_manager = MemoryManager(db, chat_handler)
+            else:
+                logger.warning("Memory Manager not initialized because class is missing.")
             
             # Registra comandos
             client.tree.add_command(StatsCommands(db, leaderboard_updater))
@@ -477,19 +499,64 @@ async def on_message(message):
 
     # Chat Response for Mentions
     if client.user.mentioned_in(message) and not message.mention_everyone:
-        # Avoid replying to itself (already checked above) or other specific conditions
-        # Also ensure we have the handler
         if chat_handler:
             async with message.channel.typing():
                 try:
-                    # Get context
+                    # 1. Resolver menções na mensagem atual
+                    # Função auxiliar para substituir <@id> por @nome
+                    def resolve_mentions_in_text(text, guild):
+                        if not text or not guild: return text
+                        def replace(match):
+                            uid = int(match.group(1))
+                            member = guild.get_member(uid)
+                            return f"@{member.display_name}" if member else f"@{uid}"
+                        return re.sub(r'<@!?(\d+)>', replace, text)
+
+                    resolved_content = resolve_mentions_in_text(message.content, message.guild)
+
+                    # 2. Obter mensagens de histórico e tratar menções nelas também
                     history_msgs = [msg async for msg in message.channel.history(limit=10, before=message)]
-                    # Reverse to chronological order
                     history_msgs.reverse()
                     
-                    formatted_history = chat_handler.format_history(history_msgs, client.user)
-                    response_text = await chat_handler.generate_response(message.content, history=formatted_history)
+                    # Pré-processar histórico para resolver nomes
+                    processed_history_msgs = []
+                    for h_msg in history_msgs:
+                        # Clona ou modifica o content apenas para o histórico da IA
+                        # Hack: Substituir o content do objeto Message não é ideal, 
+                        # mas format_history lê .content. Vamos criar objetos dummy ou modificar in-place (arriscado?)
+                        # Melhor: ChatHandler.format_history aceitar strings ou nós fazermos o parse antes.
+                        # Vamos modificar o .content no objeto da lista (não afeta o discord em si, é memória local)
+                        h_msg.content = resolve_mentions_in_text(h_msg.content, message.guild)
+                        processed_history_msgs.append(h_msg)
+
+                    formatted_history = chat_handler.format_history(processed_history_msgs, client.user)
                     
+                    # 3. Construir System Prompt com Contexto Avançado
+                    system_instruction = "Você é o BMIA, um bot assistente." # Default
+                    if memory_manager and message.guild:
+                         context_block = await memory_manager.get_relevant_context(message.guild, message.author, resolved_content)
+                         system_instruction = f"""
+                         Você é o Bot Oficial do servidor {message.guild.name}.
+                         Sua identidade é BMIA (Bot de Monitoramento e Inteligência Artificial).
+                         
+                         {context_block}
+                         
+                         INSTRUÇÕES GERAIS:
+                         1. Responda como um membro participante do servidor, não como uma IA distante.
+                         2. Use o contexto acima para personalizar sua resposta.
+                         3. Se o usuário tiver preferências (ex: respostas curtas), RESPEITE-AS.
+                         4. Se houver memórias relevantes, use-as se fizer sentido.
+                         """
+
+                    # 4. Gerar resposta
+                    response_text = await chat_handler.generate_response(resolved_content, history=formatted_history, system_instruction=system_instruction)
+                    
+                    # 5. Processamento de Memória (Background)
+                    if memory_manager and message.guild:
+                         client.loop.create_task(
+                             memory_manager.process_message_for_memory(message.guild.id, message.author.id, resolved_content, response_text)
+                         )
+
                     # Discord limit is 2000 chars. Helper to chunk:
                     if len(response_text) > 2000:
                         chunks = [response_text[i:i+2000] for i in range(0, len(response_text), 2000)]

@@ -3,7 +3,8 @@
 import asyncpg
 import os
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -249,6 +250,73 @@ class Database:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_interaction_points_user ON interaction_points(user_id)")
 
             
+            # ==================== ADVANCED CONTEXT SYSTEM SCHEMAS ====================
+
+            # Habilitar extensão pgvector (se disponível no ambiente)
+            try:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                logger.info("✅ Extensão 'vector' habilitada/verificada.")
+            except Exception as e:
+                logger.warning(f"⚠️ Não foi possível habilitar a extensão 'vector'. Semantic search pode falhar: {e}")
+
+            # Tabela de Contexto Global do Servidor
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS server_contexts (
+                    guild_id BIGINT PRIMARY KEY,
+                    theme TEXT,
+                    rules TEXT,
+                    tone TEXT,
+                    extras TEXT, -- JSON string
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+
+            # Tabela de Perfil Comportamental do Usuário
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_bot_profiles (
+                    user_id BIGINT NOT NULL,
+                    guild_id BIGINT NOT NULL,
+                    nickname_preference TEXT,
+                    tone_preference TEXT,
+                    interaction_summary TEXT,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (user_id, guild_id)
+                )
+            """)
+
+            # Tabela de Memórias de Longo Prazo
+            # Tenta criar com embedding vector(768) - dimensão padrão do text-embedding-004 do Gemini é 768
+            try:
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS bot_memories (
+                        id SERIAL PRIMARY KEY,
+                        guild_id BIGINT NOT NULL,
+                        user_id BIGINT, -- Pode ser NULL para memória global do servidor
+                        content TEXT NOT NULL,
+                        embedding vector(768), 
+                        keywords TEXT[],
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                # Índice HNSW para busca vetorial rápida (se a tabela foi criada com vector)
+                await conn.execute("""
+                   CREATE INDEX IF NOT EXISTS idx_bot_memories_embedding 
+                   ON bot_memories USING hnsw (embedding vector_cosine_ops)
+                """)
+            except Exception as e:
+                logger.warning(f"⚠️ Erro ao criar tabela bot_memories com vector. Criando sem vector: {e}")
+                # Fallback sem vector
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS bot_memories (
+                        id SERIAL PRIMARY KEY,
+                        guild_id BIGINT NOT NULL,
+                        user_id BIGINT,
+                        content TEXT NOT NULL,
+                        keywords TEXT[],
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+
             logger.info("✅ Schema do banco de dados inicializado")
     
     # ==================== INSERÇÃO DE DADOS ====================
@@ -1279,3 +1347,115 @@ class Database:
         except Exception as e:
             logger.error(f"Erro ao remover participante {user_id} do evento {event_id}: {e}")
 
+
+    # ==================== ADVANCED CONTEXT SYSTEM METHODS ====================
+
+    async def get_server_context(self, guild_id: int) -> Dict[str, Any]:
+        """Recupera o contexto global do servidor."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT theme, rules, tone, extras 
+                FROM server_contexts 
+                WHERE guild_id = $1
+            """, guild_id)
+            return dict(row) if row else {}
+
+    async def set_server_context(self, guild_id: int, field: str, value: str):
+        """Atualiza um campo do contexto do servidor."""
+        # Campos permitidos para evitar injeção ou erros
+        allowed_fields = ['theme', 'rules', 'tone', 'extras']
+        if field not in allowed_fields:
+            raise ValueError(f"Campo inválido: {field}")
+            
+        async with self.pool.acquire() as conn:
+            await conn.execute(f"""
+                INSERT INTO server_contexts (guild_id, {field}, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET {field} = EXCLUDED.{field}, updated_at = NOW()
+            """, guild_id, value)
+
+    async def get_user_bot_profile(self, user_id: int, guild_id: int) -> Dict[str, Any]:
+        """Recupera o perfil comportamental do usuário."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT nickname_preference, tone_preference, interaction_summary 
+                FROM user_bot_profiles 
+                WHERE user_id = $1 AND guild_id = $2
+            """, user_id, guild_id)
+            return dict(row) if row else {}
+            
+    async def update_user_bot_profile(self, user_id: int, guild_id: int, updates: Dict[str, str]):
+        """Atualiza campos do perfil do usuário."""
+        set_parts = []
+        values = [user_id, guild_id]
+        idx = 3
+        
+        for key, val in updates.items():
+            if key in ['nickname_preference', 'tone_preference', 'interaction_summary']:
+                set_parts.append(f"{key} = ${idx}")
+                values.append(val)
+                idx += 1
+                
+        if not set_parts:
+            return
+
+        set_clause = ", ".join(set_parts)
+        
+        # Como não temos um UPSERT simples dinâmico, vamos tentar INSERT ON CONFLICT DO UPDATE
+        # Mas precisamos construir a query com cuidado.
+        # Simplificação: Fazer UPSERT campo a campo ou lógica customizada.
+        # Vamos usar uma query estática com COALESCE para o INSERT inicial
+        
+        async with self.pool.acquire() as conn:
+            # Query genérica de UPSERT
+             await conn.execute(f"""
+                INSERT INTO user_bot_profiles (user_id, guild_id, {', '.join(updates.keys())}, updated_at)
+                VALUES ($1, $2, {', '.join([f'${i}' for i in range(3, idx)])}, NOW())
+                ON CONFLICT (user_id, guild_id)
+                DO UPDATE SET {set_clause}, updated_at = NOW()
+            """, *values)
+
+    async def store_memory(self, guild_id: int, content: str, embedding: List[float] = None, user_id: int = None, keywords: List[str] = None):
+        """Armazena uma memória de longo prazo."""
+        async with self.pool.acquire() as conn:
+            if embedding:
+                # Formata embedding para string pgvector '[0.1, 0.2, ...]'
+                emb_str = str(embedding)
+                await conn.execute("""
+                    INSERT INTO bot_memories (guild_id, user_id, content, embedding, keywords)
+                    VALUES ($1, $2, $3, $4, $5)
+                """, guild_id, user_id, content, emb_str, keywords)
+            else:
+                await conn.execute("""
+                    INSERT INTO bot_memories (guild_id, user_id, content, keywords)
+                    VALUES ($1, $2, $3, $4)
+                """, guild_id, user_id, content, keywords)
+
+    async def search_memories(self, guild_id: int, embedding: List[float] = None, user_id: int = None, limit: int = 3) -> List[Dict[str, Any]]:
+        """Busca memórias relevantes usando similaridade vetorial ou fallback recente."""
+        async with self.pool.acquire() as conn:
+            if embedding:
+                emb_str = str(embedding)
+                # Busca por similaridade de cosseno (<=>)
+                # Filtra por guild_id E (user_id específico OU memória global null)
+                rows = await conn.fetch("""
+                    SELECT content, created_at, 1 - (embedding <=> $1) as similarity
+                    FROM bot_memories
+                    WHERE guild_id = $2 
+                      AND (user_id = $3 OR user_id IS NULL)
+                    ORDER BY embedding <=> $1
+                    LIMIT $4
+                """, emb_str, guild_id, user_id, limit)
+                return [dict(row) for row in rows]
+            else:
+                # Fallback: Apenas as mais recentes
+                rows = await conn.fetch("""
+                    SELECT content, created_at
+                    FROM bot_memories
+                    WHERE guild_id = $1 
+                      AND (user_id = $2 OR user_id IS NULL)
+                    ORDER BY created_at DESC
+                    LIMIT $3
+                """, guild_id, user_id, limit)
+                return [dict(row) for row in rows]
