@@ -490,7 +490,13 @@ async def on_message(message):
                     formatted_history = chat_handler.format_history(history_msgs, client.user)
                     response_text = await chat_handler.generate_response(message.content, history=formatted_history)
                     
-                    await message.reply(response_text)
+                    # Discord limit is 2000 chars. Helper to chunk:
+                    if len(response_text) > 2000:
+                        chunks = [response_text[i:i+2000] for i in range(0, len(response_text), 2000)]
+                        for chunk in chunks:
+                            await message.reply(chunk)
+                    else:
+                        await message.reply(response_text)
                 except Exception as e:
                     logger.error(f"Error calling ChatHandler: {e}")
                     await message.reply("Desculpe, tive um problema ao tentar responder.")
