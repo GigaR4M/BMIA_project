@@ -42,6 +42,12 @@ except ImportError:
     MemoryManager = None
     logger.warning("Could not import MemoryManager.")
 
+try:
+    from utils.stats_analyzer import StatsAnalyzer
+except ImportError:
+    StatsAnalyzer = None
+    logger.warning("Could not import StatsAnalyzer.")
+
 # ... existing code ...
 
 from datetime import datetime, timedelta
@@ -95,7 +101,9 @@ spam_detector = None
 event_monitor = None
 leaderboard_updater = None
 chat_handler = None
+chat_handler = None
 memory_manager = None
+stats_analyzer = None
 buffer_mensagens = []
 INTERVALO_ANALISE = 60
 TAMANHO_LOTE_MINIMO = 10
@@ -297,6 +305,19 @@ async def check_embed_queue():
         # Verifica a cada 5 segundos
         await asyncio.sleep(5)
 
+async def check_context_stats():
+    """Atualiza estatísticas de contexto (ranks, jogos) periodicamente."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            if stats_analyzer:
+                await stats_analyzer.execute_analysis_loop(client.guilds)
+        except Exception as e:
+            logger.error(f"❌ Erro ao atualizar estatísticas de contexto: {e}")
+        
+        # Executa a cada 6 horas (21600 segundos)
+        await asyncio.sleep(21600)
+
 async def analisar_lote_com_ia(lista_de_mensagens):
     print(f"-> Analisando um lote de {len(lista_de_mensagens)} mensagens...")
     if not lista_de_mensagens:
@@ -400,7 +421,7 @@ async def on_scheduled_event_user_remove(event, user):
 
 @client.event
 async def on_ready():
-    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor, leaderboard_updater, chat_handler, memory_manager
+    global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor, leaderboard_updater, chat_handler, memory_manager, stats_analyzer
     
     print(f'🤖 Bot conectado como {client.user}!')
     print(f'🛡️  Moderação: Análise em lotes a cada {INTERVALO_ANALISE} segundos')
@@ -426,6 +447,11 @@ async def on_ready():
                 memory_manager = MemoryManager(db, chat_handler)
             else:
                 logger.warning("Memory Manager not initialized because class is missing.")
+            
+            if StatsAnalyzer:
+                stats_analyzer = StatsAnalyzer(db)
+            else:
+                logger.warning("Stats Analyzer not initialized.")
             
             # Registra comandos
             client.tree.add_command(StatsCommands(db, leaderboard_updater))
@@ -475,6 +501,7 @@ async def on_ready():
     client.loop.create_task(check_expired_giveaways())
     client.loop.create_task(check_embed_queue())
     client.loop.create_task(check_monthly_podium())
+    client.loop.create_task(check_context_stats())
     if leaderboard_updater:
         client.loop.create_task(leaderboard_updater.start_loop())
     

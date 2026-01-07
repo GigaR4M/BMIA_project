@@ -279,10 +279,17 @@ class Database:
                     nickname_preference TEXT,
                     tone_preference TEXT,
                     interaction_summary TEXT,
+                    computed_stats TEXT DEFAULT '{}', -- JSON string (SQLite/Postgres compat simple) or JSONB
                     updated_at TIMESTAMP DEFAULT NOW(),
                     PRIMARY KEY (user_id, guild_id)
                 )
             """)
+            
+            # Migration check: Ensure computed_stats exists if table already existed
+            try:
+                await conn.execute("ALTER TABLE user_bot_profiles ADD COLUMN IF NOT EXISTS computed_stats TEXT DEFAULT '{}'")
+            except Exception:
+                pass # Ignore if fails/exists
 
             # Tabela de Memórias de Longo Prazo
             # Tenta criar com embedding vector(768) - dimensão padrão do text-embedding-004 do Gemini é 768
@@ -1379,20 +1386,20 @@ class Database:
         """Recupera o perfil comportamental do usuário."""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT nickname_preference, tone_preference, interaction_summary 
+                SELECT nickname_preference, tone_preference, interaction_summary, computed_stats
                 FROM user_bot_profiles 
                 WHERE user_id = $1 AND guild_id = $2
             """, user_id, guild_id)
             return dict(row) if row else {}
             
-    async def update_user_bot_profile(self, user_id: int, guild_id: int, updates: Dict[str, str]):
+    async def update_user_bot_profile(self, user_id: int, guild_id: int, updates: Dict[str, Any]):
         """Atualiza campos do perfil do usuário."""
         set_parts = []
         values = [user_id, guild_id]
         idx = 3
         
         for key, val in updates.items():
-            if key in ['nickname_preference', 'tone_preference', 'interaction_summary']:
+            if key in ['nickname_preference', 'tone_preference', 'interaction_summary', 'computed_stats']:
                 set_parts.append(f"{key} = ${idx}")
                 values.append(val)
                 idx += 1
@@ -1402,13 +1409,8 @@ class Database:
 
         set_clause = ", ".join(set_parts)
         
-        # Como não temos um UPSERT simples dinâmico, vamos tentar INSERT ON CONFLICT DO UPDATE
-        # Mas precisamos construir a query com cuidado.
-        # Simplificação: Fazer UPSERT campo a campo ou lógica customizada.
-        # Vamos usar uma query estática com COALESCE para o INSERT inicial
-        
         async with self.pool.acquire() as conn:
-            # Query genérica de UPSERT
+            # Upsert
              await conn.execute(f"""
                 INSERT INTO user_bot_profiles (user_id, guild_id, {', '.join(updates.keys())}, updated_at)
                 VALUES ($1, $2, {', '.join([f'${i}' for i in range(3, idx)])}, NOW())

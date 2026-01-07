@@ -54,6 +54,27 @@ class MemoryManager:
              if user_profile.get('nickname_preference'): context_parts.append(f"- Prefere ser chamado de: {user_profile['nickname_preference']}")
              if user_profile.get('tone_preference'): context_parts.append(f"- Preferência de resposta: {user_profile['tone_preference']}")
              if user_profile.get('interaction_summary'): context_parts.append(f"- Histórico: {user_profile['interaction_summary']}")
+             
+             # Computed Stats (Deterministic Context)
+             comp_stats_raw = user_profile.get('computed_stats')
+             if comp_stats_raw:
+                 try:
+                     # Parse if string, otherwise assume dict if driver handles json (asyncpg usually returns str for text col)
+                     stats = json.loads(comp_stats_raw) if isinstance(comp_stats_raw, str) else comp_stats_raw
+                     if isinstance(stats, dict):
+                        facts = []
+                        if stats.get('voice_rank') == 1: facts.append("É o usuário Top #1 em tempo de voz no servidor!")
+                        elif stats.get('voice_rank') and stats['voice_rank'] <= 5: facts.append(f"É muito ativo em voz (Top #{stats['voice_rank']}).")
+                        
+                        if stats.get('msg_rank') == 1: facts.append("É o usuário que mais envia mensagens de texto.")
+                        
+                        if stats.get('total_voice_hours'): facts.append(f"Acumulou {stats['total_voice_hours']} horas de voz recentemente.")
+                        
+                        if facts:
+                            context_parts.append("- Fatos Recentes (Estatísticas): " + " ".join(facts))
+                 except Exception as e:
+                     logger.warning(f"Error parsing computed_stats: {e}")
+
         else:
              context_parts.append("- (Novo usuário ou sem perfil)")
 
