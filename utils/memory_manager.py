@@ -120,8 +120,8 @@ class MemoryManager:
             # We will use the underlying model directly if exposed, or call generic generate.
             # Assuming ChatHandler exposes the model or method.
             
-            # Use `gemini-1.5-flash` or similar cheap model for this overhead task
-            model = genai.GenerativeModel('gemini-1.5-flash') 
+            # Use a specific version for stability
+            model = genai.GenerativeModel('gemini-1.5-flash-002') 
             response = await model.generate_content_async(prompt)
             data = self._parse_json_response(response.text)
 
