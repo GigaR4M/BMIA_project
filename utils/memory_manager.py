@@ -121,7 +121,7 @@ class MemoryManager:
             # Assuming ChatHandler exposes the model or method.
             
             # Use a specific version for stability
-            model = genai.GenerativeModel('gemini-1.5-flash-002') 
+            model = genai.GenerativeModel('gemini-2.5-flash') 
             response = await model.generate_content_async(prompt)
             data = self._parse_json_response(response.text)
 
