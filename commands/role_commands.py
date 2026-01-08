@@ -258,6 +258,65 @@ class RoleCommands(app_commands.Group):
                 "❌ Erro ao sincronizar membros. Tente novamente.",
                 ephemeral=True
             )
+
+    @app_commands.command(name="explicar", description="Explica os requisitos para os cargos especiais")
+    async def explain_dynamic_roles(self, interaction: discord.Interaction):
+        """Lista e explica os cargos dinâmicos (conquistas) do servidor."""
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            descriptions = {
+                'top_1': ("🥇 Top 1 Global", "Maior pontuação geral (Atividade + Voz + Jogo) no ano."),
+                'top_2': ("🥈 Top 2 Global", "Segunda maior pontuação geral no ano."),
+                'top_3': ("🥉 Top 3 Global", "Terceira maior pontuação geral no ano."),
+                'voz': ("🗣️ Voz do Sistema", "Maior tempo acumulado em canais de voz."),
+                'streamer': ("📡 Streamer do Servidor", "Maior tempo transmitindo vídeo em canais de voz."),
+                'mensagens': ("⌨️ Mestre da Conversa", "Maior quantidade de mensagens enviadas (sem spam)."),
+                'toxico': ("☣️ Boca Suja", "Maior quantidade de mensagens moderadas/deletadas por filtro."),
+                'gamer': ("🎮 Vício em Jogos", "Maior tempo acumulado jogando (status de atividade)."),
+                'camaleao': ("🦎 Camaleão Gamer", "Maior variedade de jogos diferentes jogados."),
+                'maratonista': ("🏃 Maratonista", "Sessão de voz contínua mais longa registrada.")
+            }
+
+            embed = discord.Embed(
+                title="🏆 Cargos Dinâmicos & Conquistas",
+                description="Estes cargos são disputados durante todo o ano e entregues periodicamente aos melhores em cada categoria!",
+                color=discord.Color.gold()
+            )
+
+            # Access dynamic roles config from RoleManager
+            # Note: RoleManager instances might share config or rely on what's set in main.py
+            # If config is empty/None in manager, we try to use descriptions anyway.
+            # Assuming role_manager.dynamic_roles_config is populated via main.py loop
+            
+            config = self.role_manager.dynamic_roles_config
+            
+            for key, (name, desc) in descriptions.items():
+                role_id = config.get(key)
+                role_mention = ""
+                
+                if role_id:
+                    role = interaction.guild.get_role(role_id)
+                    if role:
+                        role_mention = f"({role.mention})"
+                    else:
+                        # Se tem ID mas não achou cargo (deletado?), não mostra menção quebrada
+                        pass
+                
+                # Combine name and mention
+                field_name = f"{name} {role_mention}".strip()
+                embed.add_field(name=field_name, value=desc, inline=False)
+
+            embed.set_footer(text="As estatísticas são resetadas anualmente! Continue participando para ganhar.")
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"❌ Erro ao explicar cargos dinâmicos: {e}")
+            await interaction.followup.send(
+                "❌ Erro ao listar cargos. Tente novamente.",
+                ephemeral=True
+            )
     
     # Error handlers
     @add_auto_role.error
