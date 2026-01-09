@@ -58,14 +58,21 @@ class StatsAnalyzer:
                 """, guild.id)
                 
                 # Get Favorite Game (Most played in last 30 days)
-                # This is trickier, maybe just get top 1 game per user
-                # Assuming 'user_activities' exists? Or 'voice_sessions'? 
-                # Provide simplest "Top Game" if table exists. 
-                # Checking database.py, we have `user_activites` table? 
-                # Wait, I need to check schema for games. earlier log mentioned `user_activities` but I didn't verify its schema.
-                # I'll rely on `daily_user_stats` just for messages/voice first. 
-                # I will skip Game for now to avoid breaking SQL if table differs, 
-                # unless I see `get_top_games` in database.py.
+                # We use DISTINCT ON (user_id) to get only the top 1 per user
+                recent_games = await conn.fetch("""
+                    WITH UserGameStats AS (
+                        SELECT user_id, activity_name, SUM(duration_seconds) as total_duration
+                        FROM user_activities
+                        WHERE guild_id = $1
+                          AND started_at >= NOW() - INTERVAL '30 days'
+                          AND activity_type NOT IN ('streaming', 'listening', 'custom', 'hang status')
+                        GROUP BY user_id, activity_name
+                    )
+                    SELECT DISTINCT ON (user_id) 
+                        user_id, activity_name, total_duration
+                    FROM UserGameStats
+                    ORDER BY user_id, total_duration DESC
+                """, guild.id)
                 
                 # Consolidate results
                 user_stats = {}
@@ -82,25 +89,17 @@ class StatsAnalyzer:
                     user_stats[uid]['voice_rank'] = row['voice_rank']
                     user_stats[uid]['total_voice_hours'] = round(row['total_voice'] / 3600, 1)
 
+                for row in recent_games:
+                    uid = row['user_id']
+                    if uid not in user_stats: user_stats[uid] = {}
+                    user_stats[uid]['most_played_game'] = row['activity_name']
+
                 # Batch Update Profiles
                 for uid, stats in user_stats.items():
-                    # We only update if we have meaningful data (Top 10? or just save the rank?)
-                    # Let's save the rank for everyone.
+                    # We only update if we have meaningful data
                     try:
                         # Convert to JSON string
                         stats_json = json.dumps(stats)
-                        
-                        # We used a generic update method in database.py `update_user_bot_profile`
-                        # It performs an UPSERT.
-                        # However, calling it one by one for 1000 users is slow. 
-                        # But loop runs in background. It's acceptable for now.
-                        
-                        # We need to call self.db.update_user_bot_profile WITHOUT re-acquiring pool if possible,
-                        # but the method acquires it. So we can't call it from here inside a transaction block easily if 
-                        # `update_user_bot_profile` does `async with self.pool.acquire()`.
-                        # Nesting acquire is fine with asyncpg pool usually, but potentially deadlock prone if transaction?
-                        # No, `acquire` just gives a connection.
-                        # Better to just collect data here and update outside or use raw query here.
                         
                         await conn.execute("""
                             INSERT INTO user_bot_profiles (user_id, guild_id, computed_stats, updated_at)

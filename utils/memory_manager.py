@@ -68,6 +68,8 @@ class MemoryManager:
                         
                         if stats.get('msg_rank') == 1: facts.append("É o usuário que mais envia mensagens de texto.")
                         
+                        if stats.get('most_played_game'): facts.append(f"Recentemente tem jogado muito {stats['most_played_game']}.")
+                        
                         if stats.get('total_voice_hours'): facts.append(f"Acumulou {stats['total_voice_hours']} horas de voz recentemente.")
                         
                         if facts:

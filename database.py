@@ -324,6 +324,18 @@ class Database:
                     )
                 """)
 
+            # ==================== SECURITY: ENABLE RLS ====================
+            # Enable Row Level Security on internal tables to prevent public access via PostgREST
+            # The bot connects as a superuser/owner (or with BYPASSRLS), so it will still have access.
+            try:
+                await conn.execute("""
+                    ALTER TABLE IF EXISTS server_contexts ENABLE ROW LEVEL SECURITY;
+                    ALTER TABLE IF EXISTS user_bot_profiles ENABLE ROW LEVEL SECURITY;
+                    ALTER TABLE IF EXISTS bot_memories ENABLE ROW LEVEL SECURITY;
+                """)
+            except Exception as e:
+                logger.warning(f"⚠️ Erro ao habilitar RLS nas tabelas: {e}")
+
             logger.info("✅ Schema do banco de dados inicializado")
     
     # ==================== INSERÇÃO DE DADOS ====================
