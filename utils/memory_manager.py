@@ -12,7 +12,50 @@ class MemoryManager:
         self.chat_handler = chat_handler
         self.model_name = "models/text-embedding-004" # Standard efficient embedding model
 
-    async def get_relevant_context(self, guild, user, message_content: str) -> str:
+        return "\n".join(context_parts)
+
+    def _format_user_stats(self, user_display_name, user_profile, is_author=True):
+        """Helper to format stats for a user."""
+        parts = []
+        if is_author:
+            parts.append(f"\nSobre o Usuário {user_display_name}:")
+        else:
+            parts.append(f"\nSobre o Usuário Mencionado {user_display_name}:")
+
+        if user_profile:
+             if user_profile.get('nickname_preference'): parts.append(f"- Prefere ser chamado de: {user_profile['nickname_preference']}")
+             # Only show tone preference for author, usually relevant for response style
+             if is_author and user_profile.get('tone_preference'): parts.append(f"- Preferência de resposta: {user_profile['tone_preference']}")
+             if user_profile.get('interaction_summary'): parts.append(f"- Histórico: {user_profile['interaction_summary']}")
+             
+             # Computed Stats (Deterministic Context)
+             comp_stats_raw = user_profile.get('computed_stats')
+             if comp_stats_raw:
+                 try:
+                     # Parse if string, otherwise assume dict if driver handles json
+                     stats = json.loads(comp_stats_raw) if isinstance(comp_stats_raw, str) else comp_stats_raw
+                     if isinstance(stats, dict):
+                        facts = []
+                        if stats.get('voice_rank') == 1: facts.append("É o usuário Top #1 em tempo de voz no servidor!")
+                        elif stats.get('voice_rank') and stats['voice_rank'] <= 5: facts.append(f"É muito ativo em voz (Top #{stats['voice_rank']}).")
+                        
+                        if stats.get('msg_rank') == 1: facts.append("É o usuário que mais envia mensagens de texto.")
+                        
+                        if stats.get('most_played_game'): facts.append(f"Recentemente tem jogado muito {stats['most_played_game']}.")
+                        
+                        if stats.get('total_voice_hours'): facts.append(f"Acumulou {stats['total_voice_hours']} horas de voz recentemente.")
+                        
+                        if facts:
+                            parts.append("- Fatos Recentes (Estatísticas): " + " ".join(facts))
+                 except Exception as e:
+                     logger.warning(f"Error parsing computed_stats: {e}")
+
+        else:
+             parts.append("- (Novo usuário ou sem perfil)")
+        
+        return parts
+
+    async def get_relevant_context(self, guild, user, message_content: str, mentions=None) -> str:
         """
         Gathers all layers of context (Global, User, Long-term) and constructs the context block.
         """
@@ -48,37 +91,18 @@ class MemoryManager:
         else:
             context_parts.append("- (Nenhum contexto global definido ainda)")
 
-        # User Block
-        context_parts.append(f"\nSobre o Usuário {user.display_name}:")
-        if user_profile:
-             if user_profile.get('nickname_preference'): context_parts.append(f"- Prefere ser chamado de: {user_profile['nickname_preference']}")
-             if user_profile.get('tone_preference'): context_parts.append(f"- Preferência de resposta: {user_profile['tone_preference']}")
-             if user_profile.get('interaction_summary'): context_parts.append(f"- Histórico: {user_profile['interaction_summary']}")
-             
-             # Computed Stats (Deterministic Context)
-             comp_stats_raw = user_profile.get('computed_stats')
-             if comp_stats_raw:
-                 try:
-                     # Parse if string, otherwise assume dict if driver handles json (asyncpg usually returns str for text col)
-                     stats = json.loads(comp_stats_raw) if isinstance(comp_stats_raw, str) else comp_stats_raw
-                     if isinstance(stats, dict):
-                        facts = []
-                        if stats.get('voice_rank') == 1: facts.append("É o usuário Top #1 em tempo de voz no servidor!")
-                        elif stats.get('voice_rank') and stats['voice_rank'] <= 5: facts.append(f"É muito ativo em voz (Top #{stats['voice_rank']}).")
-                        
-                        if stats.get('msg_rank') == 1: facts.append("É o usuário que mais envia mensagens de texto.")
-                        
-                        if stats.get('most_played_game'): facts.append(f"Recentemente tem jogado muito {stats['most_played_game']}.")
-                        
-                        if stats.get('total_voice_hours'): facts.append(f"Acumulou {stats['total_voice_hours']} horas de voz recentemente.")
-                        
-                        if facts:
-                            context_parts.append("- Fatos Recentes (Estatísticas): " + " ".join(facts))
-                 except Exception as e:
-                     logger.warning(f"Error parsing computed_stats: {e}")
+        # User Block (Author)
+        context_parts.extend(self._format_user_stats(user.display_name, user_profile, is_author=True))
 
-        else:
-             context_parts.append("- (Novo usuário ou sem perfil)")
+        # Mentioned Users Block
+        if mentions:
+            for mentioned_user in mentions:
+                if mentioned_user.id != user.id and not mentioned_user.bot:
+                    try:
+                        m_profile = await self.db.get_user_bot_profile(mentioned_user.id, guild_id)
+                        context_parts.extend(self._format_user_stats(mentioned_user.display_name, m_profile, is_author=False))
+                    except Exception as e:
+                        logger.error(f"Error fetching profile for mentioned user {mentioned_user.id}: {e}")
 
         # Memories Block
         if relevant_memories:

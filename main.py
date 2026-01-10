@@ -565,7 +565,7 @@ async def on_message(message):
                     # 3. Construir System Prompt com Contexto Avançado
                     system_instruction = "Você é o BMIA, um bot assistente." # Default
                     if memory_manager and message.guild:
-                         context_block = await memory_manager.get_relevant_context(message.guild, message.author, resolved_content)
+                         context_block = await memory_manager.get_relevant_context(message.guild, message.author, resolved_content, mentions=message.mentions)
                          system_instruction = f"""
                          Você é o Bot Oficial do servidor {message.guild.name}.
                          Sua identidade é BMIA (Bot de Monitoramento e Inteligência Artificial).

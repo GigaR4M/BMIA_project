@@ -35,6 +35,7 @@ class StatsAnalyzer:
                         SELECT user_id, SUM(messages_count) as total_msgs
                         FROM daily_user_stats
                         WHERE guild_id = $1
+                          AND date >= CURRENT_DATE - INTERVAL '30 days'
                         GROUP BY user_id
                     )
                     SELECT user_id, total_msgs, 
@@ -49,6 +50,7 @@ class StatsAnalyzer:
                         SELECT user_id, SUM(voice_seconds) as total_voice
                         FROM daily_user_stats
                         WHERE guild_id = $1
+                          AND date >= CURRENT_DATE - INTERVAL '30 days'
                         GROUP BY user_id
                     )
                     SELECT user_id, total_voice,
