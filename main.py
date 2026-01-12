@@ -463,6 +463,10 @@ async def on_ready():
             if memory_manager:
                 client.tree.add_command(ContextCommands(db, memory_manager))
             
+            # Debug commands before sync
+            pending_commands = [cmd.name for cmd in client.tree.get_commands()]
+            logger.info(f"📋 Commands pending sync: {pending_commands}")
+            
             await client.tree.sync()
             
             print('📊 Sistema de estatísticas ativado!')
