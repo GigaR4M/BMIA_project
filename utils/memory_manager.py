@@ -12,7 +12,7 @@ class MemoryManager:
         self.chat_handler = chat_handler
         self.model_name = "models/text-embedding-004" # Standard efficient embedding model
 
-        return "\n".join(context_parts)
+
 
     def _format_user_stats(self, user_display_name, user_profile, is_author=True):
         """Helper to format stats for a user."""
