@@ -19,7 +19,22 @@ class StatsCollector:
             db: Instância do gerenciador de banco de dados
         """
         self.db = db
-        self.cache = {}  # Cache para reduzir writes no banco
+        # Cache para evitar upserts repetidos
+        # Formato: {id: timestamp_ultima_atualizacao}
+        self.user_cache = {} 
+        self.channel_cache = {}
+        self.CACHE_TTL = 3600  # 1 hora em segundos
+
+    def _should_update(self, item_id: int, cache_dict: dict) -> bool:
+        """Verifica se um item deve ser atualizado baseado no cache/TTL."""
+        import time
+        now = time.time()
+        last_update = cache_dict.get(item_id, 0)
+        
+        if now - last_update > self.CACHE_TTL:
+            cache_dict[item_id] = now
+            return True
+        return False
     
     async def on_message(self, message: discord.Message, was_moderated: bool = False):
         """
@@ -31,15 +46,17 @@ class StatsCollector:
         """
         # Ignora mensagens de bots
         if message.author.bot:
-            try:
-                await self.db.upsert_user(
-                    user_id=message.author.id,
-                    username=message.author.name,
-                    discriminator=message.author.discriminator,
-                    is_bot=True
-                )
-            except Exception as e:
-                logger.error(f"❌ Erro ao registrar bot {message.author.name}: {e}")
+            # Bots também entram no cache para evitar spam de upsert
+            if self._should_update(message.author.id, self.user_cache):
+                try:
+                    await self.db.upsert_user(
+                        user_id=message.author.id,
+                        username=message.author.name,
+                        discriminator=message.author.discriminator,
+                        is_bot=True
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Erro ao registrar bot {message.author.name}: {e}")
             return
         
         # Ignora mensagens sem guild (DMs)
@@ -47,23 +64,26 @@ class StatsCollector:
             return
         
         try:
-            # Atualiza usuário
-            await self.db.upsert_user(
-                user_id=message.author.id,
-                username=message.author.name,
-                discriminator=message.author.discriminator,
-                is_bot=False
-            )
+            # Atualiza usuário (com cache)
+            if self._should_update(message.author.id, self.user_cache):
+                await self.db.upsert_user(
+                    user_id=message.author.id,
+                    username=message.author.name,
+                    discriminator=message.author.discriminator,
+                    is_bot=False
+                )
             
-            # Atualiza canal
-            await self.db.upsert_channel(
-                channel_id=message.channel.id,
-                channel_name=message.channel.name,
-                channel_type=str(message.channel.type),
-                guild_id=message.guild.id
-            )
+            # Atualiza canal (com cache)
+            if self._should_update(message.channel.id, self.channel_cache):
+                await self.db.upsert_channel(
+                    channel_id=message.channel.id,
+                    channel_name=message.channel.name,
+                    channel_type=str(message.channel.type),
+                    guild_id=message.guild.id
+                )
             
-            # Registra mensagem
+            # Registra mensagem (Sempre registra para contagem correta, 
+            # mas considere batching se o volume for MUITO alto no futuro)
             await self.db.insert_message(
                 message_id=message.id,
                 user_id=message.author.id,
@@ -91,36 +111,39 @@ class StatsCollector:
             before: Estado de voz anterior
             after: Estado de voz atual
         """
-        # Ignora bots
+        # Ignora bots (mas cacheia)
         if member.bot:
-            try:
+            if self._should_update(member.id, self.user_cache):
+                try:
+                    await self.db.upsert_user(
+                        user_id=member.id,
+                        username=member.name,
+                        discriminator=member.discriminator,
+                        is_bot=True
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Erro ao registrar bot de voz {member.name}: {e}")
+            return
+        
+        try:
+            # Atualiza usuário (com cache)
+            if self._should_update(member.id, self.user_cache):
                 await self.db.upsert_user(
                     user_id=member.id,
                     username=member.name,
                     discriminator=member.discriminator,
-                    is_bot=True
+                    is_bot=False
                 )
-            except Exception as e:
-                logger.error(f"❌ Erro ao registrar bot de voz {member.name}: {e}")
-            return
-        
-        try:
-            # Atualiza usuário
-            await self.db.upsert_user(
-                user_id=member.id,
-                username=member.name,
-                discriminator=member.discriminator,
-                is_bot=False
-            )
             
             # Usuário entrou em um canal de voz
             if before.channel is None and after.channel is not None:
-                await self.db.upsert_channel(
-                    channel_id=after.channel.id,
-                    channel_name=after.channel.name,
-                    channel_type="voice",
-                    guild_id=after.channel.guild.id
-                )
+                if self._should_update(after.channel.id, self.channel_cache):
+                    await self.db.upsert_channel(
+                        channel_id=after.channel.id,
+                        channel_name=after.channel.name,
+                        channel_type="voice",
+                        guild_id=after.channel.guild.id
+                    )
                 
                 await self.db.insert_voice_join(
                     user_id=member.id,
@@ -148,12 +171,13 @@ class StatsCollector:
                 )
                 
                 # Registra entrada no novo canal
-                await self.db.upsert_channel(
-                    channel_id=after.channel.id,
-                    channel_name=after.channel.name,
-                    channel_type="voice",
-                    guild_id=after.channel.guild.id
-                )
+                if self._should_update(after.channel.id, self.channel_cache):
+                    await self.db.upsert_channel(
+                        channel_id=after.channel.id,
+                        channel_name=after.channel.name,
+                        channel_type="voice",
+                        guild_id=after.channel.guild.id
+                    )
                 
                 await self.db.insert_voice_join(
                     user_id=member.id,
