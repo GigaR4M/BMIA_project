@@ -441,6 +441,79 @@ class Database:
             except Exception as e:
                 logger.error(f"❌ Erro ao atualizar contagem de membros: {e}")
                 raise
+
+    async def update_daily_user_stats(self, user_id: int, guild_id: int, 
+                                     messages_increment: int = 0, 
+                                     voice_seconds_increment: int = 0, 
+                                     total_points_snapshot: int = None):
+        """
+        Atualiza as estatísticas diárias do usuário (mensagens, voz, pontos totais).
+        Respeita o fuso horário de São Paulo (UTC-3) para definir 'hoje'.
+        """
+        async with self.pool.acquire() as conn:
+            try:
+                # Define 'Today' in Sao Paulo Timezone
+                # We use Postgres 'AT TIME ZONE' to ensure DB consistency
+                
+                # Logic: Isert or Update.
+                # If total_points_snapshot is provided, update it. Otherwise keep existing.
+                # Increment messages/voice.
+                
+                # Query construction based on provided args
+                update_clauses = []
+                args = [user_id, guild_id]
+                arg_idx = 3 # $1=uid, $2=gid. Date is calculated.
+                
+                if messages_increment > 0:
+                    update_clauses.append(f"messages_count = daily_user_stats.messages_count + ${arg_idx}")
+                    args.append(messages_increment)
+                    arg_idx += 1
+                    
+                if voice_seconds_increment > 0:
+                    update_clauses.append(f"voice_seconds = daily_user_stats.voice_seconds + ${arg_idx}")
+                    args.append(voice_seconds_increment)
+                    arg_idx += 1
+                    
+                if total_points_snapshot is not None:
+                    update_clauses.append(f"total_points = ${arg_idx}")
+                    args.append(total_points_snapshot)
+                    arg_idx += 1
+                
+                update_clauses.append("updated_at = NOW()")
+                
+                update_stmt = ", ".join(update_clauses)
+                
+                # Default insert values
+                insert_voice = voice_seconds_increment
+                insert_msgs = messages_increment
+                insert_points = total_points_snapshot if total_points_snapshot is not None else 0 # Or fetch current? 0 is safe payload
+                
+                # Parameters for the upsert
+                insert_points = total_points_snapshot if total_points_snapshot is not None else 0 
+                
+                await conn.execute(f"""
+                    INSERT INTO daily_user_stats (
+                        guild_id, user_id, date, 
+                        messages_count, voice_seconds, total_points, 
+                        created_at, updated_at
+                    )
+                    VALUES (
+                        $2, $1, (NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE,
+                        $3, $4, $5, 
+                        NOW(), NOW()
+                    )
+                    ON CONFLICT (guild_id, user_id, date) 
+                    DO UPDATE SET
+                        messages_count = daily_user_stats.messages_count + EXCLUDED.messages_count,
+                        voice_seconds = daily_user_stats.voice_seconds + EXCLUDED.voice_seconds,
+                        total_points = CASE WHEN $6 THEN EXCLUDED.total_points ELSE daily_user_stats.total_points END,
+                        updated_at = NOW()
+                """, user_id, guild_id, messages_increment, voice_seconds_increment, 
+                   insert_points, total_points_snapshot is not None)
+
+            except Exception as e:
+                logger.error(f"❌ Erro ao atualizar daily_user_stats: {e}")
+
     
     # ==================== CONSULTAS DE ESTATÍSTICAS ====================
     
@@ -539,6 +612,16 @@ class Database:
                   AND guild_id = $3
                   AND created_at >= ((NOW() AT TIME ZONE 'America/Sao_Paulo')::DATE AT TIME ZONE 'America/Sao_Paulo')
             """, user_id, interaction_type, guild_id)
+            return total
+
+    async def get_user_current_total_points(self, user_id: int, guild_id: int) -> int:
+        """Retorna o total de pontos acumulados do usuário."""
+        async with self.pool.acquire() as conn:
+            total = await conn.fetchval("""
+                SELECT COALESCE(SUM(points), 0)
+                FROM interaction_points
+                WHERE user_id = $1 AND guild_id = $2
+            """, user_id, guild_id)
             return total
 
 

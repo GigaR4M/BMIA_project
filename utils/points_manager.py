@@ -25,7 +25,19 @@ class PointsManager:
             await self.db.upsert_user(user_id, username, discriminator, is_bot)
             
             await self.db.add_interaction_point(user_id, points, interaction_type, guild_id)
-            logger.info(f"Added {points} points to user {user_id} for {interaction_type}")
+            
+            # --- SNAPSHOT DAILY TOTALS ---
+            # Fetch updated total
+            current_total = await self.db.get_user_current_total_points(user_id, guild_id)
+            
+            # Update daily stats with new total (and increment counters if we tracked them here, but counters are separate)
+            # Logic: We only update the Total Points snapshot here. 
+            # (Voice/Msg counts are updated elsewhere or should be passed if available? 
+            #  add_points is generic. We let message_handlers handle specific increments if they want, 
+            #  but here we ensure the 'total_points' column is fresh)
+            await self.db.update_daily_user_stats(user_id, guild_id, total_points_snapshot=current_total)
+            
+            logger.info(f"Added {points} points to user {user_id} for {interaction_type}. Total now: {current_total}")
         except Exception as e:
             logger.error(f"Error adding points for user {user_id}: {e}")
 

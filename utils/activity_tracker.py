@@ -124,6 +124,8 @@ class ActivityTracker:
         
         return activities
     
+
+    
     async def _start_activity(self, member: discord.Member, activity_name: str, 
                              activity_type: str):
         """
