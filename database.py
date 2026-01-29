@@ -147,6 +147,15 @@ class Database:
                     UNIQUE(guild_id, role_id)
                 )
             """)
+
+            # Tabela de configurações do servidor (guild_settings)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS guild_settings (
+                    guild_id BIGINT PRIMARY KEY,
+                    ai_moderation_enabled BOOLEAN DEFAULT TRUE,
+                    updated_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
             
             # Tabela de sorteios
             await conn.execute("""
@@ -749,6 +758,26 @@ class Database:
                 'top_activities': [dict(row) for row in top_activities],
                 'period_days': days
             }
+
+    async def set_ai_moderation(self, guild_id: int, enabled: bool):
+        """Ativa ou desativa a moderação por IA para um servidor."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO guild_settings (guild_id, ai_moderation_enabled, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET ai_moderation_enabled = $2, updated_at = NOW()
+            """, guild_id, enabled)
+
+    async def is_ai_moderation_enabled(self, guild_id: int) -> bool:
+        """Verifica se a moderação por IA está ativa para um servidor."""
+        async with self.pool.acquire() as conn:
+            enabled = await conn.fetchval("""
+                SELECT ai_moderation_enabled FROM guild_settings
+                WHERE guild_id = $1
+            """, guild_id)
+            # Default True se não existir configuração
+            return enabled if enabled is not None else True
     
     async def get_messages_per_day(self, guild_id: int, days: int = 30) -> List[Dict[str, Any]]:
         """Retorna contagem de mensagens por dia."""

@@ -16,6 +16,7 @@ from stats_collector import StatsCollector
 from commands.stats_commands import StatsCommands
 from commands.role_commands import RoleCommands
 from commands.giveaway_commands import GiveawayCommands
+from commands.moderation_commands import ModerationCommands
 from commands.games_commands import GamesCommands
 from commands.info_commands import InfoCommands
 from utils.role_manager import RoleManager
@@ -354,18 +355,45 @@ async def analisar_lote_com_ia(lista_de_mensagens):
         return ["NÃO"] * len(lista_de_mensagens)
 
 async def processador_em_lote():
-    """Processa mensagens em lotes para moderação por IA."""
+    """Processa mensagens em lotes para moderação por IA, respeitando configurações por guild."""
     while True:
         await asyncio.sleep(INTERVALO_ANALISE)
         if len(buffer_mensagens) > 0:
             # Processa o que tiver no buffer, limitado ao tamanho do lote
             qtd_para_processar = min(len(buffer_mensagens), TAMANHO_LOTE_MINIMO)
-            mensagens_para_analise = buffer_mensagens[:qtd_para_processar]
+            
+            # Pega o chunk original
+            chunk_original = buffer_mensagens[:qtd_para_processar]
+            # Remove do buffer global
             buffer_mensagens[:] = buffer_mensagens[qtd_para_processar:]
             
-            vereditos = await analisar_lote_com_ia(mensagens_para_analise)
+            mensagens_filtradas = []
             
-            for msg, veredito in zip(mensagens_para_analise, vereditos):
+            # Cache simples para não consultar o banco repetidamente no mesmo lote
+            guild_status_cache = {}
+
+            if db:
+                for msg in chunk_original:
+                    if msg.guild:
+                        gid = msg.guild.id
+                        if gid not in guild_status_cache:
+                            guild_status_cache[gid] = await db.is_ai_moderation_enabled(gid)
+                        
+                        if guild_status_cache[gid]:
+                            mensagens_filtradas.append(msg)
+                    else:
+                        # Ignora DMs ou sem guild
+                        pass
+            else:
+                # Se sem DB, assume ativado ou segurança? Melhor não processar se DB caiu
+                mensagens_filtradas = chunk_original
+
+            if not mensagens_filtradas:
+                continue
+            
+            vereditos = await analisar_lote_com_ia(mensagens_filtradas)
+            
+            for msg, veredito in zip(mensagens_filtradas, vereditos):
                 if veredito == "SIM":
                     try:
                         await msg.delete()
@@ -457,6 +485,7 @@ async def on_ready():
             client.tree.add_command(StatsCommands(db, leaderboard_updater))
             client.tree.add_command(RoleCommands(db, role_manager))
             client.tree.add_command(GiveawayCommands(db, giveaway_manager))
+            client.tree.add_command(ModerationCommands(db))
             client.tree.add_command(GamesCommands(db))
             client.tree.add_command(InfoCommands())
             
