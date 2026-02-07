@@ -239,8 +239,8 @@ async def check_monthly_podium():
                         if not await db.check_periodic_leaderboard_sent(guild.id, period_type, period_identifier):
                             logger.info(f"Gerando podium {period_type} para {guild.name}...")
                             
-                            # Busca Top 3
-                            top_users = await db.get_top_users_date_range(guild.id, start_date, end_date, limit=3)
+                            # Busca Top 10 (era Top 3)
+                            top_users = await db.get_top_users_date_range(guild.id, start_date, end_date, limit=10)
                             
                             if top_users:
                                 # Gera Imagem
@@ -608,7 +608,7 @@ async def on_message(message):
                          INSTRUÇÕES GERAIS:
                          1. Responda como um membro participante do servidor, não como uma IA distante.
                          2. Use o contexto acima para personalizar sua resposta.
-                         3. Se o usuário tiver preferências (ex: respostas curtas), RESPEITE-AS.
+                         3. Não use respostas muito longas e procure manter um tom mais coloquial e menos formal.
                          4. Se houver memórias relevantes, use-as se fizer sentido.
                          """
 
