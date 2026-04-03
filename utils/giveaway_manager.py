@@ -173,6 +173,12 @@ class GiveawayManager:
             )
             
             logger.info(f"✅ Sorteio criado: {prize} (ID: {giveaway_id})")
+
+            # Notifica no Telegram
+            if hasattr(self, 'telegram') and self.telegram:
+                duration_str = str(duration).split('.')[0]  # remove microseconds
+                await self.telegram.log_giveaway_created(channel.guild, prize, duration_str, channel)
+
             return giveaway_id
             
         except Exception as e:
@@ -264,6 +270,11 @@ class GiveawayManager:
                 logger.error(f"❌ Erro ao atualizar mensagem do sorteio: {e}")
             
             logger.info(f"✅ Sorteio {giveaway_id} finalizado com {len(winners)} vencedor(es)")
+
+            # Notifica no Telegram
+            if hasattr(self, 'telegram') and self.telegram:
+                await self.telegram.log_giveaway_ended(guild, giveaway['prize'], winners)
+
             return winners
             
         except Exception as e:
