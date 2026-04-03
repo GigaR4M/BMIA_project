@@ -31,6 +31,7 @@ from utils.leaderboard_updater import LeaderboardUpdater
 from utils.image_generator import PodiumBuilder
 
 from utils.chat_handler import ChatHandler
+from utils.telegram_notifier import TelegramNotifier
 import re
 
 # Import Memory Manager
@@ -105,6 +106,7 @@ chat_handler = None
 chat_handler = None
 memory_manager = None
 stats_analyzer = None
+telegram = TelegramNotifier()
 buffer_mensagens = []
 INTERVALO_ANALISE = 60
 TAMANHO_LOTE_MINIMO = 10
@@ -400,6 +402,15 @@ async def processador_em_lote():
                         await msg.channel.send(f"⚠️ Mensagem de {msg.author.mention} removida por conter linguagem inadequada.", delete_after=10)
                         await db.update_message_moderation_status(msg.id, True)
                         
+                        # Notifica no Telegram
+                        await telegram.log_message_deleted(
+                            guild=msg.guild,
+                            channel=msg.channel,
+                            author=msg.author,
+                            content=msg.content,
+                            reason="Moderação por IA"
+                        )
+                        
                         # Remove os pontos que o usuário ganhou por essa mensagem
                         if points_manager:
                             points_to_remove = 1
@@ -448,6 +459,14 @@ async def on_scheduled_event_user_remove(event, user):
         await event_monitor.on_scheduled_event_user_remove(event, user)
 
 @client.event
+async def on_member_join(member):
+    await telegram.log_member_join(member)
+
+@client.event
+async def on_member_remove(member):
+    await telegram.log_member_leave(member)
+
+@client.event
 async def on_ready():
     global db, stats_collector, role_manager, giveaway_manager, activity_tracker, embed_sender, points_manager, spam_detector, event_monitor, leaderboard_updater, chat_handler, memory_manager, stats_analyzer
     
@@ -464,6 +483,7 @@ async def on_ready():
             # Inicializa novos gerenciadores
             role_manager = RoleManager(db, IGNORED_VOICE_CHANNELS)
             giveaway_manager = GiveawayManager(db)
+            giveaway_manager.telegram = telegram
             activity_tracker = ActivityTracker(db)
             embed_sender = EmbedSender(db)
             points_manager = PointsManager(db, IGNORED_VOICE_CHANNELS)
@@ -528,6 +548,7 @@ async def on_ready():
     
     print('✅ Bot totalmente inicializado!')
     print('------')
+    await telegram.log_bot_ready(str(client.user), len(client.guilds))
     client.loop.create_task(processador_em_lote())
     client.loop.create_task(collect_server_stats())
     client.loop.create_task(check_roles_periodically())
