@@ -4,10 +4,47 @@
 # Pasta do ambiente virtual do Python
 .venv/
 venv/
+env/
 
 # Arquivos de cache e compilados do Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
 
-# Arquivos de configuração de IDEs (ex: PyCharm)
+# Arquivos de configuração de IDEs
 .idea/
+.vscode/
+*.iml
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Imagens de mock/teste
+mock_*.png
+verify_*.png
+
+# Scripts de debug/manutenção temporários
+debug_*.py
+apply_fix*.py
+apply_restore*.py
+dump_rpc.py
+run_check_rls.py
+check_users_dupes.py
+backfill_*.py
+prune_data.py
+
+# Arquivos SQL de correção temporária
+fix_*.sql
+restore_*.sql
+
+# Arquivos de output/temporários
+*.txt.bak
+_tracked_files.txt
+
+# Logs
+*.log
