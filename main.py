@@ -276,6 +276,121 @@ async def check_monthly_podium():
         # Verifica a cada 1 hora
         await asyncio.sleep(3600)
 
+async def send_daily_summary():
+    """Envia um resumo diário de atividade do servidor para o Telegram à meia-noite (BRT)."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            # Calcula quantos segundos faltam para meia-noite BRT (UTC-3)
+            now_utc = datetime.utcnow()
+            now_brt = now_utc - timedelta(hours=3)
+
+            # Próxima meia-noite BRT
+            next_midnight = now_brt.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            seconds_until_midnight = (next_midnight - now_brt).total_seconds()
+
+            logger.info(f"⏰ Resumo diário em {seconds_until_midnight/3600:.1f}h (meia-noite BRT)")
+            await asyncio.sleep(seconds_until_midnight)
+
+            if not db:
+                continue
+
+            for guild in client.guilds:
+                try:
+                    # --- Mensagens e moderação do dia (1 dia) ---
+                    stats = await db.get_server_stats(guild.id, days=1)
+
+                    # --- Top 3 usuários mais ativos ---
+                    top_users = await db.get_top_users_by_messages(guild.id, limit=3, days=1)
+                    top_str = ""
+                    medals = ["🥇", "🥈", "🥉"]
+                    for i, u in enumerate(top_users):
+                        name = u.get('username', 'Desconhecido')
+                        msgs = u.get('message_count', 0)
+                        top_str += f"{medals[i]} {name} — {msgs} msgs\n"
+                    if not top_str:
+                        top_str = "Sem dados"
+
+                    # --- Sorteios encerrados no dia ---
+                    giveaways_today = 0
+                    if giveaway_manager:
+                        try:
+                            active = await db.get_active_giveaways(guild.id)
+                            # Conta sorteios que encerraram nas últimas 24h
+                            giveaways_today = len([
+                                g for g in (active or [])
+                                if g.get('ended') and
+                                   g.get('ends_at') and
+                                   (datetime.utcnow() - g['ends_at']).total_seconds() < 86400
+                            ])
+                        except Exception:
+                            giveaways_today = 0
+
+                    # --- Monta resumo ---
+                    day_str = (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y")
+                    summary = {
+                        'messages_today': stats.get('total_messages', 0),
+                        'active_members': stats.get('active_users', 0),
+                        'moderated': stats.get('moderated_messages', 0),
+                        'voice_hours': 'N/A',  # requer query extra se necessário
+                        'top_user': top_str.strip(),
+                        'giveaways': giveaways_today,
+                        'members_total': guild.member_count,
+                        'day': day_str,
+                    }
+
+                    message = (
+                        f"📋 <b>Resumo Diário — {summary['day']}</b>\n"
+                        f"🏠 {guild.name}\n\n"
+                        f"💬 Mensagens: {summary['messages_today']}\n"
+                        f"👥 Usuários ativos: {summary['active_members']}\n"
+                        f"🛡️ Mensagens moderadas: {summary['moderated']}\n"
+                        f"🎉 Sorteios encerrados: {summary['giveaways']}\n"
+                        f"🏰 Total de membros: {summary['members_total']}\n\n"
+                        f"<b>🏅 Top 3 do dia:</b>\n{summary['top_user']}"
+                    )
+                    await telegram.send(message)
+                    logger.info(f"✅ Resumo diário enviado para Telegram — {guild.name}")
+
+                except Exception as e:
+                    logger.error(f"❌ Erro no resumo diário para {guild.name}: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ Erro geral no send_daily_summary: {e}")
+            await asyncio.sleep(60)  # aguarda 1 min antes de tentar calcular horário novamente
+
+async def weekly_games_report():
+    """Envia ranking semanal de jogos toda segunda-feira à meia-noite (BRT)."""
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            now_brt = datetime.utcnow() - timedelta(hours=3)
+
+            # Próxima segunda-feira à meia-noite BRT
+            days_until_monday = (7 - now_brt.weekday()) % 7 or 7
+            next_monday = (now_brt + timedelta(days=days_until_monday)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            seconds_to_wait = (next_monday - now_brt).total_seconds()
+
+            logger.info(f"🎮 Relatório semanal de jogos em {seconds_to_wait/3600:.1f}h")
+            await asyncio.sleep(seconds_to_wait)
+
+            if not db:
+                continue
+
+            for guild in client.guilds:
+                try:
+                    games = await db.get_top_activities(guild.id, limit=5, days=7)
+                    await telegram.log_top_games(guild, games, period_days=7)
+                    logger.info(f"✅ Relatório semanal de jogos enviado — {guild.name}")
+                except Exception as e:
+                    logger.error(f"❌ Erro no relatório semanal de jogos para {guild.name}: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ Erro geral no weekly_games_report: {e}")
+            await asyncio.sleep(60)
+
 async def check_expired_giveaways():
     """Verifica e finaliza sorteios expirados."""
     await client.wait_until_ready()
@@ -482,6 +597,7 @@ async def on_ready():
             
             # Inicializa novos gerenciadores
             role_manager = RoleManager(db, IGNORED_VOICE_CHANNELS)
+            role_manager.telegram = telegram
             giveaway_manager = GiveawayManager(db)
             giveaway_manager.telegram = telegram
             activity_tracker = ActivityTracker(db)
@@ -556,6 +672,8 @@ async def on_ready():
     client.loop.create_task(check_embed_queue())
     client.loop.create_task(check_monthly_podium())
     client.loop.create_task(check_context_stats())
+    client.loop.create_task(send_daily_summary())
+    client.loop.create_task(weekly_games_report())
     if leaderboard_updater:
         client.loop.create_task(leaderboard_updater.start_loop())
     
