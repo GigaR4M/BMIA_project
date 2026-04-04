@@ -135,6 +135,107 @@ class TelegramNotifier:
         )
         await self.send(msg)
 
+    # ── CARGOS POR TEMPO ───────────────────────────────────────────────────────
+
+    async def log_role_assigned(self, member, role_name: str, days_in_server: int):
+        """Notifica quando um cargo por tempo é atribuído a um membro."""
+        msg = (
+            f"🏅 <b>Cargo Atribuído (Tempo)</b>\n"
+            f"🏠 Servidor: {member.guild.name}\n"
+            f"👤 Membro: {member} (<code>{member.id}</code>)\n"
+            f"🎖️ Cargo: {role_name}\n"
+            f"📅 Tempo no servidor: {days_in_server} dias\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
+    async def log_role_removed(self, member, role_name: str, reason: str = "Promoção"):
+        """Notifica quando um cargo por tempo é removido de um membro."""
+        msg = (
+            f"🔽 <b>Cargo Removido (Tempo)</b>\n"
+            f"🏠 Servidor: {member.guild.name}\n"
+            f"👤 Membro: {member} (<code>{member.id}</code>)\n"
+            f"🎖️ Cargo removido: {role_name}\n"
+            f"📋 Motivo: {reason}\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
+    # ── CARGOS DINÂMICOS ───────────────────────────────────────────────────────
+
+    async def log_dynamic_role_assigned(self, member, role_name: str, category: str):
+        """Notifica quando um cargo dinâmico (por estatísticas) é atribuído."""
+        category_labels = {
+            'top_1':       '🥇 Top 1 Absoluto',
+            'top_2':       '🥈 Top 2 Absoluto',
+            'top_3':       '🥉 Top 3 Absoluto',
+            'voz':         '🎙️ Voz do Servidor',
+            'streamer':    '📺 Streamer',
+            'mensagens':   '💬 Mestre da Conversa',
+            'toxico':      '☠️ Boca Suja',
+            'gamer':       '🎮 Top Player',
+            'camaleao':    '🦎 Camaleão',
+            'maratonista': '🏃 Maratonista',
+        }
+        label = category_labels.get(category, category)
+        msg = (
+            f"⭐ <b>Cargo Dinâmico Atribuído</b>\n"
+            f"🏠 Servidor: {member.guild.name}\n"
+            f"👤 Membro: {member} (<code>{member.id}</code>)\n"
+            f"🎖️ Cargo: {role_name}\n"
+            f"📊 Categoria: {label}\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
+    async def log_dynamic_role_removed(self, member, role_name: str, category: str):
+        """Notifica quando um cargo dinâmico é removido."""
+        msg = (
+            f"🔄 <b>Cargo Dinâmico Removido</b>\n"
+            f"🏠 Servidor: {member.guild.name}\n"
+            f"👤 Membro: {member} (<code>{member.id}</code>)\n"
+            f"🎖️ Cargo: {role_name}\n"
+            f"📋 Motivo: Perdeu o posto ({category})\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
+    # ── ATIVIDADES / JOGOS ────────────────────────────────────────────────────
+
+    async def log_top_games(self, guild, games: list, period_days: int = 7):
+        """Envia ranking dos jogos mais jogados no período."""
+        if not games:
+            return
+
+        lines = ""
+        medals = ["🥇", "🥈", "🥉"]
+        for i, g in enumerate(games[:5]):
+            icon = medals[i] if i < 3 else f"{i+1}."
+            hours = (g.get('total_seconds') or 0) // 3600
+            players = g.get('unique_users', 0)
+            name = g.get('activity_name', 'Desconhecido')
+            lines += f"{icon} <b>{name}</b> — {hours}h | {players} jogador(es)\n"
+
+        msg = (
+            f"🎮 <b>Top Jogos — Últimos {period_days} dias</b>\n"
+            f"🏠 {guild.name}\n\n"
+            f"{lines.strip()}\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
+    async def log_activity_milestone(self, member, game_name: str, total_hours: int):
+        """Notifica quando um membro atinge um marco de horas em um jogo."""
+        msg = (
+            f"🏆 <b>Marco de Jogo Atingido!</b>\n"
+            f"🏠 Servidor: {member.guild.name}\n"
+            f"👤 Membro: {member}\n"
+            f"🎮 Jogo: {game_name}\n"
+            f"⏱️ Total: {total_hours}h jogadas\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
     # ── BOT ────────────────────────────────────────────────────────────────────
 
     async def log_bot_ready(self, bot_name: str, guild_count: int):

@@ -133,12 +133,21 @@ class RoleManager:
                 removed_names = [r.name for r in roles_to_remove]
                 logger.info(f"🔽 Removidos cargos excedentes de {member.name}: {', '.join(removed_names)}")
                 changes_made = True
+
+                # Notifica Telegram para cada cargo removido
+                if hasattr(self, 'telegram') and self.telegram:
+                    for role in roles_to_remove:
+                        await self.telegram.log_role_removed(member, role.name, "Promoção de patente")
             
             # --- 4. ATRIBUIÇÃO: Dar o cargo novo (se faltar) ---
             if target_role not in member.roles:
                 await member.add_roles(target_role, reason=f"Tempo no servidor: {days_in_server} dias")
                 logger.info(f"✅ Cargo {target_role.name} atribuído a {member.name} ({days_in_server} dias)")
                 changes_made = True
+
+                # Notifica Telegram
+                if hasattr(self, 'telegram') and self.telegram:
+                    await self.telegram.log_role_assigned(member, target_role.name, days_in_server)
             
             await self.db.update_member_last_checked(member.guild.id, member.id)
             
@@ -237,6 +246,9 @@ class RoleManager:
                         try:
                             await member.add_roles(role, reason=f"Vencedor dinâmico: {key}")
                             logger.info(f"➕ Cargo {role.name} adicionado a {member.name}")
+                            # Notifica Telegram
+                            if hasattr(self, 'telegram') and self.telegram:
+                                await self.telegram.log_dynamic_role_assigned(member, role.name, key)
                         except discord.Forbidden:
                             logger.error(f"❌ Sem permissão para dar cargo a {member.name}")
 
@@ -246,6 +258,9 @@ class RoleManager:
                         try:
                             await member.remove_roles(role, reason=f"Perdeu posto: {key}")
                             logger.info(f"➖ Cargo {role.name} removido de {member.name}")
+                            # Notifica Telegram
+                            if hasattr(self, 'telegram') and self.telegram:
+                                await self.telegram.log_dynamic_role_removed(member, role.name, key)
                         except discord.Forbidden:
                             logger.error(f"❌ Sem permissão para remover cargo de {member.name}")
                             
