@@ -67,7 +67,7 @@ class StatsAnalyzer:
                         FROM user_activities
                         WHERE guild_id = $1
                           AND started_at >= NOW() - INTERVAL '30 days'
-                          AND activity_type NOT IN ('streaming', 'listening', 'custom', 'hang status')
+                          AND activity_type = 'playing'
                         GROUP BY user_id, activity_name
                     )
                     SELECT DISTINCT ON (user_id) 

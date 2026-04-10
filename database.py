@@ -713,6 +713,7 @@ class Database:
                 SELECT COALESCE(SUM(duration_seconds), 0) / 60
                 FROM user_activities
                 WHERE user_id = $1 AND guild_id = $2 AND started_at >= $3
+                  AND activity_type = 'playing'
             """, user_id, guild_id, cutoff_date)
 
             # 6. Canais de Texto Favoritos
@@ -742,6 +743,7 @@ class Database:
                 SELECT activity_name, SUM(duration_seconds)/60 as minutes
                 FROM user_activities
                 WHERE user_id = $1 AND guild_id = $2 AND started_at >= $3
+                  AND activity_type = 'playing'
                 GROUP BY activity_name
                 ORDER BY minutes DESC
                 LIMIT 3
@@ -1291,6 +1293,7 @@ class Database:
                 WHERE guild_id = $1 
                   AND started_at >= $2
                   AND duration_seconds IS NOT NULL
+                  AND activity_type = 'playing'
                 GROUP BY activity_name
                 ORDER BY total_seconds DESC
                 LIMIT $3
@@ -1315,6 +1318,7 @@ class Database:
                   AND guild_id = $2
                   AND started_at >= $3
                   AND duration_seconds IS NOT NULL
+                  AND activity_type = 'playing'
                 GROUP BY activity_name
                 ORDER BY total_seconds DESC
             """, user_id, guild_id, cutoff_date)
@@ -1335,6 +1339,7 @@ class Database:
                 WHERE guild_id = $1 
                   AND EXTRACT(YEAR FROM (started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) = $2
                   AND duration_seconds IS NOT NULL
+                  AND activity_type = 'playing'
                 GROUP BY activity_name, month
                 ORDER BY total_seconds DESC
             """, guild_id, year)

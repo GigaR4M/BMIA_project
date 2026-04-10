@@ -99,6 +99,11 @@ class ActivityTracker:
             if isinstance(activity, discord.Spotify):
                 continue
             
+            # Ignora hang status (ícones automáticos como "chilling", "gaming" nos canais de voz)
+            # Discord ActivityType.hanging tem valor 6 em versões mais recentes
+            if hasattr(activity, 'type') and getattr(activity.type, 'value', None) == 6:
+                continue
+            
             activity_name = None
             activity_type = "unknown"
             
@@ -118,6 +123,8 @@ class ActivityTracker:
                     activity_type = "listening"
                 elif activity.type == discord.ActivityType.watching:
                     activity_type = "watching"
+                elif activity.type == discord.ActivityType.custom:
+                    continue  # Ignora custom status que não seja CustomActivity
             
             if activity_name:
                 activities.add((activity_name, activity_type))
