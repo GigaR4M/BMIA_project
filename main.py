@@ -134,7 +134,10 @@ DYNAMIC_ROLES_CONFIG = {
     'toxico': 1457430992993259695,
     'gamer': 1457431074073350215,
     'camaleao': 1457431198862282763,
-    'maratonista': 1457431299374579722
+    'maratonista': 1457431299374579722,
+    'corujao': 1492305119222566923,
+    'midia': 1492305389235212399,
+    'onipresente': 1492305848901570642
 }
 
 # Configuração do Cliente do Discord

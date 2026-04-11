@@ -26,7 +26,10 @@ class RoleManager:
             'toxico': None,
             'gamer': None,
             'camaleao': None,
-            'maratonista': None
+            'maratonista': None,
+            'corujao': None,
+            'midia': None,
+            'onipresente': None
         }
     
     def _to_naive_utc(self, dt: datetime) -> datetime:
@@ -226,6 +229,15 @@ class RoleManager:
             
             # Maratonista
             winners_map['maratonista'] = await self.db.get_top_users_longest_session_year(guild.id, current_year, self.ignored_channels)
+            
+            # Corujão (Voz na Madrugada)
+            winners_map['corujao'] = await self.db.get_top_users_night_voice_year(guild.id, current_year, self.ignored_channels)
+            
+            # O Mídia (Arquivos Enviados)
+            winners_map['midia'] = await self.db.get_top_users_attachments_year(guild.id, current_year)
+            
+            # Onipresente (Dias Ativos)
+            winners_map['onipresente'] = await self.db.get_top_users_active_days_year(guild.id, current_year, self.ignored_channels)
             
             # 2. Aplicar mudanças
             for key, role_id in self.dynamic_roles_config.items():

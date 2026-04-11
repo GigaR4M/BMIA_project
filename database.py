@@ -1078,6 +1078,117 @@ class Database:
             rows = await conn.fetch(query, *args)
             return [r['user_id'] for r in rows]
     
+    async def get_top_users_night_voice_year(self, guild_id: int, year: int, ignored_channels: List[int] = None) -> List[int]:
+        """Retorna usuários com maior tempo de voz na madrugada (00:00-06:00 BRT) no ano."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            ignored = ignored_channels if ignored_channels else []
+
+            channel_filter = ""
+            if ignored:
+                channel_filter = "AND channel_id != ALL($4::bigint[])"
+
+            query = f"""
+                WITH NightVoice AS (
+                    SELECT user_id, SUM(duration_seconds) as total_seconds
+                    FROM voice_activity
+                    WHERE guild_id = $1 
+                      AND joined_at >= $2 AND joined_at < $3
+                      AND EXTRACT(HOUR FROM (joined_at AT TIME ZONE 'America/Sao_Paulo')) >= 0
+                      AND EXTRACT(HOUR FROM (joined_at AT TIME ZONE 'America/Sao_Paulo')) < 6
+                      {channel_filter}
+                    GROUP BY user_id
+                ),
+                MaxNight AS (
+                    SELECT MAX(total_seconds) as max_val FROM NightVoice
+                )
+                SELECT nv.user_id 
+                FROM NightVoice nv, MaxNight mn 
+                WHERE nv.total_seconds = mn.max_val AND mn.max_val > 0
+            """
+            
+            args = [guild_id, start_date, end_date]
+            if ignored:
+                args.append(ignored)
+                
+            rows = await conn.fetch(query, *args)
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_attachments_year(self, guild_id: int, year: int) -> List[int]:
+        """Retorna usuários com mais arquivos/mídia enviados no ano."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            
+            rows = await conn.fetch("""
+                WITH UserAttachments AS (
+                    SELECT user_id, COUNT(*) as total_attachments
+                    FROM messages
+                    WHERE guild_id = $1 
+                      AND created_at >= $2 AND created_at < $3
+                      AND has_attachments = TRUE
+                    GROUP BY user_id
+                ),
+                MaxAttachments AS (
+                    SELECT MAX(total_attachments) as max_val FROM UserAttachments
+                )
+                SELECT ua.user_id 
+                FROM UserAttachments ua, MaxAttachments ma 
+                WHERE ua.total_attachments = ma.max_val AND ma.max_val > 0
+            """, guild_id, start_date, end_date)
+            return [r['user_id'] for r in rows]
+
+    async def get_top_users_active_days_year(self, guild_id: int, year: int, ignored_channels: List[int] = None) -> List[int]:
+        """Retorna usuários com mais dias ativos (mensagem ou voz) no ano."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            ignored = ignored_channels if ignored_channels else []
+
+            channel_filter_voice = ""
+            if ignored:
+                channel_filter_voice = "AND channel_id != ALL($4::bigint[])"
+
+            query = f"""
+                WITH MessageDays AS (
+                    SELECT user_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::DATE as active_date
+                    FROM messages
+                    WHERE guild_id = $1 
+                      AND created_at >= $2 AND created_at < $3
+                ),
+                VoiceDays AS (
+                    SELECT user_id, (joined_at AT TIME ZONE 'America/Sao_Paulo')::DATE as active_date
+                    FROM voice_activity
+                    WHERE guild_id = $1 
+                      AND joined_at >= $2 AND joined_at < $3
+                      {channel_filter_voice}
+                ),
+                AllDays AS (
+                    SELECT user_id, active_date FROM MessageDays
+                    UNION
+                    SELECT user_id, active_date FROM VoiceDays
+                ),
+                UserActiveDays AS (
+                    SELECT user_id, COUNT(DISTINCT active_date) as distinct_days
+                    FROM AllDays
+                    GROUP BY user_id
+                ),
+                MaxDays AS (
+                    SELECT MAX(distinct_days) as max_val FROM UserActiveDays
+                )
+                SELECT uad.user_id 
+                FROM UserActiveDays uad, MaxDays md 
+                WHERE uad.distinct_days = md.max_val AND md.max_val > 0
+            """
+            
+            args = [guild_id, start_date, end_date]
+            if ignored:
+                args.append(ignored)
+                
+            rows = await conn.fetch(query, *args)
+            return [r['user_id'] for r in rows]
+
     # ==================== MEMBER JOIN TRACKING ====================
     
     async def upsert_member_join(self, guild_id: int, user_id: int, joined_at: datetime):

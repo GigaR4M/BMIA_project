@@ -275,7 +275,10 @@ class RoleCommands(app_commands.Group):
                 'toxico': ("☣️ Boca Suja", "Maior quantidade de mensagens moderadas/deletadas por filtro."),
                 'gamer': ("🎮 Vício em Jogos", "Maior tempo acumulado jogando (status de atividade)."),
                 'camaleao': ("🦎 Camaleão Gamer", "Maior variedade de jogos diferentes jogados."),
-                'maratonista': ("🏃 Maratonista", "Sessão de voz contínua mais longa registrada.")
+                'maratonista': ("🏃 Maratonista", "Sessão de voz contínua mais longa registrada."),
+                'corujao': ("🌙 Corujão", "Maior tempo em voz na madrugada (00h–06h)."),
+                'midia': ("📸 O Mídia", "Maior quantidade de arquivos/mídias enviados."),
+                'onipresente': ("🌍 Onipresente", "Maior número de dias ativos no servidor.")
             }
 
             embed = discord.Embed(
