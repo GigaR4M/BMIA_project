@@ -9,6 +9,16 @@ class SpamDetector:
 
     def is_spam(self, user_id):
         current_time = time.time()
+
+        # Limpeza periódica de usuários inativos para evitar memory leak
+        if len(self.user_messages) > 100:
+            inactive = [
+                uid for uid, ts in self.user_messages.items()
+                if not ts or ts[-1] < current_time - self.time_window
+            ]
+            for uid in inactive:
+                del self.user_messages[uid]
+
         timestamps = self.user_messages[user_id]
 
         # Remove old timestamps

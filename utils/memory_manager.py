@@ -1,6 +1,7 @@
 
 import logging
 import json
+import asyncio
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 
@@ -177,8 +178,9 @@ class MemoryManager:
 
     async def _generate_embedding(self, text: str) -> Optional[List[float]]:
         try:
-            # We use embed_content from genai
-            result = genai.embed_content(
+            # We use embed_content from genai wrapped in asyncio.to_thread to prevent blocking the event loop
+            result = await asyncio.to_thread(
+                genai.embed_content,
                 model=self.model_name,
                 content=text,
                 task_type="retrieval_document"

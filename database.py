@@ -22,6 +22,7 @@ class Database:
         """
         self.database_url = database_url
         self.pool: Optional[asyncpg.Pool] = None
+        self.has_vector = True
     
     async def connect(self):
         """Cria o connection pool e inicializa o schema."""
@@ -265,8 +266,10 @@ class Database:
             try:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
                 logger.info("✅ Extensão 'vector' habilitada/verificada.")
+                self.has_vector = True
             except Exception as e:
                 logger.warning(f"⚠️ Não foi possível habilitar a extensão 'vector'. Semantic search pode falhar: {e}")
+                self.has_vector = False
 
             # Tabela de Contexto Global do Servidor
             await conn.execute("""
@@ -302,25 +305,29 @@ class Database:
 
             # Tabela de Memórias de Longo Prazo
             # Tenta criar com embedding vector(768) - dimensão padrão do text-embedding-004 do Gemini é 768
-            try:
-                await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS bot_memories (
-                        id SERIAL PRIMARY KEY,
-                        guild_id BIGINT NOT NULL,
-                        user_id BIGINT, -- Pode ser NULL para memória global do servidor
-                        content TEXT NOT NULL,
-                        embedding vector(768), 
-                        keywords TEXT[],
-                        created_at TIMESTAMP DEFAULT NOW()
-                    )
-                """)
-                # Índice HNSW para busca vetorial rápida (se a tabela foi criada com vector)
-                await conn.execute("""
-                   CREATE INDEX IF NOT EXISTS idx_bot_memories_embedding 
-                   ON bot_memories USING hnsw (embedding vector_cosine_ops)
-                """)
-            except Exception as e:
-                logger.warning(f"⚠️ Erro ao criar tabela bot_memories com vector. Criando sem vector: {e}")
+            if self.has_vector:
+                try:
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS bot_memories (
+                            id SERIAL PRIMARY KEY,
+                            guild_id BIGINT NOT NULL,
+                            user_id BIGINT, -- Pode ser NULL para memória global do servidor
+                            content TEXT NOT NULL,
+                            embedding vector(768), 
+                            keywords TEXT[],
+                            created_at TIMESTAMP DEFAULT NOW()
+                        )
+                    """)
+                    # Índice HNSW para busca vetorial rápida (se a tabela foi criada com vector)
+                    await conn.execute("""
+                       CREATE INDEX IF NOT EXISTS idx_bot_memories_embedding 
+                       ON bot_memories USING hnsw (embedding vector_cosine_ops)
+                    """)
+                except Exception as e:
+                    logger.warning(f"⚠️ Erro ao criar tabela bot_memories com vector. Criando sem vector: {e}")
+                    self.has_vector = False
+            
+            if not self.has_vector:
                 # Fallback sem vector
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS bot_memories (
@@ -468,36 +475,6 @@ class Database:
                 # If total_points_snapshot is provided, update it. Otherwise keep existing.
                 # Increment messages/voice.
                 
-                # Query construction based on provided args
-                update_clauses = []
-                args = [user_id, guild_id]
-                arg_idx = 3 # $1=uid, $2=gid. Date is calculated.
-                
-                if messages_increment > 0:
-                    update_clauses.append(f"messages_count = daily_user_stats.messages_count + ${arg_idx}")
-                    args.append(messages_increment)
-                    arg_idx += 1
-                    
-                if voice_seconds_increment > 0:
-                    update_clauses.append(f"voice_seconds = daily_user_stats.voice_seconds + ${arg_idx}")
-                    args.append(voice_seconds_increment)
-                    arg_idx += 1
-                    
-                if total_points_snapshot is not None:
-                    update_clauses.append(f"total_points = ${arg_idx}")
-                    args.append(total_points_snapshot)
-                    arg_idx += 1
-                
-                update_clauses.append("updated_at = NOW()")
-                
-                update_stmt = ", ".join(update_clauses)
-                
-                # Default insert values
-                insert_voice = voice_seconds_increment
-                insert_msgs = messages_increment
-                insert_points = total_points_snapshot if total_points_snapshot is not None else 0 # Or fetch current? 0 is safe payload
-                
-                # Parameters for the upsert
                 insert_points = total_points_snapshot if total_points_snapshot is not None else 0 
                 
                 await conn.execute(f"""
@@ -1634,25 +1611,26 @@ class Database:
             
     async def update_user_bot_profile(self, user_id: int, guild_id: int, updates: Dict[str, Any]):
         """Atualiza campos do perfil do usuário."""
+        valid_keys = ['nickname_preference', 'tone_preference', 'interaction_summary', 'computed_stats']
+        filtered_updates = {k: v for k, v in updates.items() if k in valid_keys}
+        if not filtered_updates:
+            return
+
         set_parts = []
         values = [user_id, guild_id]
         idx = 3
         
-        for key, val in updates.items():
-            if key in ['nickname_preference', 'tone_preference', 'interaction_summary', 'computed_stats']:
-                set_parts.append(f"{key} = ${idx}")
-                values.append(val)
-                idx += 1
-                
-        if not set_parts:
-            return
+        for key, val in filtered_updates.items():
+            set_parts.append(f"{key} = ${idx}")
+            values.append(val)
+            idx += 1
 
         set_clause = ", ".join(set_parts)
         
         async with self.pool.acquire() as conn:
             # Upsert
-             await conn.execute(f"""
-                INSERT INTO user_bot_profiles (user_id, guild_id, {', '.join(updates.keys())}, updated_at)
+            await conn.execute(f"""
+                INSERT INTO user_bot_profiles (user_id, guild_id, {', '.join(filtered_updates.keys())}, updated_at)
                 VALUES ($1, $2, {', '.join([f'${i}' for i in range(3, idx)])}, NOW())
                 ON CONFLICT (user_id, guild_id)
                 DO UPDATE SET {set_clause}, updated_at = NOW()
@@ -1661,7 +1639,7 @@ class Database:
     async def store_memory(self, guild_id: int, content: str, embedding: List[float] = None, user_id: int = None, keywords: List[str] = None):
         """Armazena uma memória de longo prazo."""
         async with self.pool.acquire() as conn:
-            if embedding:
+            if embedding and self.has_vector:
                 # Formata embedding para string pgvector '[0.1, 0.2, ...]'
                 emb_str = str(embedding)
                 await conn.execute("""
@@ -1677,7 +1655,7 @@ class Database:
     async def search_memories(self, guild_id: int, embedding: List[float] = None, user_id: int = None, limit: int = 3) -> List[Dict[str, Any]]:
         """Busca memórias relevantes usando similaridade vetorial ou fallback recente."""
         async with self.pool.acquire() as conn:
-            if embedding:
+            if embedding and self.has_vector:
                 emb_str = str(embedding)
                 # Busca por similaridade de cosseno (<=>)
                 # Filtra por guild_id E (user_id específico OU memória global null)
