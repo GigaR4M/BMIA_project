@@ -22,7 +22,7 @@ DISCORD_TOKEN: str = os.getenv("DISCORD_TOKEN", "")
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 GEMINI_CHAT_API_KEY: str = os.getenv("GEMINI_CHAT_API_KEY", "") or GEMINI_API_KEY
 GEMINI_CHAT_MODEL: str = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
-GEMINI_MODERATION_MODEL: str = os.getenv("GEMINI_MODERATION_MODEL", "models/gemma-3-27b-it")
+GEMINI_MODERATION_MODEL: str = os.getenv("GEMINI_MODERATION_MODEL", "gemini-2.5-flash")
 
 # Banco de dados
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")
