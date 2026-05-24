@@ -6,6 +6,8 @@ from database import Database
 from utils.giveaway_manager import GiveawayManager
 import logging
 from datetime import datetime
+from config import now_brt
+
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +254,8 @@ class GiveawayCommands(app_commands.Group):
                 
                 entry_count = await self.db.get_giveaway_entry_count(giveaway['giveaway_id'])
                 
-                time_left = giveaway['ends_at'] - datetime.now()
+                time_left = giveaway['ends_at'] - now_brt()
+
                 time_str = self.giveaway_manager.format_duration(time_left)
                 
                 embed.add_field(

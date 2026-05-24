@@ -6,6 +6,8 @@ from database import Database
 from utils.embed_builder import StatsEmbedBuilder
 from typing import Optional, Any
 import logging
+from config import now_brt
+
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +98,10 @@ class StatsCommands(app_commands.Group):
         try:
             # Se days não for especificado, calcula dias desde o início do ano
             if days is None:
-                from datetime import datetime
-                now = datetime.now()
-                start_of_year = datetime(now.year, 1, 1)
+                now = now_brt()
+                start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
                 days = (now - start_of_year).days + 1
+
             
             stats = await self.db.get_user_stats(
                 interaction.user.id, 
@@ -133,10 +135,10 @@ class StatsCommands(app_commands.Group):
         
         try:
             if days is None:
-                from datetime import datetime
-                now = datetime.now()
-                start_of_year = datetime(now.year, 1, 1)
+                now = now_brt()
+                start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
                 days = (now - start_of_year).days + 1
+
 
             stats = await self.db.get_user_stats(user.id, interaction.guild.id, days)
             embed = self.embed_builder.build_user_stats(
@@ -225,10 +227,10 @@ class StatsCommands(app_commands.Group):
             
             # Se days não for especificado, calcula dias desde o início do ano
             if days is None:
-                from datetime import datetime
-                now = datetime.now()
-                start_of_year = datetime(now.year, 1, 1)
+                now = now_brt()
+                start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
                 days = (now - start_of_year).days + 1
+
             
             leaderboard = await self.db.get_leaderboard(limit, days, interaction.guild.id)
             embed = self.embed_builder.build_leaderboard(leaderboard)

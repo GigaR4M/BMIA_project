@@ -5,6 +5,8 @@ import logging
 from datetime import datetime
 from database import Database
 from utils.embed_builder import StatsEmbedBuilder
+from config import now_brt
+
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +62,10 @@ class LeaderboardUpdater:
             return
 
         # Calcular dias desde o inicio do ano
-        now = datetime.now()
-        start_of_year = datetime(now.year, 1, 1)
+        now = now_brt()
+        start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
         days = (now - start_of_year).days + 1
+
 
         # Buscar dados atuais
         leaderboard = await self.db.get_leaderboard(limit=10, days=days, guild_id=guild_id)

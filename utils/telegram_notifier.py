@@ -3,6 +3,8 @@ import aiohttp
 import logging
 import os
 from datetime import datetime
+from config import now_brt
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,8 @@ class TelegramNotifier:
             logger.error(f"TelegramNotifier send error: {e}")
 
     def _now(self):
-        return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        return now_brt().strftime("%d/%m/%Y %H:%M:%S")
+
 
     # ── MODERAÇÃO ──────────────────────────────────────────────────────────────
 

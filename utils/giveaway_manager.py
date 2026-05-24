@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 import logging
 import random
 from typing import Optional, List
+from config import now_brt
+
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +105,8 @@ class GiveawayManager:
             timestamp=ends_at
         )
         
-        time_remaining = ends_at - datetime.now()
+        time_remaining = ends_at - now_brt()
+
         embed.add_field(
             name="⏰ Termina em",
             value=self.format_duration(time_remaining),
@@ -149,7 +152,8 @@ class GiveawayManager:
             ID do sorteio criado ou None se falhar
         """
         try:
-            ends_at = datetime.now() + duration
+            ends_at = now_brt() + duration
+
             
             # Cria embed
             embed = self.create_giveaway_embed(prize, ends_at, host, image_url=image_url)
@@ -241,7 +245,7 @@ class GiveawayManager:
                         title="🎉 SORTEIO FINALIZADO! 🎉",
                         description=f"**Prêmio:** {giveaway['prize']}",
                         color=discord.Color.red(),
-                        timestamp=datetime.now()
+                        timestamp=now_brt()
                     )
                     
                     winner_mentions = ", ".join([w.mention for w in winners])

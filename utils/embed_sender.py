@@ -108,9 +108,9 @@ class EmbedSender:
                     inline=field.get('inline', False)
                 )
         
-        # Timestamp
         if data.get('timestamp'):
-            from datetime import datetime
-            embed.timestamp = datetime.now()
+            from config import now_brt
+            embed.timestamp = now_brt()
+
 
         return embed

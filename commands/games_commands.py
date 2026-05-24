@@ -5,6 +5,8 @@ from discord import app_commands
 from database import Database
 import logging
 from datetime import datetime
+from config import now_brt
+
 
 logger = logging.getLogger(__name__)
 
@@ -175,10 +177,11 @@ class GamesCommands(app_commands.Group):
         
         try:
             if year is None:
-                year = datetime.now().year
-            
+                year = now_brt().year
+
             # Valida ano
-            current_year = datetime.now().year
+            current_year = now_brt().year
+
             if year < 2020 or year > current_year:
                 await interaction.followup.send(
                     f"❌ Ano inválido! Use um ano entre 2020 e {current_year}.",

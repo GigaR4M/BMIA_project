@@ -154,9 +154,31 @@ class Database:
                 CREATE TABLE IF NOT EXISTS guild_settings (
                     guild_id BIGINT PRIMARY KEY,
                     ai_moderation_enabled BOOLEAN DEFAULT TRUE,
+                    allowed_channels BIGINT[] DEFAULT '{}',
+                    ignored_voice_channels BIGINT[] DEFAULT '{}',
+                    announcement_channel_id BIGINT,
+                    dynamic_roles_config JSONB DEFAULT '{}',
                     updated_at TIMESTAMP DEFAULT NOW()
                 )
             """)
+
+            # Migrações: adiciona colunas novas se a tabela já existia
+            for col_def in [
+                "allowed_channels BIGINT[] DEFAULT '{}'",
+                "ignored_voice_channels BIGINT[] DEFAULT '{}'",
+                "announcement_channel_id BIGINT",
+                "dynamic_roles_config JSONB DEFAULT '{}'",
+            ]:
+                col_name = col_def.split()[0]
+                try:
+                    await conn.execute(
+                        f"ALTER TABLE guild_settings ADD COLUMN IF NOT EXISTS {col_def}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "⚠️ Erro ao adicionar coluna guild_settings.%s: %s", col_name, e
+                    )
+
             
             # Tabela de sorteios
             await conn.execute("""
@@ -757,6 +779,67 @@ class Database:
             """, guild_id)
             # Default True se não existir configuração
             return enabled if enabled is not None else True
+
+    async def get_guild_config(self, guild_id: int) -> Dict[str, Any]:
+        """Retorna toda a configuração de um servidor (canais, cargos, etc.)."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT
+                    ai_moderation_enabled,
+                    allowed_channels,
+                    ignored_voice_channels,
+                    announcement_channel_id,
+                    dynamic_roles_config
+                FROM guild_settings
+                WHERE guild_id = $1
+            """, guild_id)
+            if not row:
+                return {}
+            return {
+                "ai_moderation_enabled": row["ai_moderation_enabled"],
+                "allowed_channels": list(row["allowed_channels"] or []),
+                "ignored_voice_channels": list(row["ignored_voice_channels"] or []),
+                "announcement_channel_id": row["announcement_channel_id"],
+                "dynamic_roles_config": dict(row["dynamic_roles_config"] or {}),
+            }
+
+    async def set_allowed_channels(
+        self, guild_id: int, channel_ids: List[int]
+    ) -> None:
+        """Persiste a lista de canais permitidos para pontuação de um servidor."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO guild_settings (guild_id, allowed_channels, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (guild_id)
+                DO UPDATE SET allowed_channels = $2, updated_at = NOW()
+            """, guild_id, channel_ids)
+
+    async def set_ignored_voice_channels(
+        self, guild_id: int, channel_ids: List[int]
+    ) -> None:
+        """Persiste a lista de canais de voz ignorados de um servidor."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO guild_settings (guild_id, ignored_voice_channels, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (guild_id)
+                DO UPDATE SET ignored_voice_channels = $2, updated_at = NOW()
+            """, guild_id, channel_ids)
+
+    async def set_dynamic_roles(
+        self, guild_id: int, roles_config: Dict[str, int]
+    ) -> None:
+        """Persiste a configuração de cargos dinâmicos de um servidor."""
+        import json
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO guild_settings (guild_id, dynamic_roles_config, updated_at)
+                VALUES ($1, $2::jsonb, NOW())
+                ON CONFLICT (guild_id)
+                DO UPDATE SET dynamic_roles_config = $2::jsonb, updated_at = NOW()
+            """, guild_id, json.dumps(roles_config))
+
     
     async def get_messages_per_day(self, guild_id: int, days: int = 30) -> List[Dict[str, Any]]:
         """Retorna contagem de mensagens por dia."""

@@ -1,7 +1,10 @@
 discord.py
 google-generativeai
 python-dotenv
-flask
 asyncpg
 Pillow
 aiohttp
+
+# Testes
+pytest
+pytest-asyncio

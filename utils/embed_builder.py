@@ -3,6 +3,8 @@
 import discord
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from config import now_brt
+
 
 
 class StatsEmbedBuilder:
@@ -29,7 +31,7 @@ class StatsEmbedBuilder:
             title=f"📊 Estatísticas do Servidor",
             description=f"**{server_name}**",
             color=self.COLOR_STATS,
-            timestamp=datetime.now()
+            timestamp=now_brt()
         )
         
         period = stats.get('period_days', 30)
@@ -79,7 +81,7 @@ class StatsEmbedBuilder:
         embed = discord.Embed(
             title=f"📊 Estatísticas de {username}",
             color=self.COLOR_INFO,
-            timestamp=datetime.now()
+            timestamp=now_brt()
         )
         
         if avatar_url:
@@ -182,7 +184,7 @@ class StatsEmbedBuilder:
             title="🏆 Usuários Mais Ativos",
             description=f"Ranking dos últimos {days} dias",
             color=self.COLOR_SUCCESS,
-            timestamp=datetime.now()
+            timestamp=now_brt()
         )
         
         if not users:
@@ -222,7 +224,7 @@ class StatsEmbedBuilder:
             title="📺 Canais Mais Ativos",
             description=f"Ranking dos últimos {days} dias",
             color=self.COLOR_WARNING,
-            timestamp=datetime.now()
+            timestamp=now_brt()
         )
         
         if not channels:
@@ -261,7 +263,7 @@ class StatsEmbedBuilder:
             title="❌ Erro",
             description=error_message,
             color=discord.Color.red(),
-            timestamp=datetime.now()
+            timestamp=now_brt()
         )
         
         return embed
@@ -280,7 +282,7 @@ class StatsEmbedBuilder:
             title="🏆 Leaderboard de Pontos",
             description="Ranking de interação do servidor",
             color=0xffd700, # Gold
-            timestamp=datetime.now()
+            timestamp=now_brt()
         )
         
         if not leaderboard:
