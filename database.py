@@ -795,12 +795,22 @@ class Database:
             """, guild_id)
             if not row:
                 return {}
+            
+            dyn_roles = row["dynamic_roles_config"]
+            if isinstance(dyn_roles, str):
+                try:
+                    dyn_roles = json.loads(dyn_roles)
+                except json.JSONDecodeError:
+                    dyn_roles = {}
+            elif dyn_roles is None:
+                dyn_roles = {}
+
             return {
                 "ai_moderation_enabled": row["ai_moderation_enabled"],
                 "allowed_channels": list(row["allowed_channels"] or []),
                 "ignored_voice_channels": list(row["ignored_voice_channels"] or []),
                 "announcement_channel_id": row["announcement_channel_id"],
-                "dynamic_roles_config": dict(row["dynamic_roles_config"] or {}),
+                "dynamic_roles_config": dict(dyn_roles),
             }
 
     async def set_allowed_channels(
