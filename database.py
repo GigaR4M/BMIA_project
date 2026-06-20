@@ -1113,6 +1113,32 @@ class Database:
             """, guild_id, start_date, end_date)
             return [r['user_id'] for r in rows]
 
+    async def get_top_users_demo_games_year(self, guild_id: int, year: int) -> List[int]:
+        """Retorna usuários com maior diversidade de jogos demo."""
+        async with self.pool.acquire() as conn:
+            start_date = datetime(year, 1, 1)
+            end_date = datetime(year + 1, 1, 1)
+            
+            rows = await conn.fetch("""
+                WITH UserDemo AS (
+                    SELECT user_id, COUNT(DISTINCT activity_name) as demo_count
+                    FROM user_activities
+                    WHERE guild_id = $1 
+                      AND activity_type = 'playing'
+                      AND started_at >= $2 AND started_at < $3
+                      AND duration_seconds > 60 -- Ignora jogos abertos por menos de 1 minuto
+                      AND activity_name ILIKE '%demo%'
+                    GROUP BY user_id
+                ),
+                MaxDemo AS (
+                    SELECT MAX(demo_count) as max_val FROM UserDemo
+                )
+                SELECT ud.user_id 
+                FROM UserDemo ud, MaxDemo md 
+                WHERE ud.demo_count = md.max_val AND md.max_val > 0
+            """, guild_id, start_date, end_date)
+            return [r['user_id'] for r in rows]
+
     async def get_top_users_longest_session_year(self, guild_id: int, year: int, ignored_channels: List[int] = None) -> List[int]:
         """Retorna usuários com a maior sessão única de voz."""
         async with self.pool.acquire() as conn:
