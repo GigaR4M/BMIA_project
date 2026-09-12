@@ -67,10 +67,13 @@ class EmbedSender:
         color_val = data.get('color', '#202225')
         if isinstance(color_val, str) and color_val.startswith('#'):
             color_val = int(color_val[1:], 16)
+
+        # Discord rejeita embeds sem description, mesmo quando há conteúdo externo.
+        description = data.get('description') or '\u200b'
         
         embed = discord.Embed(
             title=data.get('title'),
-            description=data.get('description'),
+            description=description,
             url=data.get('url'),
             color=color_val
         )
