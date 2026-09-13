@@ -150,6 +150,58 @@ class AIToolkit:
             logger.error(f"Erro ao executar tool get_user_stats_summary para {username}: {e}")
             return {"erro": f"Falha ao consultar estatísticas do usuário {username}."}
 
+    async def get_tournament_history(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Retorna o histórico dos torneios e campeonatos realizados no servidor, incluindo vencedores e jogos.
+
+        Args:
+            limit: Quantidade máxima de torneios a listar (padrão: 5).
+        """
+        try:
+            limit = max(1, min(int(limit), 10))
+            tourneys = await self.db.get_recent_tournaments(self.guild_id, limit=limit)
+            if not tourneys:
+                return [{"mensagem": "Nenhum torneio registrado neste servidor ainda."}]
+
+            return [
+                {
+                    "torneio_id": t["id"],
+                    "nome": t["name"],
+                    "jogo": t["game_name"],
+                    "status": t["status"],
+                    "campeao": t.get("winner_name") or "Ainda não definido",
+                    "participantes": t.get("participant_count", 0),
+                    "premio": t.get("prize") or "Sem prêmio registrado"
+                }
+                for t in tourneys
+            ]
+        except Exception as e:
+            logger.error(f"Erro ao executar tool get_tournament_history: {e}")
+            return [{"erro": "Falha ao consultar histórico de torneios."}]
+
+    async def get_tournament_hall_of_fame(self, limit: int = 5) -> List[Dict[str, Any]]:
+        """Retorna o Hall da Fama dos membros com maior número de títulos em torneios e campeonatos do servidor.
+
+        Args:
+            limit: Quantidade máxima de campeões a retornar (padrão: 5).
+        """
+        try:
+            limit = max(1, min(int(limit), 10))
+            champions = await self.db.get_tournament_hall_of_fame(self.guild_id, limit=limit)
+            if not champions:
+                return [{"mensagem": "Nenhum campeão registrado no Hall da Fama ainda."}]
+
+            return [
+                {
+                    "posicao": idx + 1,
+                    "usuario": c.get("username", "Desconhecido"),
+                    "titulos": c["titles_count"],
+                }
+                for idx, c in enumerate(champions)
+            ]
+        except Exception as e:
+            logger.error(f"Erro ao executar tool get_tournament_hall_of_fame: {e}")
+            return [{"erro": "Falha ao consultar Hall da Fama de torneios."}]
+
     def get_tool_callables(self) -> List[Any]:
         """Retorna a lista de métodos que podem ser passados diretamente para o Gemini como tools."""
         return [
@@ -158,4 +210,6 @@ class AIToolkit:
             self.get_voice_leaderboard,
             self.get_messages_leaderboard,
             self.get_user_stats_summary,
+            self.get_tournament_history,
+            self.get_tournament_hall_of_fame,
         ]

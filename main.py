@@ -43,6 +43,7 @@ from commands.games_commands import GamesCommands
 from commands.info_commands import InfoCommands
 from commands.context_commands import ContextCommands
 from commands.config_commands import ConfigCommands
+from commands.tournament_commands import TournamentCommands, TournamentRegistrationView
 from utils.role_manager import RoleManager
 from utils.giveaway_manager import GiveawayManager
 from utils.activity_tracker import ActivityTracker
@@ -155,8 +156,18 @@ async def on_ready() -> None:
         client.tree.add_command(GamesCommands(ctx.db))
         client.tree.add_command(InfoCommands())
         client.tree.add_command(ConfigCommands(ctx.db, ctx))
+        client.tree.add_command(TournamentCommands(ctx.db, ctx.points_manager))
         if ctx.memory_manager:
             client.tree.add_command(ContextCommands(ctx.db, ctx.memory_manager))
+
+        # Registra persistent views para torneios ativos (para botões continuarem funcionando)
+        for guild in client.guilds:
+            try:
+                active_tourneys = await ctx.db.get_active_tournaments(guild.id)
+                for t in active_tourneys:
+                    client.add_view(TournamentRegistrationView(ctx.db, t["id"]))
+            except Exception as tourney_view_err:
+                logger.debug(f"Erro ao recuperar views de torneio: {tourney_view_err}")
 
         pending = [cmd.name for cmd in client.tree.get_commands()]
         logger.info("📋 Commands pending sync: %s", pending)

@@ -288,6 +288,39 @@ class Database:
                     PRIMARY KEY (event_id, user_id)
                 )
             """)
+
+            # Tabela de torneios
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS tournaments (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    name TEXT NOT NULL,
+                    game_name TEXT NOT NULL,
+                    format TEXT DEFAULT '1v1',
+                    max_participants INTEGER DEFAULT 16,
+                    prize TEXT,
+                    start_time TIMESTAMP WITH TIME ZONE,
+                    status TEXT DEFAULT 'open',
+                    winner_id BIGINT,
+                    second_place_id BIGINT,
+                    third_place_id BIGINT,
+                    channel_id BIGINT,
+                    message_id BIGINT,
+                    created_by BIGINT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+
+            # Tabela de participantes de torneios
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS tournament_participants (
+                    tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+                    user_id BIGINT NOT NULL,
+                    status TEXT DEFAULT 'registered',
+                    registered_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (tournament_id, user_id)
+                )
+            """)
             
             # Índices para melhor performance
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
@@ -297,6 +330,9 @@ class Database:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_voice_user ON voice_activity(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_voice_guild ON voice_activity(guild_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_stats_guild_date ON daily_stats(guild_id, date)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tournaments_guild ON tournaments(guild_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tournaments_status ON tournaments(status)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tournament_participants_user ON tournament_participants(user_id)")
             
             # Índices para novas tabelas
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_member_join_guild ON member_join_dates(guild_id)")
@@ -1915,3 +1951,215 @@ class Database:
                     LIMIT $3
                 """, guild_id, user_id, limit)
                 return [dict(row) for row in rows]
+
+    # ==================== TOURNAMENT SYSTEM ====================
+
+    async def create_tournament(
+        self,
+        guild_id: int,
+        name: str,
+        game_name: str,
+        format: str = "1v1",
+        max_participants: int = 16,
+        prize: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        channel_id: Optional[int] = None,
+        message_id: Optional[int] = None,
+        created_by: Optional[int] = None
+    ) -> int:
+        """Cria um novo torneio e retorna o ID."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO tournaments (
+                    guild_id, name, game_name, format, max_participants,
+                    prize, start_time, channel_id, message_id, created_by, status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open')
+                RETURNING id
+            """, guild_id, name, game_name, format, max_participants,
+               prize, start_time, channel_id, message_id, created_by)
+            return row["id"]
+
+    async def update_tournament_message(self, tournament_id: int, channel_id: int, message_id: int):
+        """Atualiza o channel_id e message_id do embed do torneio."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE tournaments
+                SET channel_id = $2, message_id = $3
+                WHERE id = $1
+            """, tournament_id, channel_id, message_id)
+
+    async def get_tournament(self, tournament_id: int) -> Optional[Dict[str, Any]]:
+        """Busca os dados de um torneio pelo ID."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT * FROM tournaments WHERE id = $1
+            """, tournament_id)
+            return dict(row) if row else None
+
+    async def get_active_tournaments(self, guild_id: int) -> List[Dict[str, Any]]:
+        """Retorna todos os torneios abertos ou em andamento de um servidor."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT t.*, COUNT(p.user_id) as participant_count
+                FROM tournaments t
+                LEFT JOIN tournament_participants p ON t.id = p.tournament_id
+                WHERE t.guild_id = $1 AND t.status IN ('open', 'active')
+                GROUP BY t.id
+                ORDER BY t.created_at DESC
+            """, guild_id)
+            return [dict(row) for row in rows]
+
+    async def get_recent_tournaments(self, guild_id: int, limit: int = 5) -> List[Dict[str, Any]]:
+        """Retorna os torneios mais recentes com nomes dos vencedores."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT 
+                    t.*,
+                    u1.username as winner_name,
+                    u2.username as second_name,
+                    u3.username as third_name,
+                    COUNT(p.user_id) as participant_count
+                FROM tournaments t
+                LEFT JOIN users u1 ON t.winner_id = u1.user_id
+                LEFT JOIN users u2 ON t.second_place_id = u2.user_id
+                LEFT JOIN users u3 ON t.third_place_id = u3.user_id
+                LEFT JOIN tournament_participants p ON t.id = p.tournament_id
+                WHERE t.guild_id = $1
+                GROUP BY t.id, u1.username, u2.username, u3.username
+                ORDER BY t.created_at DESC
+                LIMIT $2
+            """, guild_id, limit)
+            return [dict(row) for row in rows]
+
+    async def add_tournament_participant(self, tournament_id: int, user_id: int) -> Dict[str, Any]:
+        """Inscreve um participante no torneio se houver vagas."""
+        async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("""
+                SELECT status, max_participants FROM tournaments WHERE id = $1
+            """, tournament_id)
+            if not tournament:
+                return {"success": False, "reason": "Torneio não encontrado."}
+            if tournament["status"] != "open":
+                return {"success": False, "reason": "Inscrições encerradas para este torneio."}
+
+            current_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM tournament_participants WHERE tournament_id = $1
+            """, tournament_id)
+
+            already_registered = await conn.fetchval("""
+                SELECT 1 FROM tournament_participants WHERE tournament_id = $1 AND user_id = $2
+            """, tournament_id, user_id)
+            if already_registered:
+                return {"success": False, "reason": "Você já está inscrito neste torneio!", "count": current_count, "max": tournament["max_participants"]}
+
+            if current_count >= tournament["max_participants"]:
+                return {"success": False, "reason": "Torneio lotado! Limite de vagas atingido.", "count": current_count, "max": tournament["max_participants"]}
+
+            await conn.execute("""
+                INSERT INTO tournament_participants (tournament_id, user_id, status, registered_at)
+                VALUES ($1, $2, 'registered', NOW())
+                ON CONFLICT (tournament_id, user_id) DO NOTHING
+            """, tournament_id, user_id)
+
+            new_count = current_count + 1
+            return {"success": True, "count": new_count, "max": tournament["max_participants"]}
+
+    async def remove_tournament_participant(self, tournament_id: int, user_id: int) -> Dict[str, Any]:
+        """Remove a inscrição de um participante."""
+        async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("""
+                SELECT status, max_participants FROM tournaments WHERE id = $1
+            """, tournament_id)
+            if not tournament:
+                return {"success": False, "reason": "Torneio não encontrado."}
+            if tournament["status"] not in ("open", "active"):
+                return {"success": False, "reason": "Não é possível cancelar inscrição em torneio encerrado."}
+
+            res = await conn.execute("""
+                DELETE FROM tournament_participants
+                WHERE tournament_id = $1 AND user_id = $2
+            """, tournament_id, user_id)
+
+            current_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM tournament_participants WHERE tournament_id = $1
+            """, tournament_id)
+
+            if " 0" in res:
+                return {"success": False, "reason": "Você não estava inscrito neste torneio.", "count": current_count, "max": tournament["max_participants"]}
+
+            return {"success": True, "count": current_count, "max": tournament["max_participants"]}
+
+    async def get_tournament_participants(self, tournament_id: int) -> List[Dict[str, Any]]:
+        """Retorna os participantes de um torneio."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT p.user_id, p.status, p.registered_at, u.username, u.discriminator
+                FROM tournament_participants p
+                LEFT JOIN users u ON p.user_id = u.user_id
+                WHERE p.tournament_id = $1
+                ORDER BY p.registered_at ASC
+            """, tournament_id)
+            return [dict(row) for row in rows]
+
+    async def finish_tournament(
+        self,
+        tournament_id: int,
+        winner_id: int,
+        second_place_id: Optional[int] = None,
+        third_place_id: Optional[int] = None
+    ) -> bool:
+        """Encerra o torneio e define os vencedores."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE tournaments
+                SET status = 'completed',
+                    winner_id = $2,
+                    second_place_id = $3,
+                    third_place_id = $4
+                WHERE id = $1
+            """, tournament_id, winner_id, second_place_id, third_place_id)
+
+            if winner_id:
+                await conn.execute("""
+                    UPDATE tournament_participants SET status = 'winner'
+                    WHERE tournament_id = $1 AND user_id = $2
+                """, tournament_id, winner_id)
+            if second_place_id:
+                await conn.execute("""
+                    UPDATE tournament_participants SET status = 'runner_up'
+                    WHERE tournament_id = $1 AND user_id = $2
+                """, tournament_id, second_place_id)
+            if third_place_id:
+                await conn.execute("""
+                    UPDATE tournament_participants SET status = 'third_place'
+                    WHERE tournament_id = $1 AND user_id = $2
+                """, tournament_id, third_place_id)
+
+            return True
+
+    async def cancel_tournament(self, tournament_id: int) -> bool:
+        """Cancela um torneio aberto."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE tournaments
+                SET status = 'cancelled'
+                WHERE id = $1
+            """, tournament_id)
+            return True
+
+    async def get_tournament_hall_of_fame(self, guild_id: int, limit: int = 5) -> List[Dict[str, Any]]:
+        """Retorna o ranking histórico de campeões de torneios."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT 
+                    u.user_id,
+                    u.username,
+                    COUNT(t.id) as titles_count
+                FROM tournaments t
+                JOIN users u ON t.winner_id = u.user_id
+                WHERE t.guild_id = $1 AND t.status = 'completed' AND t.winner_id IS NOT NULL
+                GROUP BY u.user_id, u.username
+                ORDER BY titles_count DESC
+                LIMIT $2
+            """, guild_id, limit)
+            return [dict(row) for row in rows]
