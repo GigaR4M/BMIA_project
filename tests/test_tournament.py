@@ -138,7 +138,10 @@ class TestTournamentCommands:
             tournament_id=1,
             winner_id=999,
             second_place_id=None,
-            third_place_id=None
+            third_place_id=None,
+            winner_ids=[999],
+            second_place_ids=[],
+            third_place_ids=[]
         )
 
     @pytest.mark.asyncio

@@ -2154,9 +2154,12 @@ class Database:
         tournament_id: int,
         winner_id: int,
         second_place_id: Optional[int] = None,
-        third_place_id: Optional[int] = None
+        third_place_id: Optional[int] = None,
+        winner_ids: Optional[List[int]] = None,
+        second_place_ids: Optional[List[int]] = None,
+        third_place_ids: Optional[List[int]] = None
     ) -> bool:
-        """Encerra o torneio e define os vencedores."""
+        """Encerra o torneio e define os vencedores (suporta individuais e equipes/duplas)."""
         async with self.pool.acquire() as conn:
             await conn.execute("""
                 UPDATE tournaments
@@ -2167,21 +2170,26 @@ class Database:
                 WHERE id = $1
             """, tournament_id, winner_id, second_place_id, third_place_id)
 
-            if winner_id:
+            w_ids = winner_ids if winner_ids else ([winner_id] if winner_id else [])
+            for w_id in w_ids:
                 await conn.execute("""
                     UPDATE tournament_participants SET status = 'winner'
                     WHERE tournament_id = $1 AND user_id = $2
-                """, tournament_id, winner_id)
-            if second_place_id:
+                """, tournament_id, w_id)
+
+            s_ids = second_place_ids if second_place_ids else ([second_place_id] if second_place_id else [])
+            for s_id in s_ids:
                 await conn.execute("""
                     UPDATE tournament_participants SET status = 'runner_up'
                     WHERE tournament_id = $1 AND user_id = $2
-                """, tournament_id, second_place_id)
-            if third_place_id:
+                """, tournament_id, s_id)
+
+            t_ids = third_place_ids if third_place_ids else ([third_place_id] if third_place_id else [])
+            for t_id in t_ids:
                 await conn.execute("""
                     UPDATE tournament_participants SET status = 'third_place'
                     WHERE tournament_id = $1 AND user_id = $2
-                """, tournament_id, third_place_id)
+                """, tournament_id, t_id)
 
             return True
 
@@ -2200,14 +2208,16 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT 
-                    u.user_id,
+                    tp.user_id,
                     u.username,
-                    COUNT(t.id) as titles_count
-                FROM tournaments t
-                JOIN users u ON t.winner_id = u.user_id
-                WHERE t.guild_id = $1 AND t.status = 'completed' AND t.winner_id IS NOT NULL
-                GROUP BY u.user_id, u.username
+                    COUNT(DISTINCT tp.tournament_id) as titles_count
+                FROM tournament_participants tp
+                JOIN tournaments t ON tp.tournament_id = t.id
+                JOIN users u ON tp.user_id = u.user_id
+                WHERE t.guild_id = $1 AND t.status = 'completed' AND tp.status = 'winner'
+                GROUP BY tp.user_id, u.username
                 ORDER BY titles_count DESC
                 LIMIT $2
             """, guild_id, limit)
             return [dict(row) for row in rows]
+

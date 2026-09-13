@@ -357,34 +357,73 @@ class TournamentCommands(app_commands.Group):
                 await interaction.followup.send("⚠️ Este torneio já foi encerrado anteriormente.")
                 return
 
-            # Garante que os vencedores existem no banco
-            for member in [vencedor, segundo_lugar, terceiro_lugar]:
+            participants = await self.db.get_tournament_participants(id)
+            fmt_raw = str(tourney.get("format", "1v1")).lower().strip()
+            is_2v2 = any(k in fmt_raw for k in ["2v2", "2x2", "dupla", "duplas"])
+            is_3v3 = any(k in fmt_raw for k in ["3v3", "3x3", "trio", "trios"])
+            team_size = 2 if is_2v2 else (3 if is_3v3 else 1)
+
+            # Localiza todos os integrantes da equipe a partir de um capitão/jogador selecionado
+            def find_team_members(target_member: Optional[discord.Member]) -> List[discord.Member]:
+                if not target_member:
+                    return []
+                if team_size == 1 or not participants:
+                    return [target_member]
+
+                found_chunk = None
+                for i in range(0, len(participants), team_size):
+                    chunk = participants[i:i + team_size]
+                    if any(p.get("user_id") == target_member.id for p in chunk):
+                        found_chunk = chunk
+                        break
+
+                if not found_chunk:
+                    return [target_member]
+
+                team_members = []
+                for p in found_chunk:
+                    m = interaction.guild.get_member(p.get("user_id"))
+                    if m:
+                        team_members.append(m)
+                return team_members if team_members else [target_member]
+
+            winner_team = find_team_members(vencedor)
+            runner_up_team = find_team_members(segundo_lugar) if segundo_lugar else []
+            third_place_team = find_team_members(terceiro_lugar) if terceiro_lugar else []
+
+            # Garante que todos os membros existem no banco
+            for member in winner_team + runner_up_team + third_place_team:
                 if member:
                     await self.db.upsert_user(member.id, member.name, member.discriminator, member.bot)
 
-            # Finaliza no banco
+            # Finaliza no banco com todos os IDs de cada equipe
             await self.db.finish_tournament(
                 tournament_id=id,
                 winner_id=vencedor.id,
                 second_place_id=segundo_lugar.id if segundo_lugar else None,
-                third_place_id=terceiro_lugar.id if terceiro_lugar else None
+                third_place_id=terceiro_lugar.id if terceiro_lugar else None,
+                winner_ids=[m.id for m in winner_team],
+                second_place_ids=[m.id for m in runner_up_team],
+                third_place_ids=[m.id for m in third_place_team]
             )
 
             # Concede pontos aos ganhadores se especificado
             if pontos_vencedor > 0 and self.points_manager:
-                await self.points_manager.add_points(
-                    vencedor.id,
-                    pontos_vencedor,
-                    interaction.guild.id,
-                    interaction_type="tournament_win"
-                )
-            if pontos_segundo > 0 and segundo_lugar and self.points_manager:
-                await self.points_manager.add_points(
-                    segundo_lugar.id,
-                    pontos_segundo,
-                    interaction.guild.id,
-                    interaction_type="tournament_win"
-                )
+                for m in winner_team:
+                    await self.points_manager.add_points(
+                        m.id,
+                        pontos_vencedor,
+                        interaction.guild.id,
+                        interaction_type="tournament_win"
+                    )
+            if pontos_segundo > 0 and self.points_manager:
+                for m in runner_up_team:
+                    await self.points_manager.add_points(
+                        m.id,
+                        pontos_segundo,
+                        interaction.guild.id,
+                        interaction_type="tournament_win"
+                    )
 
             # Monta o Pódio
             podium_embed = discord.Embed(
@@ -393,13 +432,22 @@ class TournamentCommands(app_commands.Group):
                 color=discord.Color.gold()
             )
 
+            winners_mention = " & ".join([m.mention for m in winner_team])
+            pts_win_str = f" *(+{pontos_vencedor} pts cada)*" if pontos_vencedor > 0 and len(winner_team) > 1 else (f" *(+{pontos_vencedor} pts)*" if pontos_vencedor > 0 else "")
+            label_1st = "Campeões" if len(winner_team) > 1 else "Campeão"
             podium_lines = [
-                f"🥇 **1º Lugar (Campeão):** {vencedor.mention}" + (f" *(+{pontos_vencedor} pts)*" if pontos_vencedor > 0 else "")
+                f"🥇 **1º Lugar ({label_1st}):** {winners_mention}{pts_win_str}"
             ]
-            if segundo_lugar:
-                podium_lines.append(f"🥈 **2º Lugar (Vice):** {segundo_lugar.mention}" + (f" *(+{pontos_segundo} pts)*" if pontos_segundo > 0 else ""))
-            if terceiro_lugar:
-                podium_lines.append(f"🥉 **3º Lugar:** {terceiro_lugar.mention}")
+
+            if runner_up_team:
+                runners_mention = " & ".join([m.mention for m in runner_up_team])
+                pts_sec_str = f" *(+{pontos_segundo} pts cada)*" if pontos_segundo > 0 and len(runner_up_team) > 1 else (f" *(+{pontos_segundo} pts)*" if pontos_segundo > 0 else "")
+                label_2nd = "Vice-Campeões" if len(runner_up_team) > 1 else "Vice"
+                podium_lines.append(f"🥈 **2º Lugar ({label_2nd}):** {runners_mention}{pts_sec_str}")
+
+            if third_place_team:
+                thirds_mention = " & ".join([m.mention for m in third_place_team])
+                podium_lines.append(f"🥉 **3º Lugar:** {thirds_mention}")
 
             podium_embed.add_field(name="🏆 Vencedores", value="\n".join(podium_lines), inline=False)
             if tourney.get("prize"):
@@ -421,7 +469,7 @@ class TournamentCommands(app_commands.Group):
                             orig_embed = orig_msg.embeds[0]
                             orig_embed.color = discord.Color.dark_grey()
                             orig_embed.title = f"🏁 [ENCERRADO] {tourney['name']}"
-                            orig_embed.description = f"Torneio encerrado! Campeão: {vencedor.mention}"
+                            orig_embed.description = f"Torneio encerrado! Campeões: {winners_mention}"
                             await orig_msg.edit(embed=orig_embed, view=None)
                 except Exception as msg_err:
                     logger.debug(f"Não foi possível atualizar mensagem original do torneio: {msg_err}")

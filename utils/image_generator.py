@@ -285,6 +285,20 @@ class BracketBuilder:
             status_text = "CHAVEAMENTO PRELIMINAR"
             status_class = "status-prelim"
 
+        # Identifica a equipe vencedora se o torneio estiver concluído
+        winner_id = tournament.get("winner_id")
+        winner_team_idx = None
+        winner_team_members = []
+        if winner_id:
+            for t_idx, team in enumerate(teams_data):
+                for p in team:
+                    if str(p.get("user_id")) == str(winner_id):
+                        winner_team_idx = t_idx
+                        winner_team_members = team
+                        break
+                if winner_team_idx is not None:
+                    break
+
         # Conteúdo do corpo conforme o modo de chaveamento
         content_html = ""
 
@@ -295,9 +309,22 @@ class BracketBuilder:
             team_left = teams_data[0] if len(teams_data) > 0 else []
             team_right = teams_data[1] if len(teams_data) > 1 else []
 
-            def render_showdown_team(team, is_left: bool):
+            def render_showdown_team(team, is_left: bool, t_idx: int):
+                is_winner = (winner_team_idx is not None and winner_team_idx == t_idx)
+                is_runner = (winner_team_idx is not None and winner_team_idx != t_idx)
+
                 corner_class = "corner-blue" if is_left else "corner-purple"
-                corner_tag = ("⚡ DUPLA AZUL" if is_2v2 else "⚡ LADO AZUL") if is_left else ("🔥 DUPLA ROXA" if is_2v2 else "🔥 LADO ROXO")
+                if is_winner:
+                    corner_class += " is-winner-card"
+                elif is_runner:
+                    corner_class += " is-runner-card"
+
+                if is_winner:
+                    corner_tag = "👑 DUPLA CAMPEÃ" if is_2v2 else "👑 CAMPEÃO"
+                elif is_runner:
+                    corner_tag = "🥈 VICE-CAMPEÕES" if is_2v2 else "🥈 VICE-CAMPEÃO"
+                else:
+                    corner_tag = ("⚡ DUPLA AZUL" if is_2v2 else "⚡ LADO AZUL") if is_left else ("🔥 DUPLA ROXA" if is_2v2 else "🔥 LADO ROXO")
                 
                 rows_html = ""
                 if not team:
@@ -312,23 +339,25 @@ class BracketBuilder:
                     """
                 elif is_2v2:
                     p1 = team[0]
+                    sub1 = "👑 Campeão do Torneio" if is_winner else ("🥈 Vice-Campeão" if is_runner else "Capitão / Jogador 1")
                     rows_html += f"""
                     <div class="player-row">
                         <img class="player-avatar" src="{p1['avatar_uri']}" alt="" />
                         <div class="player-info">
                             <span class="player-name">{p1['name']}</span>
-                            <span class="player-sub">Capitão / Jogador 1</span>
+                            <span class="player-sub">{sub1}</span>
                         </div>
                     </div>
                     """
                     if len(team) > 1:
                         p2 = team[1]
+                        sub2 = "👑 Campeão do Torneio" if is_winner else ("🥈 Vice-Campeão" if is_runner else "Parceiro / Jogador 2")
                         rows_html += f"""
                         <div class="player-row">
                             <img class="player-avatar" src="{p2['avatar_uri']}" alt="" />
                             <div class="player-info">
                                 <span class="player-name">{p2['name']}</span>
-                                <span class="player-sub">Parceiro / Jogador 2</span>
+                                <span class="player-sub">{sub2}</span>
                             </div>
                         </div>
                         """
@@ -344,12 +373,13 @@ class BracketBuilder:
                         """
                 else:
                     p1 = team[0]
+                    sub1 = "👑 Grande Campeão" if is_winner else ("🥈 Vice-Campeão" if is_runner else "Finalista Oficial")
                     rows_html += f"""
                     <div class="player-row solo">
                         <img class="player-avatar solo-avatar" src="{p1['avatar_uri']}" alt="" />
                         <div class="player-info">
                             <span class="player-name solo-name">{p1['name']}</span>
-                            <span class="player-sub">Finalista Oficial</span>
+                            <span class="player-sub">{sub1}</span>
                         </div>
                     </div>
                     """
@@ -363,12 +393,29 @@ class BracketBuilder:
                 </div>
                 """
 
+            if winner_team_members:
+                w_names = " & ".join([m["name"] for m in winner_team_members])
+                mini_avatars_html = "".join([
+                    f'<img class="trophy-mini-avatar" src="{m["avatar_uri"]}" alt="" />'
+                    for m in winner_team_members if m.get("avatar_uri")
+                ])
+                podium_title = "★ DUPLA CAMPEÃ DO TORNEIO ★" if is_2v2 else "★ CAMPEÃO DO TORNEIO ★"
+                trophy_content_html = f"""
+                <div class="trophy-winner-box">
+                    <span class="trophy-winner-name">Vencedores: {w_names}</span>
+                    <div class="trophy-mini-avatars">{mini_avatars_html}</div>
+                </div>
+                """
+            else:
+                podium_title = "★ CAMPEÃO DO TORNEIO ★"
+                trophy_content_html = '<span class="trophy-winner-tbd">A DEFINIR NA GRANDE FINAL</span>'
+
             content_html = f"""
             <div class="showdown-wrapper">
                 <div class="round-header">★ GRANDE FINAL — CONFRONTO DIRETO ★</div>
                 
                 <div class="showdown-arena">
-                    {render_showdown_team(team_left, True)}
+                    {render_showdown_team(team_left, True, 0)}
                     
                     <div class="center-connector">
                         <div class="laser-line laser-left"></div>
@@ -378,7 +425,7 @@ class BracketBuilder:
                         <div class="laser-line laser-right"></div>
                     </div>
                     
-                    {render_showdown_team(team_right, False)}
+                    {render_showdown_team(team_right, False, 1)}
                 </div>
 
                 <div class="trophy-podium">
@@ -386,8 +433,8 @@ class BracketBuilder:
                     <div class="trophy-card">
                         <div class="trophy-icon">🏆</div>
                         <div class="trophy-details">
-                            <span class="trophy-title">★ CAMPEÃO DO TORNEIO ★</span>
-                            <span class="trophy-winner">{('Vencedor: ' + str(winner_id)) if winner_id else 'A DEFINIR NA GRANDE FINAL'}</span>
+                            <span class="trophy-title">{podium_title}</span>
+                            {trophy_content_html}
                         </div>
                     </div>
                 </div>
@@ -418,6 +465,7 @@ class BracketBuilder:
                 </div>
                 """
 
+            w_label = " & ".join([m["name"] for m in winner_team_members]) if winner_team_members else "A Definir..."
             if bracket_mode == 4:
                 content_html = f"""
                 <div class="bracket-tree-wrapper four-teams">
@@ -433,7 +481,7 @@ class BracketBuilder:
                             <div class="trophy-icon">🏆</div>
                             <div class="trophy-details">
                                 <span class="trophy-title">CAMPEÃO</span>
-                                <span class="trophy-winner">A Definir...</span>
+                                <span class="trophy-winner">{w_label}</span>
                             </div>
                         </div>
                     </div>
@@ -668,6 +716,33 @@ class BracketBuilder:
             border: 2px solid #b026ff;
             box-shadow: 0 10px 40px rgba(176, 38, 255, 0.2), inset 0 0 25px rgba(176, 38, 255, 0.08);
         }}
+        .showdown-card.is-winner-card {{
+            border: 2px solid #ffd700 !important;
+            box-shadow: 0 10px 50px rgba(255, 215, 0, 0.4), inset 0 0 30px rgba(255, 215, 0, 0.12) !important;
+            background: linear-gradient(135deg, rgba(35, 28, 10, 0.92) 0%, rgba(20, 28, 55, 0.8) 100%) !important;
+        }}
+        .showdown-card.is-winner-card .card-tag {{
+            color: #ffd700 !important;
+            border-color: rgba(255, 215, 0, 0.6) !important;
+            background: rgba(255, 215, 0, 0.15) !important;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.3) !important;
+        }}
+        .showdown-card.is-winner-card .player-avatar {{
+            border-color: #ffd700 !important;
+            box-shadow: 0 0 25px rgba(255, 215, 0, 0.7) !important;
+        }}
+        .showdown-card.is-winner-card .player-sub {{
+            color: #ffd700 !important;
+            font-weight: 700 !important;
+        }}
+        .showdown-card.is-runner-card {{
+            opacity: 0.82;
+            border-color: rgba(148, 163, 184, 0.5) !important;
+        }}
+        .showdown-card.is-runner-card .card-tag {{
+            color: #cbd5e1 !important;
+            border-color: rgba(148, 163, 184, 0.5) !important;
+        }}
         .card-tag {{
             font-family: 'Rajdhani', sans-serif;
             font-size: 16px;
@@ -818,36 +893,67 @@ class BracketBuilder:
         .trophy-card {{
             display: flex;
             align-items: center;
-            gap: 20px;
-            background: linear-gradient(135deg, rgba(30, 26, 12, 0.9) 0%, rgba(45, 36, 15, 0.8) 100%);
+            gap: 24px;
+            background: linear-gradient(135deg, rgba(35, 28, 10, 0.95) 0%, rgba(45, 36, 15, 0.85) 100%);
             border: 2px solid #ffd700;
             border-radius: 20px;
             padding: 16px 36px;
-            box-shadow: 0 0 45px rgba(255, 215, 0, 0.3), inset 0 0 20px rgba(255, 215, 0, 0.1);
+            box-shadow: 0 0 50px rgba(255, 215, 0, 0.35), inset 0 0 25px rgba(255, 215, 0, 0.12);
             backdrop-filter: blur(16px);
         }}
         .trophy-icon {{
-            font-size: 52px;
-            filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.8));
+            font-size: 56px;
+            filter: drop-shadow(0 0 25px rgba(255, 215, 0, 0.9));
         }}
         .trophy-details {{
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 6px;
         }}
         .trophy-title {{
             font-family: 'Orbitron', sans-serif;
-            font-size: 18px;
+            font-size: 17px;
             font-weight: 800;
-            letter-spacing: 2px;
+            letter-spacing: 2.5px;
             color: #ffd700;
-            text-shadow: 0 0 15px rgba(255, 215, 0, 0.5);
+            text-shadow: 0 0 15px rgba(255, 215, 0, 0.6);
         }}
-        .trophy-winner {{
+        .trophy-winner-box {{
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }}
+        .trophy-winner-name {{
             font-family: 'Rajdhani', sans-serif;
-            font-size: 24px;
-            font-weight: 700;
+            font-size: 28px;
+            font-weight: 800;
             color: #ffffff;
+            letter-spacing: 1px;
+            text-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
+        }}
+        .trophy-winner-tbd {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 22px;
+            font-weight: 700;
+            color: #94a3b8;
+            letter-spacing: 1px;
+        }}
+        .trophy-mini-avatars {{
+            display: flex;
+            align-items: center;
+            margin-left: 4px;
+        }}
+        .trophy-mini-avatar {{
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 2px solid #ffd700;
+            box-shadow: 0 0 12px rgba(255, 215, 0, 0.6);
+            margin-left: -10px;
+            object-fit: cover;
+        }}
+        .trophy-mini-avatar:first-child {{
+            margin-left: 0;
         }}
 
         /* ----------------------------------------------------------- */
@@ -1029,9 +1135,11 @@ class BracketBuilder:
             team_members = []
             for p in chunk:
                 m = guild.get_member(p.get("user_id", 0))
-                name = m.display_name if m else (p.get("username") or "Jogador")
+                raw_name = m.display_name if (m and hasattr(m, "display_name") and not str(type(m.display_name)).endswith("MagicMock'>")) else (p.get("username") or "Jogador")
+                name = str(raw_name)
                 av_uri = await self._get_avatar_data_uri(m, p)
                 team_members.append({"name": name, "avatar_uri": av_uri, "user_id": p.get("user_id")})
+
             teams_data.append(team_members)
 
         # Preenche com slots vazios
