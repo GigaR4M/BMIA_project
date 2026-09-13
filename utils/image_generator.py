@@ -261,7 +261,8 @@ class BracketBuilder:
         teams_data: List[List[dict]],
         guild_icon_uri: Optional[str],
         bracket_mode: int,
-        is_2v2: bool
+        is_2v2: bool,
+        matches: Optional[List[dict]] = None
     ) -> str:
         """Gera o código HTML/CSS completo para renderização."""
         title = str(tournament.get("name", "TORNEIO OFICIAL")).upper()
@@ -271,6 +272,7 @@ class BracketBuilder:
         max_participants = int(tournament.get("max_participants") or 16)
         is_shuffled = tournament.get("is_shuffled", False)
         winner_id = tournament.get("winner_id")
+        final_score_str = tournament.get("final_score")
 
         if winner_id:
             status_text = "TORNEIO CONCLUÍDO"
@@ -285,8 +287,16 @@ class BracketBuilder:
             status_text = "CHAVEAMENTO PRELIMINAR"
             status_class = "status-prelim"
 
+        # Mapa de partidas por número
+        matches_by_num = {m["match_number"]: m for m in (matches or [])}
+
+        # Cache de avatar e nome por user_id
+        user_info_map = {}
+        for team in teams_data:
+            for p in team:
+                user_info_map[p.get("user_id")] = p
+
         # Identifica a equipe vencedora se o torneio estiver concluído
-        winner_id = tournament.get("winner_id")
         winner_team_idx = None
         winner_team_members = []
         if winner_id:
@@ -308,6 +318,20 @@ class BracketBuilder:
         if bracket_mode == 2:
             team_left = teams_data[0] if len(teams_data) > 0 else []
             team_right = teams_data[1] if len(teams_data) > 1 else []
+
+            # Placar da Grande Final
+            m1 = matches_by_num.get(1)
+            score_left = None
+            score_right = None
+            if m1 and m1.get("status") == "completed":
+                score_left = m1.get("score_a")
+                score_right = m1.get("score_b")
+            elif final_score_str:
+                import re
+                nums = re.findall(r'\d+', str(final_score_str))
+                if len(nums) >= 2:
+                    score_left = int(nums[0])
+                    score_right = int(nums[1])
 
             def render_showdown_team(team, is_left: bool, t_idx: int):
                 is_winner = (winner_team_idx is not None and winner_team_idx == t_idx)
@@ -400,15 +424,21 @@ class BracketBuilder:
                     for m in winner_team_members if m.get("avatar_uri")
                 ])
                 podium_title = "★ DUPLA CAMPEÃ DO TORNEIO ★" if is_2v2 else "★ CAMPEÃO DO TORNEIO ★"
+                score_info = f'<span class="trophy-score-tag">PLACAR FINAL: {score_left} x {score_right}</span>' if (score_left is not None and score_right is not None) else ''
                 trophy_content_html = f"""
                 <div class="trophy-winner-box">
                     <span class="trophy-winner-name">Vencedores: {w_names}</span>
                     <div class="trophy-mini-avatars">{mini_avatars_html}</div>
+                    {score_info}
                 </div>
                 """
             else:
                 podium_title = "★ CAMPEÃO DO TORNEIO ★"
                 trophy_content_html = '<span class="trophy-winner-tbd">A DEFINIR NA GRANDE FINAL</span>'
+
+            # Unidade central VS com placares
+            score_left_html = f'<div class="score-badge score-left {"score-winner" if winner_team_idx == 0 else ""}">{score_left}</div>' if score_left is not None else ''
+            score_right_html = f'<div class="score-badge score-right {"score-winner" if winner_team_idx == 1 else ""}">{score_right}</div>' if score_right is not None else ''
 
             content_html = f"""
             <div class="showdown-wrapper">
@@ -419,8 +449,12 @@ class BracketBuilder:
                     
                     <div class="center-connector">
                         <div class="laser-line laser-left"></div>
-                        <div class="vs-badge">
-                            <span class="vs-text">VS</span>
+                        <div class="vs-unit">
+                            {score_left_html}
+                            <div class="vs-badge">
+                                <span class="vs-text">VS</span>
+                            </div>
+                            {score_right_html}
                         </div>
                         <div class="laser-line laser-right"></div>
                     </div>
@@ -445,22 +479,53 @@ class BracketBuilder:
         # MODO B & C: 4 ou 8 TIMES (SEMIFINAIS / QUARTAS + GRANDE FINAL)
         # ---------------------------------------------------------------------
         else:
-            def render_tree_match(team_a, team_b, match_num, label_a="Time A", label_b="Time B"):
-                name_a = team_a[0]['name'] if team_a else label_a
-                name_b = team_b[0]['name'] if team_b else label_b
-                av_a = team_a[0]['avatar_uri'] if team_a else ""
-                av_b = team_b[0]['avatar_uri'] if team_b else ""
+            def resolve_team_display(team_ids, fallback_label: str):
+                if not team_ids:
+                    return {"name": fallback_label, "avatar_uri": "", "is_empty": True}
+                names = []
+                av_uri = ""
+                for uid in team_ids:
+                    info = user_info_map.get(uid)
+                    if info:
+                        names.append(info["name"])
+                        if not av_uri and info.get("avatar_uri"):
+                            av_uri = info["avatar_uri"]
+                    else:
+                        names.append(f"Jogador {uid}")
+                full_name = " & ".join(names) if names else fallback_label
+                return {"name": full_name, "avatar_uri": av_uri, "is_empty": False}
+
+            def render_tree_match(match_num: int, fallback_label_a="Time A", fallback_label_b="Time B"):
+                m = matches_by_num.get(match_num)
+                team_a_ids = m.get("team_a_ids") if m else None
+                team_b_ids = m.get("team_b_ids") if m else None
+                is_done = bool(m and m.get("status") == "completed")
+                score_a = m.get("score_a", 0) if (m and is_done) else None
+                score_b = m.get("score_b", 0) if (m and is_done) else None
+                winner_ids = m.get("winner_team_ids") if m else []
+
+                info_a = resolve_team_display(team_a_ids, fallback_label_a)
+                info_b = resolve_team_display(team_b_ids, fallback_label_b)
+
+                a_is_winner = is_done and (winner_ids and team_a_ids == winner_ids)
+                b_is_winner = is_done and (winner_ids and team_b_ids == winner_ids)
 
                 return f"""
-                <div class="match-box">
-                    <div class="match-participant">
-                        {f'<img class="mini-avatar" src="{av_a}" />' if av_a else '<div class="mini-ph">?</div>'}
-                        <span class="p-name">{(name_a[:14] + '...') if len(name_a) > 14 else name_a}</span>
+                <div class="match-box {'match-completed' if is_done else ''}">
+                    <div class="match-participant {'winner-side' if a_is_winner else ('loser-side' if (is_done and b_is_winner) else '')}">
+                        <div class="participant-left">
+                            {f'<img class="mini-avatar" src="{info_a["avatar_uri"]}" />' if info_a["avatar_uri"] else '<div class="mini-ph">?</div>'}
+                            <span class="p-name">{(info_a['name'][:15] + '...') if len(info_a['name']) > 15 else info_a['name']}</span>
+                        </div>
+                        {f'<span class="match-score-pill">{score_a}</span>' if score_a is not None else ''}
                     </div>
                     <div class="match-divider"></div>
-                    <div class="match-participant">
-                        {f'<img class="mini-avatar" src="{av_b}" />' if av_b else '<div class="mini-ph">?</div>'}
-                        <span class="p-name">{(name_b[:14] + '...') if len(name_b) > 14 else name_b}</span>
+                    <div class="match-participant {'winner-side' if b_is_winner else ('loser-side' if (is_done and a_is_winner) else '')}">
+                        <div class="participant-left">
+                            {f'<img class="mini-avatar" src="{info_b["avatar_uri"]}" />' if info_b["avatar_uri"] else '<div class="mini-ph">?</div>'}
+                            <span class="p-name">{(info_b['name'][:15] + '...') if len(info_b['name']) > 15 else info_b['name']}</span>
+                        </div>
+                        {f'<span class="match-score-pill">{score_b}</span>' if score_b is not None else ''}
                     </div>
                 </div>
                 """
@@ -471,12 +536,12 @@ class BracketBuilder:
                 <div class="bracket-tree-wrapper four-teams">
                     <div class="column-round">
                         <div class="column-title">SEMIFINAL 1</div>
-                        {render_tree_match(teams_data[0] if len(teams_data)>0 else [], teams_data[1] if len(teams_data)>1 else [], 1, "Time 1", "Time 2")}
+                        {render_tree_match(1, "Time 1", "Time 2")}
                     </div>
                     
                     <div class="column-round center-col">
                         <div class="column-title gold-title">★ GRANDE FINAL ★</div>
-                        {render_tree_match([], [], 3, "Finalista 1", "Finalista 2")}
+                        {render_tree_match(3, "Venc. Semi 1", "Venc. Semi 2")}
                         <div class="trophy-card mini">
                             <div class="trophy-icon">🏆</div>
                             <div class="trophy-details">
@@ -488,7 +553,7 @@ class BracketBuilder:
 
                     <div class="column-round">
                         <div class="column-title">SEMIFINAL 2</div>
-                        {render_tree_match(teams_data[2] if len(teams_data)>2 else [], teams_data[3] if len(teams_data)>3 else [], 2, "Time 3", "Time 4")}
+                        {render_tree_match(2, "Time 3", "Time 4")}
                     </div>
                 </div>
                 """
@@ -497,32 +562,32 @@ class BracketBuilder:
                 <div class="bracket-tree-wrapper eight-teams">
                     <div class="column-round">
                         <div class="column-title">QUARTAS</div>
-                        {render_tree_match(teams_data[0] if len(teams_data)>0 else [], teams_data[1] if len(teams_data)>1 else [], 1, "Time 1", "Time 2")}
-                        {render_tree_match(teams_data[2] if len(teams_data)>2 else [], teams_data[3] if len(teams_data)>3 else [], 2, "Time 3", "Time 4")}
+                        {render_tree_match(1, "Time 1", "Time 2")}
+                        {render_tree_match(2, "Time 3", "Time 4")}
                     </div>
                     <div class="column-round">
                         <div class="column-title">SEMIFINAIS</div>
-                        {render_tree_match([], [], 5, "Vencedor Q1", "Vencedor Q2")}
+                        {render_tree_match(5, "Venc. Q1", "Venc. Q2")}
                     </div>
                     <div class="column-round center-col">
                         <div class="column-title gold-title">★ FINAL ★</div>
-                        {render_tree_match([], [], 7, "Finalista 1", "Finalista 2")}
+                        {render_tree_match(7, "Finalista 1", "Finalista 2")}
                         <div class="trophy-card mini">
                             <div class="trophy-icon">🏆</div>
                             <div class="trophy-details">
                                 <span class="trophy-title">CAMPEÃO</span>
-                                <span class="trophy-winner">A Definir...</span>
+                                <span class="trophy-winner">{w_label}</span>
                             </div>
                         </div>
                     </div>
                     <div class="column-round">
                         <div class="column-title">SEMIFINAIS</div>
-                        {render_tree_match([], [], 6, "Vencedor Q3", "Vencedor Q4")}
+                        {render_tree_match(6, "Venc. Q3", "Venc. Q4")}
                     </div>
                     <div class="column-round">
                         <div class="column-title">QUARTAS</div>
-                        {render_tree_match(teams_data[4] if len(teams_data)>4 else [], teams_data[5] if len(teams_data)>5 else [], 3, "Time 5", "Time 6")}
-                        {render_tree_match(teams_data[6] if len(teams_data)>6 else [], teams_data[7] if len(teams_data)>7 else [], 4, "Time 7", "Time 8")}
+                        {render_tree_match(3, "Time 5", "Time 6")}
+                        {render_tree_match(4, "Time 7", "Time 8")}
                     </div>
                 </div>
                 """
@@ -535,7 +600,7 @@ class BracketBuilder:
     <title>{title}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700;800&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         * {{
             margin: 0;
@@ -549,7 +614,7 @@ class BracketBuilder:
             background-image: 
                 radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.12) 0%, transparent 40%),
                 radial-gradient(circle at 90% 20%, rgba(176, 38, 255, 0.12) 0%, transparent 40%),
-                radial-gradient(circle at 50% 60%, rgba(255, 215, 0, 0.07) 0%, transparent 50%),
+                radial-gradient(circle at 50% 60%, rgba(255, 215, 0, 0.08) 0%, transparent 50%),
                 linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
             background-size: 100% 100%, 100% 100%, 100% 100%, 36px 36px, 36px 36px;
@@ -718,18 +783,18 @@ class BracketBuilder:
         }}
         .showdown-card.is-winner-card {{
             border: 2px solid #ffd700 !important;
-            box-shadow: 0 10px 50px rgba(255, 215, 0, 0.4), inset 0 0 30px rgba(255, 215, 0, 0.12) !important;
-            background: linear-gradient(135deg, rgba(35, 28, 10, 0.92) 0%, rgba(20, 28, 55, 0.8) 100%) !important;
+            box-shadow: 0 10px 50px rgba(255, 215, 0, 0.45), inset 0 0 35px rgba(255, 215, 0, 0.15) !important;
+            background: linear-gradient(135deg, rgba(38, 30, 10, 0.95) 0%, rgba(24, 32, 60, 0.85) 100%) !important;
         }}
         .showdown-card.is-winner-card .card-tag {{
             color: #ffd700 !important;
-            border-color: rgba(255, 215, 0, 0.6) !important;
-            background: rgba(255, 215, 0, 0.15) !important;
-            box-shadow: 0 0 15px rgba(255, 215, 0, 0.3) !important;
+            border-color: rgba(255, 215, 0, 0.7) !important;
+            background: rgba(255, 215, 0, 0.18) !important;
+            box-shadow: 0 0 18px rgba(255, 215, 0, 0.4) !important;
         }}
         .showdown-card.is-winner-card .player-avatar {{
             border-color: #ffd700 !important;
-            box-shadow: 0 0 25px rgba(255, 215, 0, 0.7) !important;
+            box-shadow: 0 0 25px rgba(255, 215, 0, 0.8) !important;
         }}
         .showdown-card.is-winner-card .player-sub {{
             color: #ffd700 !important;
@@ -841,7 +906,7 @@ class BracketBuilder:
             font-size: 32px;
         }}
 
-        /* VS Center Unit */
+        /* VS Center Unit with Scores */
         .center-connector {{
             display: flex;
             align-items: center;
@@ -855,9 +920,42 @@ class BracketBuilder:
             background: linear-gradient(90deg, #00f0ff, #b026ff);
             box-shadow: 0 0 20px #00f0ff, 0 0 10px #b026ff;
         }}
+        .vs-unit {{
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            z-index: 2;
+        }}
+        .score-badge {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 30px;
+            font-weight: 900;
+            padding: 8px 18px;
+            border-radius: 12px;
+            background: rgba(10, 15, 30, 0.95);
+            letter-spacing: 1px;
+        }}
+        .score-badge.score-left {{
+            border: 2px solid #00f0ff;
+            color: #00f0ff;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.4);
+            text-shadow: 0 0 12px rgba(0, 240, 255, 0.8);
+        }}
+        .score-badge.score-right {{
+            border: 2px solid #b026ff;
+            color: #b026ff;
+            box-shadow: 0 0 20px rgba(176, 38, 255, 0.4);
+            text-shadow: 0 0 12px rgba(176, 38, 255, 0.8);
+        }}
+        .score-badge.score-winner {{
+            border-color: #ffd700 !important;
+            color: #ffd700 !important;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.9) !important;
+            box-shadow: 0 0 30px rgba(255, 215, 0, 0.5) !important;
+        }}
         .vs-badge {{
-            width: 130px;
-            height: 130px;
+            width: 120px;
+            height: 120px;
             border-radius: 50%;
             background: radial-gradient(circle, #1c1033 0%, #0c0818 100%);
             border: 3px solid #b026ff;
@@ -865,11 +963,10 @@ class BracketBuilder:
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 2;
         }}
         .vs-text {{
             font-family: 'Orbitron', sans-serif;
-            font-size: 48px;
+            font-size: 44px;
             font-weight: 900;
             font-style: italic;
             background: linear-gradient(180deg, #ffffff 0%, #00f0ff 50%, #b026ff 100%);
@@ -931,6 +1028,17 @@ class BracketBuilder:
             letter-spacing: 1px;
             text-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
         }}
+        .trophy-score-tag {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            padding: 3px 10px;
+            border-radius: 6px;
+            background: rgba(255, 215, 0, 0.15);
+            border: 1px solid rgba(255, 215, 0, 0.4);
+            color: #ffd700;
+        }}
         .trophy-winner-tbd {{
             font-family: 'Rajdhani', sans-serif;
             font-size: 22px;
@@ -986,26 +1094,62 @@ class BracketBuilder:
         }}
         .match-box {{
             width: 100%;
-            max-width: 280px;
-            background: rgba(15, 23, 42, 0.85);
-            border: 2px solid rgba(0, 240, 255, 0.3);
+            max-width: 290px;
+            background: rgba(15, 23, 42, 0.88);
+            border: 2px solid rgba(0, 240, 255, 0.25);
             border-radius: 14px;
             padding: 10px 14px;
             display: flex;
             flex-direction: column;
             gap: 8px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(12px);
+        }}
+        .match-box.match-completed {{
+            border-color: rgba(255, 215, 0, 0.35);
         }}
         .match-participant {{
             display: flex;
             align-items: center;
-            gap: 12px;
+            justify-content: space-between;
+            gap: 10px;
+        }}
+        .participant-left {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+            overflow: hidden;
+        }}
+        .match-score-pill {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 15px;
+            font-weight: 800;
+            padding: 2px 8px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            color: #ffffff;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+        }}
+        .winner-side .match-score-pill {{
+            background: rgba(255, 215, 0, 0.2);
+            color: #ffd700;
+            border-color: rgba(255, 215, 0, 0.6);
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.4);
+        }}
+        .winner-side .p-name {{
+            color: #ffd700 !important;
+            font-weight: 800;
+        }}
+        .loser-side {{
+            opacity: 0.55;
         }}
         .mini-avatar {{
             width: 38px;
             height: 38px;
             border-radius: 50%;
             border: 1px solid #00f0ff;
+            object-fit: cover;
         }}
         .mini-ph {{
             width: 38px;
@@ -1024,6 +1168,9 @@ class BracketBuilder:
             font-size: 18px;
             font-weight: 700;
             color: #ffffff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }}
         .match-divider {{
             height: 1px;
@@ -1106,7 +1253,8 @@ class BracketBuilder:
         self,
         guild: discord.Guild,
         tournament: dict,
-        participants: List[dict]
+        participants: List[dict],
+        matches: Optional[List[dict]] = None
     ) -> BytesIO:
         """
         Renderiza o chaveamento do torneio em 1920x1080 com HTML/CSS de altíssima fidelidade.
@@ -1155,7 +1303,8 @@ class BracketBuilder:
             teams_data=teams_data,
             guild_icon_uri=guild_icon_uri,
             bracket_mode=bracket_mode,
-            is_2v2=is_2v2
+            is_2v2=is_2v2,
+            matches=matches
         )
 
         # Renderiza via Playwright

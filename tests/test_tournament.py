@@ -43,6 +43,7 @@ def mock_db():
     })
     db.finish_tournament = AsyncMock(return_value=True)
     db.cancel_tournament = AsyncMock(return_value=True)
+    db.get_tournament_matches = AsyncMock(return_value=[])
     db.get_tournament_hall_of_fame = AsyncMock(return_value=[
         {"user_id": 999, "username": "Pedrinho", "titles_count": 3},
         {"user_id": 888, "username": "Lucas", "titles_count": 1},
@@ -141,8 +142,59 @@ class TestTournamentCommands:
             third_place_id=None,
             winner_ids=[999],
             second_place_ids=[],
-            third_place_ids=[]
+            third_place_ids=[],
+            final_score=None
         )
+
+    @pytest.mark.asyncio
+    async def test_registrar_partida(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.guild.get_member.return_value = None
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        mock_db.get_tournament_matches = AsyncMock(return_value=[
+            {
+                "tournament_id": 1,
+                "round_name": "final",
+                "match_number": 1,
+                "team_a_ids": [999],
+                "team_b_ids": [888],
+                "score_a": 0,
+                "score_b": 0,
+                "status": "pending"
+            }
+        ])
+        mock_db.record_match_result = AsyncMock(return_value={
+            "success": True,
+            "is_final": True,
+            "next_match_number": None
+        })
+
+        vencedor = MagicMock()
+        vencedor.id = 999
+        vencedor.mention = "<@999>"
+
+        await cmd.registrar_partida.callback(
+            cmd,
+            interaction,
+            id=1,
+            jogo=1,
+            placar="3x1",
+            vencedor=vencedor
+        )
+
+        mock_db.record_match_result.assert_awaited_once_with(
+            tournament_id=1,
+            match_number=1,
+            score_a=3,
+            score_b=1,
+            winner_team_ids=[999]
+        )
+        interaction.followup.send.assert_awaited_once()
+
 
     @pytest.mark.asyncio
     async def test_chaveamento_torneio(self, mock_db):

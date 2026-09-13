@@ -326,14 +326,15 @@ class TournamentCommands(app_commands.Group):
             logger.error(f"Erro ao exibir status do torneio {id}: {e}")
             await interaction.followup.send("❌ Erro ao consultar detalhes do torneio.")
 
-    @app_commands.command(name="encerrar", description="Finaliza o torneio, registra o pódio e concede pontos aos vencedores")
+    @app_commands.command(name="encerrar", description="Encerra um torneio, define os vencedores e distribui os pontos")
     @app_commands.describe(
-        id="ID do torneio",
-        vencedor="Membro campeão (1º Lugar)",
-        segundo_lugar="Membro vice-campeão (2º Lugar)",
-        terceiro_lugar="Membro 3º Lugar (opcional)",
-        pontos_vencedor="Pontos concedidos ao 1º lugar (opcional)",
-        pontos_segundo="Pontos concedidos ao 2º lugar (opcional)"
+        id="ID do torneio a ser encerrado",
+        vencedor="Membro campeão do torneio",
+        segundo_lugar="Membro que ficou em 2º lugar (Vice)",
+        terceiro_lugar="Membro que ficou em 3º lugar",
+        pontos_vencedor="Pontos adicionais para o campeão (opcional)",
+        pontos_segundo="Pontos adicionais para o vice (opcional)",
+        placar="Placar da Grande Final (ex: '3x1' ou '4x2')"
     )
     @app_commands.checks.has_permissions(manage_events=True)
     async def encerrar_torneio(
@@ -344,7 +345,8 @@ class TournamentCommands(app_commands.Group):
         segundo_lugar: Optional[discord.Member] = None,
         terceiro_lugar: Optional[discord.Member] = None,
         pontos_vencedor: int = 0,
-        pontos_segundo: int = 0
+        pontos_segundo: int = 0,
+        placar: Optional[str] = None
     ):
         await interaction.response.defer()
         try:
@@ -396,7 +398,7 @@ class TournamentCommands(app_commands.Group):
                 if member:
                     await self.db.upsert_user(member.id, member.name, member.discriminator, member.bot)
 
-            # Finaliza no banco com todos os IDs de cada equipe
+            # Finaliza no banco com todos os IDs de cada equipe e placar
             await self.db.finish_tournament(
                 tournament_id=id,
                 winner_id=vencedor.id,
@@ -404,7 +406,8 @@ class TournamentCommands(app_commands.Group):
                 third_place_id=terceiro_lugar.id if terceiro_lugar else None,
                 winner_ids=[m.id for m in winner_team],
                 second_place_ids=[m.id for m in runner_up_team],
-                third_place_ids=[m.id for m in third_place_team]
+                third_place_ids=[m.id for m in third_place_team],
+                final_score=placar
             )
 
             # Concede pontos aos ganhadores se especificado
@@ -450,6 +453,11 @@ class TournamentCommands(app_commands.Group):
                 podium_lines.append(f"🥉 **3º Lugar:** {thirds_mention}")
 
             podium_embed.add_field(name="🏆 Vencedores", value="\n".join(podium_lines), inline=False)
+            
+            final_placar_display = placar or tourney.get("final_score")
+            if final_placar_display:
+                podium_embed.add_field(name="⚽ Placar da Final", value=f"`{final_placar_display}`", inline=True)
+
             if tourney.get("prize"):
                 podium_embed.add_field(name="🎁 Premiação Concedida", value=tourney["prize"], inline=False)
 
@@ -477,6 +485,110 @@ class TournamentCommands(app_commands.Group):
         except Exception as e:
             logger.error(f"Erro ao encerrar torneio {id}: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao encerrar o torneio.")
+
+    @app_commands.command(name="partida", description="Registra o placar de uma partida e avança o vencedor no chaveamento")
+    @app_commands.describe(
+        id="ID do torneio",
+        jogo="Número da partida no chaveamento (1, 2, 3...)",
+        placar="Placar da partida (ex: '3x1', '2x0', '3-2')",
+        vencedor="Membro da equipe vencedora"
+    )
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def registrar_partida(
+        self,
+        interaction: discord.Interaction,
+        id: int,
+        jogo: int,
+        placar: str,
+        vencedor: discord.Member
+    ):
+        await interaction.response.defer()
+        try:
+            tourney = await self.db.get_tournament(id)
+            if not tourney or tourney["guild_id"] != interaction.guild.id:
+                await interaction.followup.send("❌ Torneio não encontrado.")
+                return
+
+            if tourney["status"] == "completed":
+                await interaction.followup.send("⚠️ Este torneio já foi concluído.")
+                return
+
+            import re
+            nums = re.findall(r'\d+', placar)
+            if len(nums) < 2:
+                await interaction.followup.send("⚠️ Formato de placar inválido. Use por exemplo: `3x1`, `2x0` ou `3-2`.")
+                return
+
+            score_a = int(nums[0])
+            score_b = int(nums[1])
+
+            matches = await self.db.get_tournament_matches(id)
+            target_match = next((m for m in matches if m["match_number"] == jogo), None)
+            if not target_match:
+                await interaction.followup.send(f"❌ Partida #{jogo} não encontrada no chaveamento deste torneio.")
+                return
+
+            team_a = target_match.get("team_a_ids") or []
+            team_b = target_match.get("team_b_ids") or []
+
+            if not team_a or not team_b:
+                await interaction.followup.send(f"⚠️ A Partida #{jogo} ainda não possui as duas equipes definidas. Aguarde o resultado da fase anterior.")
+                return
+
+            # Identifica se o vencedor pertence ao Time A ou Time B
+            winner_team_ids = []
+            if vencedor.id in team_a:
+                winner_team_ids = team_a
+            elif vencedor.id in team_b:
+                winner_team_ids = team_b
+            else:
+                await interaction.followup.send(f"⚠️ O membro {vencedor.mention} não faz parte de nenhuma das equipes da Partida #{jogo}.")
+                return
+
+            res = await self.db.record_match_result(
+                tournament_id=id,
+                match_number=jogo,
+                score_a=score_a,
+                score_b=score_b,
+                winner_team_ids=winner_team_ids
+            )
+
+            if not res.get("success"):
+                await interaction.followup.send(f"❌ {res.get('reason', 'Erro ao registrar resultado da partida.')}")
+                return
+
+            winner_names = []
+            for uid in winner_team_ids:
+                m = interaction.guild.get_member(uid)
+                winner_names.append(m.mention if m else f"<@{uid}>")
+            winner_str = " & ".join(winner_names)
+
+            round_title = target_match.get("round_name", "").upper()
+            embed = discord.Embed(
+                title=f"⚔️ Resultado da Partida #{jogo} — {round_title}",
+                description=f"🎮 **Torneio:** {tourney['name']}\n🔢 **Placar Registrado:** `{score_a} x {score_b}`\n🏆 **Equipe Vencedora:** {winner_str}",
+                color=discord.Color.from_rgb(0, 240, 255)
+            )
+
+            if res.get("is_final"):
+                embed.add_field(
+                    name="👑 Grande Final Finalizada!",
+                    value=f"A Grande Final foi concluída com placar **{score_a} x {score_b}**!\nUtilize `/torneio encerrar id:{id} vencedor:{vencedor.mention} placar:'{score_a} x {score_b}'` para oficializar a premiação e o pódio.",
+                    inline=False
+                )
+            elif res.get("next_match_number"):
+                embed.add_field(
+                    name="🚀 Avanço de Fase",
+                    value=f"A equipe {winner_str} avançou para a **Partida #{res['next_match_number']}** do chaveamento!",
+                    inline=False
+                )
+
+            embed.set_footer(text=f"Use /torneio chaveamento id:{id} para visualizar o chaveamento atualizado com os placares.")
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Erro ao registrar partida do torneio {id}: {e}")
+            await interaction.followup.send("❌ Ocorreu um erro ao registrar o resultado da partida.")
 
     @app_commands.command(name="cancelar", description="Cancela um torneio aberto")
     @app_commands.describe(id="ID do torneio a ser cancelado")
@@ -614,12 +726,15 @@ class TournamentCommands(app_commands.Group):
                 await interaction.followup.send("⚠️ Este torneio ainda não possui participantes inscritos para gerar o chaveamento.")
                 return
 
+            matches = await self.db.get_tournament_matches(id)
+
             # Gera a imagem através do BracketBuilder
             builder = BracketBuilder()
             image_buffer = await builder.generate_bracket(
                 guild=interaction.guild,
                 tournament=tourney,
-                participants=participants
+                participants=participants,
+                matches=matches
             )
 
             status_tag = "🟢 Chaveamento Oficial Sorteado" if tourney.get("is_shuffled") else "🟡 Prévia de Inscrições (Ainda não sorteado)"
@@ -636,5 +751,3 @@ class TournamentCommands(app_commands.Group):
         except Exception as e:
             logger.error(f"Erro ao gerar chaveamento do torneio {id}: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao gerar a imagem do chaveamento.")
-
-
