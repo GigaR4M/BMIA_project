@@ -6,6 +6,7 @@ from database import Database
 from typing import Optional, Any, List
 import logging
 from datetime import datetime
+from utils.image_generator import BracketBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -481,3 +482,41 @@ class TournamentCommands(app_commands.Group):
         except Exception as e:
             logger.error(f"Erro ao exibir Hall da Fama: {e}")
             await interaction.followup.send("❌ Erro ao carregar o Hall da Fama.")
+
+    @app_commands.command(name="chaveamento", description="Gera a imagem oficial do chaveamento/bracket do torneio")
+    @app_commands.describe(id="ID do torneio")
+    async def chaveamento_torneio(self, interaction: discord.Interaction, id: int):
+        await interaction.response.defer()
+        try:
+            tourney = await self.db.get_tournament(id)
+            if not tourney or tourney["guild_id"] != interaction.guild.id:
+                await interaction.followup.send("❌ Torneio não encontrado.")
+                return
+
+            participants = await self.db.get_tournament_participants(id)
+            if not participants:
+                await interaction.followup.send("⚠️ Este torneio ainda não possui participantes inscritos para gerar o chaveamento.")
+                return
+
+            # Gera a imagem através do BracketBuilder
+            builder = BracketBuilder()
+            image_buffer = await builder.generate_bracket(
+                guild=interaction.guild,
+                tournament=tourney,
+                participants=participants
+            )
+
+            file = discord.File(fp=image_buffer, filename=f"chaveamento_torneio_{id}.png")
+            embed = discord.Embed(
+                title=f"⚔️ Chaveamento Oficial: {tourney['name']}",
+                description=f"🎮 **Jogo:** {tourney['game_name']} • **Formato:** {tourney.get('format', '1v1')}\n👥 **Total de Inscritos:** {len(participants)}",
+                color=discord.Color.from_rgb(0, 240, 255)
+            )
+            embed.set_image(url=f"attachment://chaveamento_torneio_{id}.png")
+            embed.set_footer(text=f"Torneio #{id} • BMIA Esports")
+
+            await interaction.followup.send(embed=embed, file=file)
+        except Exception as e:
+            logger.error(f"Erro ao gerar chaveamento do torneio {id}: {e}")
+            await interaction.followup.send("❌ Ocorreu um erro ao gerar a imagem do chaveamento.")
+

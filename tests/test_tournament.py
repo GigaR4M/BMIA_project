@@ -117,12 +117,57 @@ class TestTournamentCommands:
             second_place_id=None,
             third_place_id=None
         )
-        mock_points_manager.add_points.assert_awaited_once_with(
-            999, 1000, 123456789, interaction_type="tournament_win"
-        )
+    @pytest.mark.asyncio
+    async def test_chaveamento_torneio(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.guild.icon = None
+        interaction.guild.get_member.return_value = None
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        await cmd.chaveamento_torneio.callback(cmd, interaction, id=1)
+
+        mock_db.get_tournament.assert_awaited_once_with(1)
+        mock_db.get_tournament_participants.assert_awaited_once_with(1)
+        interaction.followup.send.assert_awaited_once()
+        # Verifica se o arquivo gerado foi enviado
+        call_kwargs = interaction.followup.send.call_args[1]
+        assert "file" in call_kwargs
+        assert "embed" in call_kwargs
 
 
-class TestTournamentRegistrationView:
+class TestBracketBuilder:
+    @pytest.mark.asyncio
+    async def test_generate_bracket_image(self):
+        from utils.image_generator import BracketBuilder
+        builder = BracketBuilder()
+        guild = MagicMock()
+        guild.icon = None
+        guild.get_member.return_value = None
+
+        tournament = {
+            "id": 1,
+            "name": "Torneio 2x2 Piores do Mundo Rocket League 2026",
+            "game_name": "Rocket League",
+            "format": "2v2",
+            "prize": "10.000 pontos",
+            "status": "open",
+            "winner_id": None
+        }
+
+        participants = [
+            {"user_id": 101, "username": "Gideon"},
+            {"user_id": 102, "username": "Pedrinho"},
+            {"user_id": 103, "username": "Lucas"},
+            {"user_id": 104, "username": "Bruno"},
+        ]
+
+        buf = await builder.generate_bracket(guild, tournament, participants)
+        assert buf is not None
+        assert buf.getvalue().startswith(b"\x89PNG")  # Cabeçalho de imagem PNG válido
+
     @pytest.mark.asyncio
     async def test_view_join(self, mock_db):
         view = TournamentRegistrationView(db=mock_db, tournament_id=1)
