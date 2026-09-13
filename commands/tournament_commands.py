@@ -647,11 +647,19 @@ class TournamentCommands(app_commands.Group):
 
             medals = ["🥇", "🥈", "🥉", "🏅", "🎖️"]
             lines = []
-            for idx, c in enumerate(champions):
-                medal = medals[idx] if idx < len(medals) else "🏆"
+            current_rank = 0
+            prev_titles = None
+
+            for c in champions:
+                titles = c.get("titles_count") or 1
+                if titles != prev_titles:
+                    current_rank += 1
+                    prev_titles = titles
+
+                medal_idx = current_rank - 1
+                medal = medals[medal_idx] if medal_idx < len(medals) else "🏆"
                 member = interaction.guild.get_member(c["user_id"])
                 name = member.mention if member else (c.get("username") or f"ID: {c['user_id']}")
-                titles = c.get("titles_count") or 1
                 plural = "título" if titles == 1 else "títulos"
 
                 header = f"{medal} **{name}** — **{titles}** {plural}"

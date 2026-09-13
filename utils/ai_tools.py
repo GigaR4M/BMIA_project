@@ -191,7 +191,14 @@ class AIToolkit:
                 return [{"mensagem": "Nenhum campeão registrado no Hall da Fama ainda."}]
 
             result = []
-            for idx, c in enumerate(champions):
+            current_rank = 0
+            prev_titles = None
+            for c in champions:
+                titles = c.get("titles_count", 1)
+                if titles != prev_titles:
+                    current_rank += 1
+                    prev_titles = titles
+
                 tourneys = c.get("tournaments") or []
                 if isinstance(tourneys, str):
                     try:
@@ -199,13 +206,13 @@ class AIToolkit:
                         tourneys = json.loads(tourneys)
                     except Exception:
                         tourneys = []
-                
+
                 tourney_list = [f"{t.get('name')} ({t.get('game_name')})" for t in tourneys if isinstance(t, dict)]
 
                 result.append({
-                    "posicao": idx + 1,
+                    "posicao": current_rank,
                     "usuario": c.get("username", "Desconhecido"),
-                    "titulos": c.get("titles_count", 1),
+                    "titulos": titles,
                     "jogos": c.get("games") or [],
                     "torneios": tourney_list or c.get("games") or []
                 })
