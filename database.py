@@ -260,6 +260,34 @@ class Database:
                     UNIQUE(guild_id, period_type, period_identifier)
                 )
             """)
+
+            # Tabela de eventos agendados
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS scheduled_events (
+                    event_id BIGINT PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    start_time TIMESTAMP WITH TIME ZONE,
+                    end_time TIMESTAMP WITH TIME ZONE,
+                    status TEXT NOT NULL,
+                    creator_id BIGINT,
+                    entity_type TEXT,
+                    location TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+
+            # Tabela de participantes de eventos (interessados e presença confirmada)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS event_participants (
+                    event_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    status TEXT DEFAULT 'interested',
+                    joined_at TIMESTAMP DEFAULT NOW(),
+                    PRIMARY KEY (event_id, user_id)
+                )
+            """)
             
             # Índices para melhor performance
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
@@ -1751,6 +1779,33 @@ class Database:
                 """, event_id, user_id)
         except Exception as e:
             logger.error(f"Erro ao remover participante {user_id} do evento {event_id}: {e}")
+
+    async def register_voice_attendance_for_event(self, event_id: int, channel_id: int,
+                                                  start_time: Optional[datetime],
+                                                  end_time: Optional[datetime]) -> int:
+        """Marca presença 'attended' para usuários que estiveram no canal de voz durante o evento."""
+        try:
+            async with self.pool.acquire() as conn:
+                start = start_time or (datetime.now() - timedelta(hours=6))
+                end = end_time or datetime.now()
+                
+                await conn.execute("""
+                    INSERT INTO event_participants (event_id, user_id, status, joined_at)
+                    SELECT $1, va.user_id, 'attended', NOW()
+                    FROM voice_activity va
+                    JOIN users u ON va.user_id = u.user_id
+                    WHERE va.channel_id = $2
+                      AND va.joined_at <= $4
+                      AND (va.left_at IS NULL OR va.left_at >= $3)
+                      AND u.is_bot = FALSE
+                    GROUP BY va.user_id
+                    ON CONFLICT (event_id, user_id) DO UPDATE 
+                    SET status = 'attended', joined_at = NOW()
+                """, event_id, channel_id, start, end)
+                return 1
+        except Exception as e:
+            logger.error(f"Erro ao registrar presença em voz para evento {event_id}: {e}")
+            return 0
 
 
     # ==================== ADVANCED CONTEXT SYSTEM METHODS ====================

@@ -180,6 +180,9 @@ async def on_ready() -> None:
                     count += 1
             logger.info("✅ %d canais sincronizados em %s", count, guild.name)
 
+            if ctx.event_monitor:
+                client.loop.create_task(ctx.event_monitor.sync_all_guild_events(guild))
+
         await ctx.points_manager.recover_sessions()
 
         logger.info("📊 Sistema de estatísticas ativado!")

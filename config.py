@@ -88,4 +88,5 @@ def create_intents() -> discord.Intents:
     intents.voice_states = True   # estatísticas de voz
     intents.members = True        # informações de membros
     intents.presences = True      # rastrear jogos/atividades
+    intents.guild_scheduled_events = True  # rastrear eventos agendados e participantes
     return intents
