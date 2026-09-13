@@ -154,18 +154,22 @@ class StatsEmbedBuilder:
         favs_text = ""
         if top_text:
             ch = top_text[0]
-            favs_text += f"📝 **Chat:** #{ch['channel_name']} ({ch['count']} msgs)\n"
+            cnt = int(ch.get('count') or 0)
+            favs_text += f"📝 **Chat:** #{ch.get('channel_name', 'desconhecido')} ({cnt} msgs)\n"
         
         if top_voice:
             ch = top_voice[0]
-            favs_text += f"🔊 **Call:** {ch['channel_name']} ({format_time(int(ch['minutes']))})\n"
+            mins = int(ch.get('minutes') or 0)
+            favs_text += f"🔊 **Call:** {ch.get('channel_name', 'desconhecido')} ({format_time(mins)})\n"
             
         if top_games:
             game = top_games[0]
-            favs_text += f"🎮 **Jogo:** {game['activity_name']} ({format_time(int(game['minutes']))})"
+            mins = int(game.get('minutes') or 0)
+            favs_text += f"🎮 **Jogo:** {game.get('activity_name', 'desconhecido')} ({format_time(mins)})"
             
         if favs_text:
             embed.add_field(name="❤️ Favoritos", value=favs_text, inline=False)
+
         
         return embed
     
