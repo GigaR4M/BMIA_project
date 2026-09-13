@@ -190,14 +190,26 @@ class AIToolkit:
             if not champions:
                 return [{"mensagem": "Nenhum campeão registrado no Hall da Fama ainda."}]
 
-            return [
-                {
+            result = []
+            for idx, c in enumerate(champions):
+                tourneys = c.get("tournaments") or []
+                if isinstance(tourneys, str):
+                    try:
+                        import json
+                        tourneys = json.loads(tourneys)
+                    except Exception:
+                        tourneys = []
+                
+                tourney_list = [f"{t.get('name')} ({t.get('game_name')})" for t in tourneys if isinstance(t, dict)]
+
+                result.append({
                     "posicao": idx + 1,
                     "usuario": c.get("username", "Desconhecido"),
-                    "titulos": c["titles_count"],
-                }
-                for idx, c in enumerate(champions)
-            ]
+                    "titulos": c.get("titles_count", 1),
+                    "jogos": c.get("games") or [],
+                    "torneios": tourney_list or c.get("games") or []
+                })
+            return result
         except Exception as e:
             logger.error(f"Erro ao executar tool get_tournament_hall_of_fame: {e}")
             return [{"erro": "Falha ao consultar Hall da Fama de torneios."}]

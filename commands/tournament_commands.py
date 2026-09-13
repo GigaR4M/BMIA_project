@@ -5,6 +5,7 @@ from discord import app_commands
 from database import Database
 from typing import Optional, Any, List
 import logging
+import json
 from datetime import datetime
 from utils.image_generator import BracketBuilder
 
@@ -640,7 +641,7 @@ class TournamentCommands(app_commands.Group):
 
             embed = discord.Embed(
                 title=f"👑 Hall da Fama dos Campeões - {interaction.guild.name}",
-                description="Os membros mais vitoriosos em torneios do servidor:",
+                description="Os membros mais vitoriosos em torneios do servidor:\n",
                 color=discord.Color.gold()
             )
 
@@ -650,11 +651,43 @@ class TournamentCommands(app_commands.Group):
                 medal = medals[idx] if idx < len(medals) else "🏆"
                 member = interaction.guild.get_member(c["user_id"])
                 name = member.mention if member else (c.get("username") or f"ID: {c['user_id']}")
-                titles = c["titles_count"]
+                titles = c.get("titles_count") or 1
                 plural = "título" if titles == 1 else "títulos"
-                lines.append(f"{medal} **{name}** — **{titles}** {plural}")
+
+                header = f"{medal} **{name}** — **{titles}** {plural}"
+
+                tourneys = c.get("tournaments") or []
+                if isinstance(tourneys, str):
+                    try:
+                        tourneys = json.loads(tourneys)
+                    except Exception:
+                        tourneys = []
+
+                detail_lines = []
+                if tourneys:
+                    for t in tourneys:
+                        if isinstance(t, dict):
+                            t_name = t.get("name") or "Torneio"
+                            t_game = t.get("game_name") or ""
+                            if t_game:
+                                detail_lines.append(f"   └ 🏆 *{t_name}* • 🎮 `{t_game}`")
+                            else:
+                                detail_lines.append(f"   └ 🏆 *{t_name}*")
+                elif c.get("games"):
+                    games_list = [g for g in c["games"] if g]
+                    if games_list:
+                        games_str = ", ".join(f"`{g}`" for g in games_list)
+                        detail_lines.append(f"   └ 🎮 {games_str}")
+
+                if detail_lines:
+                    lines.append(f"{header}\n" + "\n".join(detail_lines))
+                else:
+                    lines.append(header)
 
             embed.description = "\n\n".join(lines)
+            if interaction.guild.icon:
+                embed.set_thumbnail(url=interaction.guild.icon.url)
+            embed.set_footer(text="BMIA Esports • Hall da Fama")
             await interaction.followup.send(embed=embed)
         except Exception as e:
             logger.error(f"Erro ao exibir Hall da Fama: {e}")

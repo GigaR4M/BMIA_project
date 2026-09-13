@@ -2437,21 +2437,42 @@ class Database:
             return True
 
     async def get_tournament_hall_of_fame(self, guild_id: int, limit: int = 5) -> List[Dict[str, Any]]:
-        """Retorna o ranking histórico de campeões de torneios."""
+        """Retorna o ranking histórico de campeões de torneios com jogos e torneios vencidos."""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT 
                     tp.user_id,
-                    u.username,
-                    COUNT(DISTINCT tp.tournament_id) as titles_count
+                    COALESCE(u.username, '') as username,
+                    COUNT(DISTINCT tp.tournament_id) as titles_count,
+                    ARRAY_AGG(DISTINCT t.game_name) FILTER (WHERE t.game_name IS NOT NULL) as games,
+                    JSON_AGG(
+                        JSON_BUILD_OBJECT(
+                            'id', t.id,
+                            'name', t.name,
+                            'game_name', t.game_name
+                        ) ORDER BY t.id DESC
+                    ) as tournaments
                 FROM tournament_participants tp
                 JOIN tournaments t ON tp.tournament_id = t.id
-                JOIN users u ON tp.user_id = u.user_id
+                LEFT JOIN users u ON tp.user_id = u.user_id
                 WHERE t.guild_id = $1 AND t.status = 'completed' AND tp.status = 'winner'
                 GROUP BY tp.user_id, u.username
                 ORDER BY titles_count DESC
                 LIMIT $2
             """, guild_id, limit)
-            return [dict(row) for row in rows]
+            
+            results = []
+            for row in rows:
+                item = dict(row)
+                tourneys = item.get("tournaments")
+                if isinstance(tourneys, str):
+                    try:
+                        item["tournaments"] = json.loads(tourneys)
+                    except Exception:
+                        item["tournaments"] = []
+                elif not isinstance(tourneys, list):
+                    item["tournaments"] = []
+                results.append(item)
+            return results
 
 
