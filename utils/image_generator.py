@@ -449,35 +449,88 @@ class BracketBuilder:
         # 6. RENDERIZAÇÃO POR MODO DE BRACKET
 
         # -------------------------------------------------------------
-        # MODO A: 2 TIMES (FINAL DIRETA)
+        # MODO A: 2 TIMES (CONFRONTO DIRETO / SHOWDOWN DE ESPORTS)
         # -------------------------------------------------------------
         if bracket_mode == 2:
-            CARD_W, CARD_H = 460, 90
-            final_x = (WIDTH - CARD_W) // 2
+            CARD_W, CARD_H = 560, 250
+            left_x = 160
+            right_x = WIDTH - 160 - CARD_W
+            center_x = (WIDTH - 440) // 2
             
-            draw.text((final_x + 140, 180), "★ GRANDE FINAL ★", fill=self.GOLD, font=font_round_title)
+            draw.text(((WIDTH // 2) - 180, 175), "★ GRANDE FINAL - CONFRONTO DIRETO ★", fill=self.GOLD, font=font_round_title)
 
-            y_t0 = 260
-            y_t1 = 440
-            draw_team_card(final_x, y_t0, CARD_W, CARD_H, team_avatars[0], 0)
-            draw_team_card(final_x, y_t1, CARD_W, CARD_H, team_avatars[1], 1)
+            def draw_showdown_card(x, y, team_data, team_idx, corner_color, corner_title):
+                draw.rounded_rectangle(
+                    [x, y, x + CARD_W, y + CARD_H],
+                    radius=14,
+                    fill=self.BG_CARD,
+                    outline=corner_color,
+                    width=2
+                )
+                # Header do Card (Corner Title)
+                draw.rectangle([x + 2, y + 2, x + CARD_W - 2, y + 36], fill=(26, 34, 52))
+                draw.text((x + 20, y + 10), corner_title, fill=corner_color, font=self._get_font(15, bold=True))
 
-            # VS Badge
-            draw.rounded_rectangle([final_x + (CARD_W // 2) - 25, 375, final_x + (CARD_W // 2) + 25, 415], radius=6, fill=(20, 25, 45), outline=self.NEON_PURPLE, width=2)
-            draw.text((final_x + (CARD_W // 2) - 11, 385), "VS", fill=self.NEON_PURPLE, font=font_vs)
+                if not team_data:
+                    ph_av = self._create_placeholder_avatar(size=56, text="?")
+                    img.paste(ph_av, (x + 30, y + 70), ph_av)
+                    draw.text((x + 105, y + 85), f"Time #{team_idx + 1} (Aguardando Inscrição)", fill=self.TEXT_MUTED, font=self._get_font(20, bold=True))
+                    return
 
-            # Conectores até o Campeão
-            draw.line([(final_x + CARD_W, y_t0 + CARD_H // 2), (final_x + CARD_W + 50, y_t0 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(final_x + CARD_W, y_t1 + CARD_H // 2), (final_x + CARD_W + 50, y_t1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(final_x + CARD_W + 50, y_t0 + CARD_H // 2), (final_x + CARD_W + 50, y_t1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(final_x + CARD_W + 50, 400), (final_x + CARD_W + 50, 680)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(final_x + CARD_W + 50, 680), (final_x + CARD_W, 680)], fill=self.LINE_ACTIVE, width=3)
+                if is_2v2:
+                    # Renderiza 2 linhas (1 para cada jogador da dupla)
+                    # Jogador 1
+                    m1, p1, av1 = team_data[0]
+                    img.paste(av1, (x + 30, y + 55), av1)
+                    name1 = m1.display_name if m1 else (p1.get("username") or "Jogador 1")
+                    draw.text((x + 85, y + 68), name1[:22], fill=self.TEXT_WHITE, font=self._get_font(20, bold=True))
 
-            # Troféu / Campeão
-            draw_champion_box(final_x, 630, CARD_W)
+                    # Jogador 2 ou Vaga Aberta
+                    if len(team_data) > 1:
+                        m2, p2, av2 = team_data[1]
+                        img.paste(av2, (x + 30, y + 145), av2)
+                        name2 = m2.display_name if m2 else (p2.get("username") or "Jogador 2")
+                        draw.text((x + 85, y + 158), name2[:22], fill=self.TEXT_WHITE, font=self._get_font(20, bold=True))
+                    else:
+                        ph_av = self._create_placeholder_avatar(size=avatar_size, text="+")
+                        img.paste(ph_av, (x + 30, y + 145), ph_av)
+                        draw.text((x + 85, y + 158), "(Aguardando 2º Jogador)", fill=self.TEXT_MUTED, font=self._get_font(18, bold=False))
+                else:
+                    # 1v1 (Card com avatar grande em destaque)
+                    m, p, av = team_data[0]
+                    # Resize avatar maior para 1v1 showdown
+                    av_large = av.resize((84, 84), Image.Resampling.LANCZOS)
+                    img.paste(av_large, (x + 35, y + 80), av_large)
+                    name = m.display_name if m else (p.get("username") or "Jogador")
+                    draw.text((x + 140, y + 100), name[:22], fill=self.TEXT_WHITE, font=self._get_font(24, bold=True))
+
+            # Card Esquerdo (Time Azul)
+            draw_showdown_card(left_x, 260, team_avatars[0], 0, self.NEON_CYAN, "🔵 DUPLA AZUL" if is_2v2 else "🔵 LADO AZUL")
+
+            # Card Direito (Time Laranja/Roxo)
+            draw_showdown_card(right_x, 260, team_avatars[1], 1, self.NEON_PURPLE, "🟣 DUPLA ROXA" if is_2v2 else "🟣 LADO ROXO")
+
+            # Emblema VS Central
+            vs_w, vs_h = 160, 80
+            vs_x = (WIDTH - vs_w) // 2
+            vs_y = 345
+            draw.rounded_rectangle([vs_x, vs_y, vs_x + vs_w, vs_y + vs_h], radius=12, fill=(24, 18, 42), outline=self.NEON_PURPLE, width=3)
+            font_vs_large = self._get_font(32, bold=True)
+            draw.text((vs_x + 52, vs_y + 22), "VS", fill=self.NEON_CYAN, font=font_vs_large)
+
+            # Linhas de Conexão Neon (Showdown Faceoff)
+            draw.line([(left_x + CARD_W, 385), (vs_x, 385)], fill=self.LINE_ACTIVE, width=4)
+            draw.line([(right_x, 385), (vs_x + vs_w, 385)], fill=self.LINE_ACTIVE, width=4)
+
+            # Linha descendo do VS até o Troféu do Campeão
+            draw.line([(WIDTH // 2, vs_y + vs_h), (WIDTH // 2, 580)], fill=self.LINE_ACTIVE, width=4)
+
+            # Troféu / Box Campeão
+            draw_champion_box(center_x, 580, 440)
 
         # -------------------------------------------------------------
         # MODO B: 4 TIMES (SEMIFINAIS + GRANDE FINAL)
+
         # -------------------------------------------------------------
         elif bracket_mode == 4:
             CARD_W, CARD_H = 360, 85
