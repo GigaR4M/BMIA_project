@@ -204,73 +204,797 @@ class PodiumBuilder:
 
 
 class BracketBuilder:
-    """Gerador visual de chaveamento / brackets dinâmico para torneios de esports do servidor."""
+    """
+    Gerador visual de chaveamento e confrontos de esports em alta fidelidade (1920x1080)
+    utilizando templates HTML5/CSS3 modernos (Glassmorphism, Neon Glows, Gradients e Tipografia Esports)
+    renderizados de forma ultra-rápida via Playwright.
+    """
 
     def __init__(self):
-        # Paleta de Cores Cyberpunk / Esports Dark
-        self.BG_DARK = (13, 17, 28)           # #0d111c
-        self.BG_CARD = (22, 29, 47)           # #161d2f
-        self.BG_CARD_BORDER = (45, 59, 90)    # #2d3b5a
-        self.NEON_CYAN = (0, 240, 255)        # #00f0ff
-        self.NEON_PURPLE = (168, 85, 247)     # #a855f7
-        self.GOLD = (255, 215, 0)             # #ffd700
-        self.TEXT_WHITE = (255, 255, 255)
-        self.TEXT_MUTED = (148, 163, 184)     # #94a3b8
-        self.LINE_ACTIVE = (0, 240, 255)
+        self._browser = None
 
-    def _get_font(self, size: int, bold: bool = False):
-        font_candidates = [
-            "arialbd.ttf" if bold else "arial.ttf",
-            "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
-            "segoeuib.ttf" if bold else "segoeui.ttf",
-            "arial.ttf",
-            "DejaVuSans.ttf"
-        ]
-        for f in font_candidates:
-            try:
-                return ImageFont.truetype(f, size)
-            except Exception:
-                continue
-        return ImageFont.load_default()
-
-    async def _fetch_avatar(self, member: Optional[discord.Member], user_data: dict, size: int = 44) -> Image.Image:
-        """Obtém e redimensiona o avatar do membro de forma circular, com fallback seguro."""
+    async def _get_avatar_data_uri(self, member: Optional[discord.Member], user_data: dict) -> str:
+        """Obtém o avatar do membro em base64 data URI ou gera um fallback SVG sofisticado."""
+        import base64
         try:
             if member:
                 avatar_asset = member.display_avatar.with_size(128)
                 avatar_bytes = await avatar_asset.read()
-                av = Image.open(BytesIO(avatar_bytes)).convert("RGBA")
-                av = av.resize((size, size), Image.Resampling.LANCZOS)
-                
-                # Máscara circular
-                mask = Image.new('L', (size, size), 0)
-                mask_draw = ImageDraw.Draw(mask)
-                mask_draw.ellipse((0, 0, size, size), fill=255)
-                
-                output = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-                output.paste(av, (0, 0), mask)
-                return output
+                b64 = base64.b64encode(avatar_bytes).decode("utf-8")
+                return f"data:image/png;base64,{b64}"
         except Exception:
             pass
 
-        # Fallback: Círculo com inicial do usuário
-        fallback = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(fallback)
+        # Fallback SVG moderno com gradiente e inicial
         name = user_data.get("username") or (member.display_name if member else "P")
         initial = name[0].upper() if name else "?"
-        draw.ellipse((0, 0, size, size), fill=(40, 60, 100))
-        font = self._get_font(int(size * 0.45), bold=True)
-        draw.text((size // 3, size // 4), initial, fill=self.TEXT_WHITE, font=font)
-        return fallback
+        svg = f"""<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'>
+            <defs>
+                <linearGradient id='grad' x1='0%' y1='0%' x2='100%' y2='100%'>
+                    <stop offset='0%' stop-color='#00f0ff'/>
+                    <stop offset='100%' stop-color='#b026ff'/>
+                </linearGradient>
+            </defs>
+            <circle cx='40' cy='40' r='38' fill='#151c2e' stroke='url(#grad)' stroke-width='3'/>
+            <text x='40' y='48' font-family='sans-serif' font-size='28' font-weight='bold' fill='#ffffff' text-anchor='middle'>{initial}</text>
+        </svg>"""
+        b64_svg = base64.b64encode(svg.encode("utf-8")).decode("utf-8")
+        return f"data:image/svg+xml;base64,{b64_svg}"
 
-    def _create_placeholder_avatar(self, size: int = 44, text: str = "+") -> Image.Image:
-        """Cria um avatar placeholder para vaga aberta."""
-        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.ellipse((0, 0, size, size), fill=(25, 35, 55), outline=self.NEON_CYAN, width=1)
-        font = self._get_font(int(size * 0.45), bold=True)
-        draw.text((size // 3, size // 5), text, fill=self.NEON_CYAN, font=font)
-        return img
+    async def _get_guild_icon_data_uri(self, guild: discord.Guild) -> Optional[str]:
+        """Obtém o ícone do servidor em base64 data URI."""
+        import base64
+        if not guild.icon:
+            return None
+        try:
+            icon_asset = guild.icon.with_size(128)
+            icon_bytes = await icon_asset.read()
+            b64 = base64.b64encode(icon_bytes).decode("utf-8")
+            return f"data:image/png;base64,{b64}"
+        except Exception:
+            return None
+
+    def _build_html_template(
+        self,
+        tournament: dict,
+        participants: List[dict],
+        teams_data: List[List[dict]],
+        guild_icon_uri: Optional[str],
+        bracket_mode: int,
+        is_2v2: bool
+    ) -> str:
+        """Gera o código HTML/CSS completo para renderização."""
+        title = str(tournament.get("name", "TORNEIO OFICIAL")).upper()
+        game = str(tournament.get("game_name", "Geral")).upper()
+        fmt_raw = str(tournament.get("format", "1v1")).upper()
+        prize = str(tournament.get("prize") or "Glória e Pontos")
+        max_participants = int(tournament.get("max_participants") or 16)
+        is_shuffled = tournament.get("is_shuffled", False)
+        winner_id = tournament.get("winner_id")
+
+        if winner_id:
+            status_text = "TORNEIO CONCLUÍDO"
+            status_class = "status-completed"
+        elif is_shuffled:
+            status_text = "CHAVEAMENTO OFICIAL"
+            status_class = "status-official"
+        elif tournament.get("status") == "open":
+            status_text = "PRÉVIA DE INSCRIÇÕES"
+            status_class = "status-open"
+        else:
+            status_text = "CHAVEAMENTO PRELIMINAR"
+            status_class = "status-prelim"
+
+        # Conteúdo do corpo conforme o modo de chaveamento
+        content_html = ""
+
+        # ---------------------------------------------------------------------
+        # MODO A: 2 TIMES (SHOWDOWN DIRETO / GRANDE FINAL)
+        # ---------------------------------------------------------------------
+        if bracket_mode == 2:
+            team_left = teams_data[0] if len(teams_data) > 0 else []
+            team_right = teams_data[1] if len(teams_data) > 1 else []
+
+            def render_showdown_team(team, is_left: bool):
+                corner_class = "corner-blue" if is_left else "corner-purple"
+                corner_tag = ("⚡ DUPLA AZUL" if is_2v2 else "⚡ LADO AZUL") if is_left else ("🔥 DUPLA ROXA" if is_2v2 else "🔥 LADO ROXO")
+                
+                rows_html = ""
+                if not team:
+                    rows_html = """
+                    <div class="player-row empty-slot">
+                        <div class="avatar-placeholder">?</div>
+                        <div class="player-info">
+                            <span class="player-name text-muted">Aguardando Inscrição</span>
+                            <span class="player-sub">Vaga aberta</span>
+                        </div>
+                    </div>
+                    """
+                elif is_2v2:
+                    p1 = team[0]
+                    rows_html += f"""
+                    <div class="player-row">
+                        <img class="player-avatar" src="{p1['avatar_uri']}" alt="" />
+                        <div class="player-info">
+                            <span class="player-name">{p1['name']}</span>
+                            <span class="player-sub">Capitão / Jogador 1</span>
+                        </div>
+                    </div>
+                    """
+                    if len(team) > 1:
+                        p2 = team[1]
+                        rows_html += f"""
+                        <div class="player-row">
+                            <img class="player-avatar" src="{p2['avatar_uri']}" alt="" />
+                            <div class="player-info">
+                                <span class="player-name">{p2['name']}</span>
+                                <span class="player-sub">Parceiro / Jogador 2</span>
+                            </div>
+                        </div>
+                        """
+                    else:
+                        rows_html += """
+                        <div class="player-row empty-slot">
+                            <div class="avatar-placeholder plus">+</div>
+                            <div class="player-info">
+                                <span class="player-name text-muted">Aguardando 2º Jogador</span>
+                                <span class="player-sub">Vaga disponível</span>
+                            </div>
+                        </div>
+                        """
+                else:
+                    p1 = team[0]
+                    rows_html += f"""
+                    <div class="player-row solo">
+                        <img class="player-avatar solo-avatar" src="{p1['avatar_uri']}" alt="" />
+                        <div class="player-info">
+                            <span class="player-name solo-name">{p1['name']}</span>
+                            <span class="player-sub">Finalista Oficial</span>
+                        </div>
+                    </div>
+                    """
+
+                return f"""
+                <div class="showdown-card {corner_class}">
+                    <div class="card-tag">{corner_tag}</div>
+                    <div class="players-container">
+                        {rows_html}
+                    </div>
+                </div>
+                """
+
+            content_html = f"""
+            <div class="showdown-wrapper">
+                <div class="round-header">★ GRANDE FINAL — CONFRONTO DIRETO ★</div>
+                
+                <div class="showdown-arena">
+                    {render_showdown_team(team_left, True)}
+                    
+                    <div class="center-connector">
+                        <div class="laser-line laser-left"></div>
+                        <div class="vs-badge">
+                            <span class="vs-text">VS</span>
+                        </div>
+                        <div class="laser-line laser-right"></div>
+                    </div>
+                    
+                    {render_showdown_team(team_right, False)}
+                </div>
+
+                <div class="trophy-podium">
+                    <div class="laser-vertical"></div>
+                    <div class="trophy-card">
+                        <div class="trophy-icon">🏆</div>
+                        <div class="trophy-details">
+                            <span class="trophy-title">★ CAMPEÃO DO TORNEIO ★</span>
+                            <span class="trophy-winner">{('Vencedor: ' + str(winner_id)) if winner_id else 'A DEFINIR NA GRANDE FINAL'}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """
+
+        # ---------------------------------------------------------------------
+        # MODO B & C: 4 ou 8 TIMES (SEMIFINAIS / QUARTAS + GRANDE FINAL)
+        # ---------------------------------------------------------------------
+        else:
+            def render_tree_match(team_a, team_b, match_num, label_a="Time A", label_b="Time B"):
+                name_a = team_a[0]['name'] if team_a else label_a
+                name_b = team_b[0]['name'] if team_b else label_b
+                av_a = team_a[0]['avatar_uri'] if team_a else ""
+                av_b = team_b[0]['avatar_uri'] if team_b else ""
+
+                return f"""
+                <div class="match-box">
+                    <div class="match-participant">
+                        {f'<img class="mini-avatar" src="{av_a}" />' if av_a else '<div class="mini-ph">?</div>'}
+                        <span class="p-name">{(name_a[:14] + '...') if len(name_a) > 14 else name_a}</span>
+                    </div>
+                    <div class="match-divider"></div>
+                    <div class="match-participant">
+                        {f'<img class="mini-avatar" src="{av_b}" />' if av_b else '<div class="mini-ph">?</div>'}
+                        <span class="p-name">{(name_b[:14] + '...') if len(name_b) > 14 else name_b}</span>
+                    </div>
+                </div>
+                """
+
+            if bracket_mode == 4:
+                content_html = f"""
+                <div class="bracket-tree-wrapper four-teams">
+                    <div class="column-round">
+                        <div class="column-title">SEMIFINAL 1</div>
+                        {render_tree_match(teams_data[0] if len(teams_data)>0 else [], teams_data[1] if len(teams_data)>1 else [], 1, "Time 1", "Time 2")}
+                    </div>
+                    
+                    <div class="column-round center-col">
+                        <div class="column-title gold-title">★ GRANDE FINAL ★</div>
+                        {render_tree_match([], [], 3, "Finalista 1", "Finalista 2")}
+                        <div class="trophy-card mini">
+                            <div class="trophy-icon">🏆</div>
+                            <div class="trophy-details">
+                                <span class="trophy-title">CAMPEÃO</span>
+                                <span class="trophy-winner">A Definir...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="column-round">
+                        <div class="column-title">SEMIFINAL 2</div>
+                        {render_tree_match(teams_data[2] if len(teams_data)>2 else [], teams_data[3] if len(teams_data)>3 else [], 2, "Time 3", "Time 4")}
+                    </div>
+                </div>
+                """
+            else:
+                content_html = f"""
+                <div class="bracket-tree-wrapper eight-teams">
+                    <div class="column-round">
+                        <div class="column-title">QUARTAS</div>
+                        {render_tree_match(teams_data[0] if len(teams_data)>0 else [], teams_data[1] if len(teams_data)>1 else [], 1, "Time 1", "Time 2")}
+                        {render_tree_match(teams_data[2] if len(teams_data)>2 else [], teams_data[3] if len(teams_data)>3 else [], 2, "Time 3", "Time 4")}
+                    </div>
+                    <div class="column-round">
+                        <div class="column-title">SEMIFINAIS</div>
+                        {render_tree_match([], [], 5, "Vencedor Q1", "Vencedor Q2")}
+                    </div>
+                    <div class="column-round center-col">
+                        <div class="column-title gold-title">★ FINAL ★</div>
+                        {render_tree_match([], [], 7, "Finalista 1", "Finalista 2")}
+                        <div class="trophy-card mini">
+                            <div class="trophy-icon">🏆</div>
+                            <div class="trophy-details">
+                                <span class="trophy-title">CAMPEÃO</span>
+                                <span class="trophy-winner">A Definir...</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="column-round">
+                        <div class="column-title">SEMIFINAIS</div>
+                        {render_tree_match([], [], 6, "Vencedor Q3", "Vencedor Q4")}
+                    </div>
+                    <div class="column-round">
+                        <div class="column-title">QUARTAS</div>
+                        {render_tree_match(teams_data[4] if len(teams_data)>4 else [], teams_data[5] if len(teams_data)>5 else [], 3, "Time 5", "Time 6")}
+                        {render_tree_match(teams_data[6] if len(teams_data)>6 else [], teams_data[7] if len(teams_data)>7 else [], 4, "Time 7", "Time 8")}
+                    </div>
+                </div>
+                """
+
+        # HTML / CSS Completo
+        return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        body {{
+            width: 1920px;
+            height: 1080px;
+            background-color: #060913;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.12) 0%, transparent 40%),
+                radial-gradient(circle at 90% 20%, rgba(176, 38, 255, 0.12) 0%, transparent 40%),
+                radial-gradient(circle at 50% 60%, rgba(255, 215, 0, 0.07) 0%, transparent 50%),
+                linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 100% 100%, 100% 100%, 100% 100%, 36px 36px, 36px 36px;
+            font-family: 'Inter', sans-serif;
+            color: #ffffff;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+        }}
+        
+        /* Neon Top Line */
+        .neon-top-bar {{
+            height: 6px;
+            width: 100%;
+            background: linear-gradient(90deg, #00f0ff 0%, #b026ff 50%, #ffd700 100%);
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.8);
+        }}
+
+        /* Header */
+        .header {{
+            padding: 28px 70px 20px 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(8, 12, 24, 0.6);
+            backdrop-filter: blur(12px);
+        }}
+        .header-left {{
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }}
+        .guild-logo {{
+            width: 88px;
+            height: 88px;
+            border-radius: 50%;
+            border: 2px solid #00f0ff;
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.4);
+            object-fit: cover;
+        }}
+        .header-title-box {{
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }}
+        .header-title {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 34px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            color: #ffffff;
+            text-shadow: 0 0 25px rgba(0, 240, 255, 0.4), 0 0 50px rgba(0, 240, 255, 0.2);
+        }}
+        .header-meta {{
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }}
+        .meta-pill {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 17px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            padding: 4px 14px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            border-radius: 8px;
+            color: #00f0ff;
+        }}
+        .meta-pill.prize {{
+            border-color: rgba(255, 215, 0, 0.4);
+            color: #ffd700;
+        }}
+        .status-badge {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            padding: 10px 22px;
+            border-radius: 30px;
+            background: rgba(14, 20, 36, 0.9);
+            border: 2px solid #22c55e;
+            color: #22c55e;
+            box-shadow: 0 0 25px rgba(34, 197, 94, 0.3);
+        }}
+        .status-badge::before {{
+            content: '';
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: currentColor;
+            box-shadow: 0 0 12px currentColor;
+        }}
+        .status-badge.status-official {{
+            border-color: #00f0ff;
+            color: #00f0ff;
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.4);
+        }}
+        .status-badge.status-completed {{
+            border-color: #ffd700;
+            color: #ffd700;
+            box-shadow: 0 0 25px rgba(255, 215, 0, 0.4);
+        }}
+
+        /* Main Content Arena */
+        .arena-container {{
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 60px;
+        }}
+
+        /* ----------------------------------------------------------- */
+        /* SHOWDOWN 2-TEAM LAYOUT                                      */
+        /* ----------------------------------------------------------- */
+        .showdown-wrapper {{
+            width: 100%;
+            max-width: 1760px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 25px;
+        }}
+        .round-header {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 26px;
+            font-weight: 800;
+            letter-spacing: 3px;
+            color: #ffd700;
+            text-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+        }}
+        .showdown-arena {{
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+        }}
+        .showdown-card {{
+            width: 600px;
+            height: 250px;
+            background: linear-gradient(135deg, rgba(13, 20, 38, 0.85) 0%, rgba(18, 28, 55, 0.7) 100%);
+            border-radius: 24px;
+            padding: 22px 28px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            backdrop-filter: blur(20px);
+            position: relative;
+            transition: all 0.3s ease;
+        }}
+        .showdown-card.corner-blue {{
+            border: 2px solid #00f0ff;
+            box-shadow: 0 10px 40px rgba(0, 240, 255, 0.2), inset 0 0 25px rgba(0, 240, 255, 0.08);
+        }}
+        .showdown-card.corner-purple {{
+            border: 2px solid #b026ff;
+            box-shadow: 0 10px 40px rgba(176, 38, 255, 0.2), inset 0 0 25px rgba(176, 38, 255, 0.08);
+        }}
+        .card-tag {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            padding: 4px 14px;
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.4);
+            align-self: flex-start;
+        }}
+        .corner-blue .card-tag {{
+            color: #00f0ff;
+            border: 1px solid rgba(0, 240, 255, 0.4);
+        }}
+        .corner-purple .card-tag {{
+            color: #b026ff;
+            border: 1px solid rgba(176, 38, 255, 0.4);
+        }}
+        .players-container {{
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }}
+        .player-row {{
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 10px 18px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }}
+        .player-avatar {{
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #ffffff;
+            box-shadow: 0 0 18px rgba(255, 255, 255, 0.3);
+        }}
+        .corner-blue .player-avatar {{
+            border-color: #00f0ff;
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.5);
+        }}
+        .corner-purple .player-avatar {{
+            border-color: #b026ff;
+            box-shadow: 0 0 20px rgba(176, 38, 255, 0.5);
+        }}
+        .player-info {{
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }}
+        .player-name {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 26px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+        }}
+        .player-sub {{
+            font-size: 13px;
+            color: #94a3b8;
+            font-weight: 500;
+        }}
+        .avatar-placeholder {{
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px dashed #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            font-weight: 700;
+            color: #94a3b8;
+        }}
+        .avatar-placeholder.plus {{
+            border-color: #00f0ff;
+            color: #00f0ff;
+            background: rgba(0, 240, 255, 0.06);
+        }}
+        .text-muted {{
+            color: #94a3b8 !important;
+        }}
+        .player-row.solo {{
+            padding: 16px 24px;
+            gap: 24px;
+        }}
+        .player-avatar.solo-avatar {{
+            width: 80px;
+            height: 80px;
+        }}
+        .player-name.solo-name {{
+            font-size: 32px;
+        }}
+
+        /* VS Center Unit */
+        .center-connector {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            position: relative;
+        }}
+        .laser-line {{
+            flex: 1;
+            height: 4px;
+            background: linear-gradient(90deg, #00f0ff, #b026ff);
+            box-shadow: 0 0 20px #00f0ff, 0 0 10px #b026ff;
+        }}
+        .vs-badge {{
+            width: 130px;
+            height: 130px;
+            border-radius: 50%;
+            background: radial-gradient(circle, #1c1033 0%, #0c0818 100%);
+            border: 3px solid #b026ff;
+            box-shadow: 0 0 40px rgba(176, 38, 255, 0.6), inset 0 0 30px rgba(0, 240, 255, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+        }}
+        .vs-text {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 48px;
+            font-weight: 900;
+            font-style: italic;
+            background: linear-gradient(180deg, #ffffff 0%, #00f0ff 50%, #b026ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 15px rgba(0, 240, 255, 0.9));
+        }}
+
+        /* Trophy Box */
+        .trophy-podium {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }}
+        .laser-vertical {{
+            width: 4px;
+            height: 25px;
+            background: linear-gradient(180deg, #b026ff, #ffd700);
+            box-shadow: 0 0 15px #ffd700;
+        }}
+        .trophy-card {{
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            background: linear-gradient(135deg, rgba(30, 26, 12, 0.9) 0%, rgba(45, 36, 15, 0.8) 100%);
+            border: 2px solid #ffd700;
+            border-radius: 20px;
+            padding: 16px 36px;
+            box-shadow: 0 0 45px rgba(255, 215, 0, 0.3), inset 0 0 20px rgba(255, 215, 0, 0.1);
+            backdrop-filter: blur(16px);
+        }}
+        .trophy-icon {{
+            font-size: 52px;
+            filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.8));
+        }}
+        .trophy-details {{
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }}
+        .trophy-title {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #ffd700;
+            text-shadow: 0 0 15px rgba(255, 215, 0, 0.5);
+        }}
+        .trophy-winner {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            color: #ffffff;
+        }}
+
+        /* ----------------------------------------------------------- */
+        /* TREE BRACKETS (4 & 8 TEAMS)                                 */
+        /* ----------------------------------------------------------- */
+        .bracket-tree-wrapper {{
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }}
+        .column-round {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 25px;
+            flex: 1;
+        }}
+        .column-title {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: #94a3b8;
+        }}
+        .column-title.gold-title {{
+            color: #ffd700;
+            text-shadow: 0 0 15px rgba(255, 215, 0, 0.5);
+        }}
+        .match-box {{
+            width: 100%;
+            max-width: 280px;
+            background: rgba(15, 23, 42, 0.85);
+            border: 2px solid rgba(0, 240, 255, 0.3);
+            border-radius: 14px;
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }}
+        .match-participant {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
+        .mini-avatar {{
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            border: 1px solid #00f0ff;
+        }}
+        .mini-ph {{
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px dashed #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: #94a3b8;
+        }}
+        .p-name {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            color: #ffffff;
+        }}
+        .match-divider {{
+            height: 1px;
+            background: rgba(255, 255, 255, 0.08);
+        }}
+        .trophy-card.mini {{
+            padding: 10px 20px;
+            gap: 14px;
+            margin-top: 15px;
+        }}
+        .trophy-card.mini .trophy-icon {{
+            font-size: 32px;
+        }}
+        .trophy-card.mini .trophy-title {{
+            font-size: 14px;
+        }}
+        .trophy-card.mini .trophy-winner {{
+            font-size: 18px;
+        }}
+
+        /* Footer */
+        .footer {{
+            padding: 16px 70px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            background: rgba(6, 9, 18, 0.8);
+            font-size: 14px;
+            color: #64748b;
+        }}
+        .footer-left {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
+        .footer-tag {{
+            color: #00f0ff;
+            font-weight: 600;
+            font-family: 'Rajdhani', sans-serif;
+            letter-spacing: 1px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="neon-top-bar"></div>
+    
+    <header class="header">
+        <div class="header-left">
+            {f'<img class="guild-logo" src="{guild_icon_uri}" alt="" />' if guild_icon_uri else ''}
+            <div class="header-title-box">
+                <h1 class="header-title">{title}</h1>
+                <div class="header-meta">
+                    <span class="meta-pill">🎮 JOGO: {game}</span>
+                    <span class="meta-pill">⚔️ FORMATO: {fmt_raw}</span>
+                    <span class="meta-pill prize">🎁 PRÊMIO: {prize}</span>
+                    <span class="meta-pill">👥 INSCRITOS: {len(participants)}/{max_participants}</span>
+                </div>
+            </div>
+        </div>
+        <div class="status-badge {status_class}">{status_text}</div>
+    </header>
+
+    <main class="arena-container">
+        {content_html}
+    </main>
+
+    <footer class="footer">
+        <div class="footer-left">
+            <span>⚡ Gerado automaticamente pelo sistema BMIA Esports</span>
+            <span>•</span>
+            <span>Use <strong style="color: #94a3b8;">/torneio status</strong> para detalhes</span>
+        </div>
+        <div class="footer-tag">BDP COMMUNITY • 2026</div>
+    </footer>
+</body>
+</html>"""
 
     async def generate_bracket(
         self,
@@ -279,23 +1003,10 @@ class BracketBuilder:
         participants: List[dict]
     ) -> BytesIO:
         """
-        Gera uma imagem de alta resolução (1920x1080) com o chaveamento dinâmico do torneio.
-        Suporta modos de 2 times (Final), 4 times (Semis + Final) e 8 times (Quartas + Semis + Final).
+        Renderiza o chaveamento do torneio em 1920x1080 com HTML/CSS de altíssima fidelidade.
         """
-        WIDTH, HEIGHT = 1920, 1080
-        img = Image.new("RGB", (WIDTH, HEIGHT), color=self.BG_DARK)
-        draw = ImageDraw.Draw(img)
+        from playwright.async_api import async_playwright
 
-        # 1. Background Grid & Details
-        for y in range(0, HEIGHT, 40):
-            draw.line([(0, y), (WIDTH, y)], fill=(18, 24, 38), width=1)
-        for x in range(0, WIDTH, 40):
-            draw.line([(x, 0), (x, HEIGHT)], fill=(18, 24, 38), width=1)
-
-        # Top Bar
-        draw.rectangle([0, 0, WIDTH, 8], fill=self.NEON_CYAN)
-
-        # 2. Formato & Cálculo de Times
         fmt_raw = str(tournament.get("format", "1v1")).lower().strip()
         is_2v2 = any(k in fmt_raw for k in ["2v2", "2x2", "dupla", "duplas"])
         is_3v3 = any(k in fmt_raw for k in ["3v3", "3x3", "trio", "trios"])
@@ -304,7 +1015,6 @@ class BracketBuilder:
         max_participants = int(tournament.get("max_participants") or 16)
         num_teams_target = max(2, max_participants // team_size)
 
-        # Determina o modo de bracket: 2, 4 ou 8 times
         if num_teams_target <= 2:
             bracket_mode = 2
         elif num_teams_target <= 4:
@@ -312,380 +1022,46 @@ class BracketBuilder:
         else:
             bracket_mode = 8
 
-        # 3. Header Section
-        font_title = self._get_font(38, bold=True)
-        font_subtitle = self._get_font(18, bold=False)
-        font_badge = self._get_font(15, bold=True)
-
-        title = str(tournament.get("name", "TORNEIO OFICIAL")).upper()
-        game = str(tournament.get("game_name", "Geral")).upper()
-        prize = str(tournament.get("prize") or "Glória e Pontos")
-
-        # Guild Icon
-        if guild.icon:
-            try:
-                icon_asset = guild.icon.with_size(128)
-                icon_bytes = await icon_asset.read()
-                icon_img = Image.open(BytesIO(icon_bytes)).convert("RGBA").resize((84, 84), Image.Resampling.LANCZOS)
-                mask = Image.new('L', (84, 84), 0)
-                ImageDraw.Draw(mask).ellipse((0, 0, 84, 84), fill=255)
-                img.paste(icon_img, (60, 35), mask)
-            except Exception:
-                pass
-
-        draw.text((160, 35), title, fill=self.TEXT_WHITE, font=font_title)
-        subtitle_text = f"JOGO: {game}   |   FORMATO: {fmt_raw.upper()}   |   PREMIAÇÃO: {prize}   |   INSCRITOS: {len(participants)}/{max_participants}"
-        draw.text((160, 86), subtitle_text, fill=self.NEON_CYAN, font=font_subtitle)
-
-        # Status Badge
-        is_shuffled = tournament.get("is_shuffled", False)
-        winner_id = tournament.get("winner_id")
-
-        if winner_id:
-            status_text = "● TORNEIO CONCLUÍDO"
-            badge_color = self.GOLD
-        elif is_shuffled:
-            status_text = "● CHAVEAMENTO OFICIAL"
-            badge_color = self.NEON_CYAN
-        elif tournament.get("status") == "open":
-            status_text = "● PRÉVIA (INSCRIÇÕES ABERTAS)"
-            badge_color = (34, 197, 94)
-        else:
-            status_text = "● CHAVEAMENTO PRELIMINAR"
-            badge_color = (168, 85, 247)
-
-        draw.rounded_rectangle([WIDTH - 380, 45, WIDTH - 60, 95], radius=8, fill=(20, 30, 50), outline=badge_color, width=2)
-        draw.text((WIDTH - 355, 60), status_text, fill=badge_color, font=font_badge)
-
-        # Separator Line
-        draw.line([(60, 135), (WIDTH - 60, 135)], fill=self.BG_CARD_BORDER, width=2)
-
-        # 4. Organizar Participantes em Times
-        teams = []
+        # Agrupa e carrega avatares em base64 data URI
+        teams_data = []
         for i in range(0, len(participants), team_size):
-            teams.append(participants[i:i + team_size])
-
-        # Preenche com times vazios até o limite do modo atual
-        while len(teams) < bracket_mode:
-            teams.append([])
-
-        teams = teams[:bracket_mode]
-
-        # Pré-carregar Avatares
-        team_avatars = []
-        avatar_size = 40 if is_2v2 else 48
-        for t in teams:
-            t_avs = []
-            for p in t:
+            chunk = participants[i:i + team_size]
+            team_members = []
+            for p in chunk:
                 m = guild.get_member(p.get("user_id", 0))
-                av = await self._fetch_avatar(m, p, size=avatar_size)
-                t_avs.append((m, p, av))
-            team_avatars.append(t_avs)
-
-        # 5. Função Utilitária para Desenho de Cards
-        font_team_name = self._get_font(17, bold=True)
-        font_team_sub = self._get_font(13, bold=False)
-        font_vs = self._get_font(15, bold=True)
-        font_round_title = self._get_font(21, bold=True)
-        font_champ_title = self._get_font(22, bold=True)
-
-        def draw_team_card(x, y, card_w, card_h, team_data, team_idx, placeholder_label=None):
-            draw.rounded_rectangle(
-                [x, y, x + card_w, y + card_h],
-                radius=10,
-                fill=self.BG_CARD,
-                outline=self.BG_CARD_BORDER,
-                width=2
-            )
-            if not team_data:
-                label = placeholder_label or f"Time #{team_idx + 1} (Aguardando)"
-                ph_av = self._create_placeholder_avatar(size=avatar_size, text="?")
-                img.paste(ph_av, (x + 15, y + (card_h - avatar_size) // 2), ph_av)
-                draw.text((x + 15 + avatar_size + 12, y + (card_h // 2) - 10), label, fill=self.TEXT_MUTED, font=font_team_name)
-                return
-
-            if is_2v2:
-                # Desenha os avatares dos membros da dupla
-                offset_x = x + 12
-                names = []
-                for m, p, av in team_data:
-                    img.paste(av, (offset_x, y + (card_h - avatar_size) // 2), av)
-                    name = m.display_name if m else (p.get("username") or "Jogador")
-                    names.append(name[:11])
-                    offset_x += (avatar_size - 6)
-
-                # Se a dupla estiver incompleta (1/2), desenha slot vazio (+)
-                if len(team_data) < 2:
-                    ph_av = self._create_placeholder_avatar(size=avatar_size, text="+")
-                    img.paste(ph_av, (offset_x, y + (card_h - avatar_size) // 2), ph_av)
-                    names.append("(Vaga Aberta)")
-                    offset_x += (avatar_size - 6)
-
-                team_title = " & ".join(names)
-                draw.text((offset_x + 10, y + (card_h // 2) - 10), team_title[:24], fill=self.TEXT_WHITE, font=font_team_name)
-            else:
-                # 1v1 Individual
-                m, p, av = team_data[0]
-                img.paste(av, (x + 15, y + (card_h - avatar_size) // 2), av)
                 name = m.display_name if m else (p.get("username") or "Jogador")
-                draw.text((x + 15 + avatar_size + 12, y + (card_h // 2) - 10), name[:20], fill=self.TEXT_WHITE, font=font_team_name)
+                av_uri = await self._get_avatar_data_uri(m, p)
+                team_members.append({"name": name, "avatar_uri": av_uri, "user_id": p.get("user_id")})
+            teams_data.append(team_members)
 
-        def draw_champion_box(x, y, card_w):
-            draw.rounded_rectangle(
-                [x, y, x + card_w, y + 95],
-                radius=12,
-                fill=(26, 36, 22),
-                outline=self.GOLD,
-                width=2
+        # Preenche com slots vazios
+        while len(teams_data) < bracket_mode:
+            teams_data.append([])
+
+        guild_icon_uri = await self._get_guild_icon_data_uri(guild)
+
+        # Gera o HTML
+        html_code = self._build_html_template(
+            tournament=tournament,
+            participants=participants,
+            teams_data=teams_data,
+            guild_icon_uri=guild_icon_uri,
+            bracket_mode=bracket_mode,
+            is_2v2=is_2v2
+        )
+
+        # Renderiza via Playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
             )
-            draw.text((x + (card_w // 2) - 65, y + 16), "★ CAMPEÃO ★", fill=self.GOLD, font=font_champ_title)
-            if winner_id:
-                w_member = guild.get_member(winner_id)
-                w_name = w_member.display_name if w_member else "Campeão Definido"
-                draw.text((x + 30, y + 52), f"Vencedor: {w_name}", fill=self.TEXT_WHITE, font=font_team_name)
-            else:
-                draw.text((x + (card_w // 2) - 45, y + 52), "A Definir...", fill=self.TEXT_MUTED, font=font_team_name)
+            page = await browser.new_page(viewport={"width": 1920, "height": 1080})
+            await page.set_content(html_code, wait_until="networkidle")
+            screenshot_bytes = await page.screenshot(type="png", full_page=False)
+            await browser.close()
 
-        # 6. RENDERIZAÇÃO POR MODO DE BRACKET
-
-        # -------------------------------------------------------------
-        # MODO A: 2 TIMES (CONFRONTO DIRETO / SHOWDOWN DE ESPORTS)
-        # -------------------------------------------------------------
-        if bracket_mode == 2:
-            CARD_W, CARD_H = 560, 250
-            left_x = 160
-            right_x = WIDTH - 160 - CARD_W
-            center_x = (WIDTH - 440) // 2
-            
-            draw.text(((WIDTH // 2) - 180, 175), "★ GRANDE FINAL - CONFRONTO DIRETO ★", fill=self.GOLD, font=font_round_title)
-
-            def draw_showdown_card(x, y, team_data, team_idx, corner_color, corner_title):
-                draw.rounded_rectangle(
-                    [x, y, x + CARD_W, y + CARD_H],
-                    radius=14,
-                    fill=self.BG_CARD,
-                    outline=corner_color,
-                    width=2
-                )
-                # Header do Card (Corner Title) com bolinha vetorial colorida
-                draw.rectangle([x + 2, y + 2, x + CARD_W - 2, y + 36], fill=(26, 34, 52))
-                draw.ellipse((x + 18, y + 14, x + 28, y + 24), fill=corner_color)
-                draw.text((x + 36, y + 10), corner_title, fill=corner_color, font=self._get_font(15, bold=True))
-
-                if not team_data:
-                    ph_av = self._create_placeholder_avatar(size=56, text="?")
-                    img.paste(ph_av, (x + 30, y + 70), ph_av)
-                    draw.text((x + 105, y + 85), f"Time #{team_idx + 1} (Aguardando Inscrição)", fill=self.TEXT_MUTED, font=self._get_font(20, bold=True))
-                    return
-
-                if is_2v2:
-                    # Renderiza 2 linhas (1 para cada jogador da dupla)
-                    # Jogador 1
-                    m1, p1, av1 = team_data[0]
-                    img.paste(av1, (x + 30, y + 55), av1)
-                    name1 = m1.display_name if m1 else (p1.get("username") or "Jogador 1")
-                    draw.text((x + 85, y + 68), name1[:22], fill=self.TEXT_WHITE, font=self._get_font(20, bold=True))
-
-                    # Jogador 2 ou Vaga Aberta
-                    if len(team_data) > 1:
-                        m2, p2, av2 = team_data[1]
-                        img.paste(av2, (x + 30, y + 145), av2)
-                        name2 = m2.display_name if m2 else (p2.get("username") or "Jogador 2")
-                        draw.text((x + 85, y + 158), name2[:22], fill=self.TEXT_WHITE, font=self._get_font(20, bold=True))
-                    else:
-                        ph_av = self._create_placeholder_avatar(size=avatar_size, text="+")
-                        img.paste(ph_av, (x + 30, y + 145), ph_av)
-                        draw.text((x + 85, y + 158), "(Aguardando 2º Jogador)", fill=self.TEXT_MUTED, font=self._get_font(18, bold=False))
-                else:
-                    # 1v1 (Card com avatar grande em destaque)
-                    m, p, av = team_data[0]
-                    # Resize avatar maior para 1v1 showdown
-                    av_large = av.resize((84, 84), Image.Resampling.LANCZOS)
-                    img.paste(av_large, (x + 35, y + 80), av_large)
-                    name = m.display_name if m else (p.get("username") or "Jogador")
-                    draw.text((x + 140, y + 100), name[:22], fill=self.TEXT_WHITE, font=self._get_font(24, bold=True))
-
-            # Card Esquerdo (Time Azul)
-            draw_showdown_card(left_x, 260, team_avatars[0], 0, self.NEON_CYAN, "DUPLA AZUL" if is_2v2 else "LADO AZUL")
-
-            # Card Direito (Time Laranja/Roxo)
-            draw_showdown_card(right_x, 260, team_avatars[1], 1, self.NEON_PURPLE, "DUPLA ROXA" if is_2v2 else "LADO ROXO")
-
-            # Emblema VS Central
-            vs_w, vs_h = 160, 80
-            vs_x = (WIDTH - vs_w) // 2
-            vs_y = 345
-            draw.rounded_rectangle([vs_x, vs_y, vs_x + vs_w, vs_y + vs_h], radius=12, fill=(24, 18, 42), outline=self.NEON_PURPLE, width=3)
-            font_vs_large = self._get_font(32, bold=True)
-            draw.text((vs_x + 52, vs_y + 22), "VS", fill=self.NEON_CYAN, font=font_vs_large)
-
-
-            # Linhas de Conexão Neon (Showdown Faceoff)
-            draw.line([(left_x + CARD_W, 385), (vs_x, 385)], fill=self.LINE_ACTIVE, width=4)
-            draw.line([(right_x, 385), (vs_x + vs_w, 385)], fill=self.LINE_ACTIVE, width=4)
-
-            # Linha descendo do VS até o Troféu do Campeão
-            draw.line([(WIDTH // 2, vs_y + vs_h), (WIDTH // 2, 580)], fill=self.LINE_ACTIVE, width=4)
-
-            # Troféu / Box Campeão
-            draw_champion_box(center_x, 580, 440)
-
-        # -------------------------------------------------------------
-        # MODO B: 4 TIMES (SEMIFINAIS + GRANDE FINAL)
-
-        # -------------------------------------------------------------
-        elif bracket_mode == 4:
-            CARD_W, CARD_H = 360, 85
-            left_x = 120
-            right_x = WIDTH - 120 - CARD_W
-            center_x = (WIDTH - CARD_W) // 2
-
-            # Títulos
-            draw.text((left_x + 90, 170), "SEMIFINAL 1", fill=self.TEXT_MUTED, font=font_round_title)
-            draw.text((center_x + 90, 170), "★ GRANDE FINAL ★", fill=self.GOLD, font=font_round_title)
-            draw.text((right_x + 90, 170), "SEMIFINAL 2", fill=self.TEXT_MUTED, font=font_round_title)
-
-            # Semifinal 1 (Esquerda: T0 vs T1)
-            y_s1_t0 = 260
-            y_s1_t1 = 430
-            draw_team_card(left_x, y_s1_t0, CARD_W, CARD_H, team_avatars[0], 0)
-            draw_team_card(left_x, y_s1_t1, CARD_W, CARD_H, team_avatars[1], 1)
-            draw.text((left_x + (CARD_W // 2) - 10, 365), "VS", fill=self.NEON_PURPLE, font=font_vs)
-
-            # Semifinal 2 (Direita: T2 vs T3)
-            y_s2_t2 = 260
-            y_s2_t3 = 430
-            draw_team_card(right_x, y_s2_t2, CARD_W, CARD_H, team_avatars[2], 2)
-            draw_team_card(right_x, y_s2_t3, CARD_W, CARD_H, team_avatars[3], 3)
-            draw.text((right_x + (CARD_W // 2) - 10, 365), "VS", fill=self.NEON_PURPLE, font=font_vs)
-
-            # Grande Final (Centro)
-            y_f1 = 280
-            y_f2 = 450
-            draw_team_card(center_x, y_f1, CARD_W, CARD_H, [], 0, "Finalista 1")
-            draw_team_card(center_x, y_f2, CARD_W, CARD_H, [], 1, "Finalista 2")
-            draw.text((center_x + (CARD_W // 2) - 10, 385), "VS", fill=self.GOLD, font=font_vs)
-
-            # Conectores Semifinal 1 -> Final 1
-            draw.line([(left_x + CARD_W, y_s1_t0 + CARD_H // 2), (left_x + CARD_W + 40, y_s1_t0 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_x + CARD_W, y_s1_t1 + CARD_H // 2), (left_x + CARD_W + 40, y_s1_t1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_x + CARD_W + 40, y_s1_t0 + CARD_H // 2), (left_x + CARD_W + 40, y_s1_t1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_x + CARD_W + 40, (y_s1_t0 + y_s1_t1 + CARD_H) // 2), (center_x, y_f1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-
-            # Conectores Semifinal 2 -> Final 2
-            draw.line([(right_x, y_s2_t2 + CARD_H // 2), (right_x - 40, y_s2_t2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_x, y_s2_t3 + CARD_H // 2), (right_x - 40, y_s2_t3 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_x - 40, y_s2_t2 + CARD_H // 2), (right_x - 40, y_s2_t3 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_x - 40, (y_s2_t2 + y_s2_t3 + CARD_H) // 2), (center_x + CARD_W, y_f2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-
-            # Campeão
-            draw_champion_box(center_x, 630, CARD_W)
-
-        # -------------------------------------------------------------
-        # MODO C: 8 TIMES (QUARTAS + SEMIFINAIS + GRANDE FINAL)
-        # -------------------------------------------------------------
-        else:
-            CARD_W, CARD_H = 290, 75
-            left_q_x = 70
-            right_q_x = WIDTH - 70 - CARD_W
-            left_semi_x = 420
-            right_semi_x = WIDTH - 420 - CARD_W
-            final_x = (WIDTH - CARD_W) // 2
-
-            # Títulos das Rodadas
-            draw.text((left_q_x + 50, 160), "QUARTAS DE FINAL", fill=self.TEXT_MUTED, font=font_round_title)
-            draw.text((left_semi_x + 75, 160), "SEMIFINAL", fill=self.TEXT_MUTED, font=font_round_title)
-            draw.text((final_x + 65, 160), "★ GRANDE FINAL ★", fill=self.GOLD, font=font_round_title)
-            draw.text((right_semi_x + 75, 160), "SEMIFINAL", fill=self.TEXT_MUTED, font=font_round_title)
-            draw.text((right_q_x + 50, 160), "QUARTAS DE FINAL", fill=self.TEXT_MUTED, font=font_round_title)
-
-            # Quartas Left (Match 1 & 2)
-            y_m1_t0, y_m1_t1 = 230, 330
-            draw_team_card(left_q_x, y_m1_t0, CARD_W, CARD_H, team_avatars[0], 0)
-            draw_team_card(left_q_x, y_m1_t1, CARD_W, CARD_H, team_avatars[1], 1)
-            draw.text((left_q_x + CARD_W // 2 - 10, y_m1_t0 + 78), "VS", fill=self.NEON_PURPLE, font=font_vs)
-
-            y_m2_t2, y_m2_t3 = 540, 640
-            draw_team_card(left_q_x, y_m2_t2, CARD_W, CARD_H, team_avatars[2], 2)
-            draw_team_card(left_q_x, y_m2_t3, CARD_W, CARD_H, team_avatars[3], 3)
-            draw.text((left_q_x + CARD_W // 2 - 10, y_m2_t2 + 78), "VS", fill=self.NEON_PURPLE, font=font_vs)
-
-            # Quartas Right (Match 3 & 4)
-            y_m3_t4, y_m3_t5 = 230, 330
-            draw_team_card(right_q_x, y_m3_t4, CARD_W, CARD_H, team_avatars[4], 4)
-            draw_team_card(right_q_x, y_m3_t5, CARD_W, CARD_H, team_avatars[5], 5)
-            draw.text((right_q_x + CARD_W // 2 - 10, y_m3_t4 + 78), "VS", fill=self.NEON_PURPLE, font=font_vs)
-
-            y_m4_t6, y_m4_t7 = 540, 640
-            draw_team_card(right_q_x, y_m4_t6, CARD_W, CARD_H, team_avatars[6], 6)
-            draw_team_card(right_q_x, y_m4_t7, CARD_W, CARD_H, team_avatars[7], 7)
-            draw.text((right_q_x + CARD_W // 2 - 10, y_m4_t6 + 78), "VS", fill=self.NEON_PURPLE, font=font_vs)
-
-            # Semifinais
-            y_semi_l1, y_semi_l2 = 280, 590
-            draw_team_card(left_semi_x, y_semi_l1, CARD_W, CARD_H, [], 0, "Vencedor Q1")
-            draw_team_card(left_semi_x, y_semi_l2, CARD_W, CARD_H, [], 1, "Vencedor Q2")
-            draw.text((left_semi_x + CARD_W // 2 - 10, 440), "VS", fill=self.NEON_PURPLE, font=font_vs)
-
-            y_semi_r1, y_semi_r2 = 280, 590
-            draw_team_card(right_semi_x, y_semi_r1, CARD_W, CARD_H, [], 2, "Vencedor Q3")
-            draw_team_card(right_semi_x, y_semi_r2, CARD_W, CARD_H, [], 3, "Vencedor Q4")
-            draw.text((right_semi_x + CARD_W // 2 - 10, 440), "VS", fill=self.NEON_PURPLE, font=font_vs)
-
-            # Grande Final
-            y_final_1, y_final_2 = 360, 500
-            draw_team_card(final_x, y_final_1, CARD_W, CARD_H, [], 0, "Finalista 1")
-            draw_team_card(final_x, y_final_2, CARD_W, CARD_H, [], 1, "Finalista 2")
-            draw.text((final_x + CARD_W // 2 - 10, 442), "VS", fill=self.GOLD, font=font_vs)
-
-            # Troféu
-            draw_champion_box(final_x, 660, CARD_W)
-
-            # Conectores Q1 -> Semi 1
-            draw.line([(left_q_x + CARD_W, y_m1_t0 + CARD_H // 2), (left_q_x + CARD_W + 40, y_m1_t0 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_q_x + CARD_W, y_m1_t1 + CARD_H // 2), (left_q_x + CARD_W + 40, y_m1_t1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_q_x + CARD_W + 40, y_m1_t0 + CARD_H // 2), (left_q_x + CARD_W + 40, y_m1_t1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_q_x + CARD_W + 40, (y_m1_t0 + y_m1_t1 + CARD_H) // 2), (left_semi_x, y_semi_l1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-
-            # Conectores Q2 -> Semi 2
-            draw.line([(left_q_x + CARD_W, y_m2_t2 + CARD_H // 2), (left_q_x + CARD_W + 40, y_m2_t2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_q_x + CARD_W, y_m2_t3 + CARD_H // 2), (left_q_x + CARD_W + 40, y_m2_t3 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_q_x + CARD_W + 40, y_m2_t2 + CARD_H // 2), (left_q_x + CARD_W + 40, y_m2_t3 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_q_x + CARD_W + 40, (y_m2_t2 + y_m2_t3 + CARD_H) // 2), (left_semi_x, y_semi_l2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-
-            # Conectores Semis Left -> Final 1
-            draw.line([(left_semi_x + CARD_W, y_semi_l1 + CARD_H // 2), (left_semi_x + CARD_W + 30, y_semi_l1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_semi_x + CARD_W, y_semi_l2 + CARD_H // 2), (left_semi_x + CARD_W + 30, y_semi_l2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_semi_x + CARD_W + 30, y_semi_l1 + CARD_H // 2), (left_semi_x + CARD_W + 30, y_semi_l2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(left_semi_x + CARD_W + 30, (y_semi_l1 + y_semi_l2 + CARD_H) // 2), (final_x, y_final_1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-
-            # Conectores Q3 -> Semi 1
-            draw.line([(right_q_x, y_m3_t4 + CARD_H // 2), (right_q_x - 40, y_m3_t4 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_q_x, y_m3_t5 + CARD_H // 2), (right_q_x - 40, y_m3_t5 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_q_x - 40, y_m3_t4 + CARD_H // 2), (right_q_x - 40, y_m3_t5 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_q_x - 40, (y_m3_t4 + y_m3_t5 + CARD_H) // 2), (right_semi_x + CARD_W, y_semi_r1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-
-            # Conectores Q4 -> Semi 2
-            draw.line([(right_q_x, y_m4_t6 + CARD_H // 2), (right_q_x - 40, y_m4_t6 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_q_x, y_m4_t7 + CARD_H // 2), (right_q_x - 40, y_m4_t7 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_q_x - 40, y_m4_t6 + CARD_H // 2), (right_q_x - 40, y_m4_t7 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_q_x - 40, (y_m4_t6 + y_m4_t7 + CARD_H) // 2), (right_semi_x + CARD_W, y_semi_r2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-
-            # Conectores Semis Right -> Final 2
-            draw.line([(right_semi_x, y_semi_r1 + CARD_H // 2), (right_semi_x - 30, y_semi_r1 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_semi_x, y_semi_r2 + CARD_H // 2), (right_semi_x - 30, y_semi_r2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_semi_x - 30, y_semi_r1 + CARD_H // 2), (right_semi_x - 30, y_semi_r2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-            draw.line([(right_semi_x - 30, (y_semi_r1 + y_semi_r2 + CARD_H) // 2), (final_x + CARD_W, y_final_2 + CARD_H // 2)], fill=self.LINE_ACTIVE, width=3)
-
-        # 7. Footer Section
-        draw.line([(60, HEIGHT - 75), (WIDTH - 60, HEIGHT - 75)], fill=self.BG_CARD_BORDER, width=1)
-        font_footer = self._get_font(15, bold=False)
-        draw.text((60, HEIGHT - 50), "SISTEMA OFICIAL DE TORNEIOS BMIA ESPORTS   |   Use /torneio status para acompanhar", fill=self.TEXT_MUTED, font=font_footer)
-        draw.text((WIDTH - 260, HEIGHT - 50), "BDP COMMUNITY • 2026", fill=self.NEON_CYAN, font=font_footer)
-
-        # Retorna buffer PNG
-        buffer = BytesIO()
-        img.save(buffer, format='PNG')
+        buffer = BytesIO(screenshot_bytes)
         buffer.seek(0)
         return buffer
 
