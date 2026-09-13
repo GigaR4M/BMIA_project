@@ -34,6 +34,13 @@ def mock_db():
     db.get_tournament_participants = AsyncMock(return_value=[
         {"user_id": 999, "username": "Gideon", "status": "registered"}
     ])
+    db.shuffle_tournament_participants = AsyncMock(return_value={
+        "success": True,
+        "participants": [
+            {"user_id": 999, "username": "Gideon", "status": "registered", "seed_number": 1},
+            {"user_id": 888, "username": "Pedrinho", "status": "registered", "seed_number": 2}
+        ]
+    })
     db.finish_tournament = AsyncMock(return_value=True)
     db.cancel_tournament = AsyncMock(return_value=True)
     db.get_tournament_hall_of_fame = AsyncMock(return_value=[
@@ -87,6 +94,22 @@ class TestTournamentCommands:
         mock_db.update_tournament_message.assert_awaited_once_with(1, 555, 777)
 
     @pytest.mark.asyncio
+    async def test_sortear_torneio(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.guild.get_member.return_value = None
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        await cmd.sortear_torneio.callback(cmd, interaction, id=1)
+
+        mock_db.shuffle_tournament_participants.assert_awaited_once_with(1)
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Sorteio Realizado" in embed.title
+
+    @pytest.mark.asyncio
     async def test_encerrar_torneio(self, mock_db, mock_points_manager):
         cmd = TournamentCommands(db=mock_db, points_manager=mock_points_manager)
         interaction = MagicMock()
@@ -117,6 +140,7 @@ class TestTournamentCommands:
             second_place_id=None,
             third_place_id=None
         )
+
     @pytest.mark.asyncio
     async def test_chaveamento_torneio(self, mock_db):
         cmd = TournamentCommands(db=mock_db)
@@ -140,7 +164,7 @@ class TestTournamentCommands:
 
 class TestBracketBuilder:
     @pytest.mark.asyncio
-    async def test_generate_bracket_image(self):
+    async def test_generate_bracket_image_2_teams(self):
         from utils.image_generator import BracketBuilder
         builder = BracketBuilder()
         guild = MagicMock()
@@ -152,6 +176,7 @@ class TestBracketBuilder:
             "name": "Torneio 2x2 Piores do Mundo Rocket League 2026",
             "game_name": "Rocket League",
             "format": "2v2",
+            "max_participants": 4,
             "prize": "10.000 pontos",
             "status": "open",
             "winner_id": None
@@ -159,14 +184,71 @@ class TestBracketBuilder:
 
         participants = [
             {"user_id": 101, "username": "Gideon"},
-            {"user_id": 102, "username": "Pedrinho"},
-            {"user_id": 103, "username": "Lucas"},
-            {"user_id": 104, "username": "Bruno"},
+            {"user_id": 102, "username": "Henrique"},
+            {"user_id": 103, "username": "Gato"},
         ]
 
         buf = await builder.generate_bracket(guild, tournament, participants)
         assert buf is not None
-        assert buf.getvalue().startswith(b"\x89PNG")  # Cabeçalho de imagem PNG válido
+        assert buf.getvalue().startswith(b"\x89PNG")
+
+    @pytest.mark.asyncio
+    async def test_generate_bracket_image_4_teams(self):
+        from utils.image_generator import BracketBuilder
+        builder = BracketBuilder()
+        guild = MagicMock()
+        guild.icon = None
+        guild.get_member.return_value = None
+
+        tournament = {
+            "id": 2,
+            "name": "Copa BMIA 1v1",
+            "game_name": "Valorant",
+            "format": "1v1",
+            "max_participants": 4,
+            "prize": "5.000 pts",
+            "status": "open",
+            "winner_id": None
+        }
+
+        participants = [
+            {"user_id": 101, "username": "Gideon"},
+            {"user_id": 102, "username": "Henrique"},
+            {"user_id": 103, "username": "Gato"},
+            {"user_id": 104, "username": "Lucas"},
+        ]
+
+        buf = await builder.generate_bracket(guild, tournament, participants)
+        assert buf is not None
+        assert buf.getvalue().startswith(b"\x89PNG")
+
+    @pytest.mark.asyncio
+    async def test_generate_bracket_image_8_teams(self):
+        from utils.image_generator import BracketBuilder
+        builder = BracketBuilder()
+        guild = MagicMock()
+        guild.icon = None
+        guild.get_member.return_value = None
+
+        tournament = {
+            "id": 3,
+            "name": "Grande Torneio 1v1",
+            "game_name": "League of Legends",
+            "format": "1v1",
+            "max_participants": 16,
+            "prize": "5.000 pts",
+            "status": "open",
+            "winner_id": None
+        }
+
+        participants = [
+            {"user_id": i, "username": f"Player{i}"} for i in range(1, 9)
+        ]
+
+        buf = await builder.generate_bracket(guild, tournament, participants)
+        assert buf is not None
+        assert buf.getvalue().startswith(b"\x89PNG")
+
 
     @pytest.mark.asyncio
     async def test_view_join(self, mock_db):

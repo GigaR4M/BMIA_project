@@ -317,10 +317,19 @@ class Database:
                     tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
                     user_id BIGINT NOT NULL,
                     status TEXT DEFAULT 'registered',
+                    seed_number INTEGER,
                     registered_at TIMESTAMP DEFAULT NOW(),
                     PRIMARY KEY (tournament_id, user_id)
                 )
             """)
+
+            # Colunas adicionais se não existirem
+            try:
+                await conn.execute("ALTER TABLE tournament_participants ADD COLUMN IF NOT EXISTS seed_number INTEGER")
+                await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS is_shuffled BOOLEAN DEFAULT FALSE")
+            except Exception as e:
+                logger.debug(f"Colunas de torneio já existentes ou migração ignorada: {e}")
+
             
             # Índices para melhor performance
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
@@ -2090,16 +2099,55 @@ class Database:
             return {"success": True, "count": current_count, "max": tournament["max_participants"]}
 
     async def get_tournament_participants(self, tournament_id: int) -> List[Dict[str, Any]]:
-        """Retorna os participantes de um torneio."""
+        """Retorna os participantes de um torneio (ordenados por seed se sorteado, ou por registro)."""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
-                SELECT p.user_id, p.status, p.registered_at, u.username, u.discriminator
+                SELECT p.user_id, p.status, p.seed_number, p.registered_at, u.username, u.discriminator
                 FROM tournament_participants p
                 LEFT JOIN users u ON p.user_id = u.user_id
                 WHERE p.tournament_id = $1
-                ORDER BY p.registered_at ASC
+                ORDER BY 
+                    CASE WHEN p.seed_number IS NOT NULL THEN p.seed_number ELSE 99999 END ASC,
+                    p.registered_at ASC
             """, tournament_id)
             return [dict(row) for row in rows]
+
+    async def shuffle_tournament_participants(self, tournament_id: int) -> Dict[str, Any]:
+        """Embaralha e atribui seeds aleatórios a todos os participantes do torneio."""
+        import random
+        async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            if not tournament:
+                return {"success": False, "reason": "Torneio não encontrado."}
+
+            rows = await conn.fetch("""
+                SELECT user_id FROM tournament_participants WHERE tournament_id = $1
+            """, tournament_id)
+
+            if len(rows) < 2:
+                return {"success": False, "reason": "São necessários pelo menos 2 participantes para realizar o sorteio."}
+
+            user_ids = [r["user_id"] for r in rows]
+            random.shuffle(user_ids)
+
+            # Grava o seed de cada um
+            for idx, u_id in enumerate(user_ids, 1):
+                await conn.execute("""
+                    UPDATE tournament_participants
+                    SET seed_number = $3
+                    WHERE tournament_id = $1 AND user_id = $2
+                """, tournament_id, u_id, idx)
+
+            await conn.execute("""
+                UPDATE tournaments
+                SET is_shuffled = TRUE
+                WHERE id = $1
+            """, tournament_id)
+
+            # Retorna lista atualizada
+            updated = await self.get_tournament_participants(tournament_id)
+            return {"success": True, "participants": updated}
+
 
     async def finish_tournament(
         self,

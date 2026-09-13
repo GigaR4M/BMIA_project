@@ -155,12 +155,26 @@ class TournamentCommands(app_commands.Group):
 
     @app_commands.command(name="criar", description="Cria um novo torneio com embed e botões de inscrição")
     @app_commands.describe(
-        nome="Nome do torneio (ex: Copa Roblox BMIA)",
-        jogo="Jogo do torneio (ex: Roblox, Valorant, League of Legends)",
-        vagas="Quantidade máxima de vagas (padrão: 16)",
-        formato="Formato do torneio (ex: 1v1, 2v2, 5v5, Mata-Mata)",
+        nome="Nome do torneio (ex: Copa Rocket League BMIA)",
+        jogo="Jogo do torneio (ex: Rocket League, Roblox, Valorant)",
+        formato="Formato de disputa (1v1, 2v2, 3v3, 5v5)",
+        vagas="Quantidade total de vagas/participantes",
         premio="Premiação do torneio (ex: 5.000 pontos + Cargo Campeão)",
         inicio="Data e hora de início (ex: Sábado às 20:00)"
+    )
+    @app_commands.choices(
+        formato=[
+            app_commands.Choice(name="1v1 (Individual)", value="1v1"),
+            app_commands.Choice(name="2v2 (Duplas)", value="2v2"),
+            app_commands.Choice(name="3v3 (Trios)", value="3v3"),
+            app_commands.Choice(name="5v5 (Equipes)", value="5v5"),
+        ],
+        vagas=[
+            app_commands.Choice(name="4 Participantes (Final em 2v2 / Semis em 1v1)", value=4),
+            app_commands.Choice(name="8 Participantes (Semis em 2v2 / Quartas em 1v1)", value=8),
+            app_commands.Choice(name="16 Participantes (Quartas em 2v2 / Oitavas em 1v1)", value=16),
+            app_commands.Choice(name="32 Participantes", value=32),
+        ]
     )
     @app_commands.checks.has_permissions(manage_events=True)
     async def criar_torneio(
@@ -168,21 +182,23 @@ class TournamentCommands(app_commands.Group):
         interaction: discord.Interaction,
         nome: str,
         jogo: str,
-        vagas: int = 16,
-        formato: str = "1v1",
+        formato: app_commands.Choice[str],
+        vagas: app_commands.Choice[int],
         premio: Optional[str] = None,
         inicio: Optional[str] = None
     ):
         await interaction.response.defer()
         try:
-            vagas = max(2, min(vagas, 128))
+            vagas_val = vagas.value if isinstance(vagas, app_commands.Choice) else int(vagas)
+            formato_val = formato.value if isinstance(formato, app_commands.Choice) else str(formato)
+            vagas_val = max(2, min(vagas_val, 128))
 
             tourney_id = await self.db.create_tournament(
                 guild_id=interaction.guild.id,
                 name=nome,
                 game_name=jogo,
-                format=formato,
-                max_participants=vagas,
+                format=formato_val,
+                max_participants=vagas_val,
                 prize=premio,
                 created_by=interaction.user.id
             )
@@ -193,8 +209,8 @@ class TournamentCommands(app_commands.Group):
                 color=discord.Color.gold()
             )
             embed.add_field(name="🎮 Jogo", value=f"**{jogo}**", inline=True)
-            embed.add_field(name="⚔️ Formato", value=f"**{formato}**", inline=True)
-            embed.add_field(name="👥 Vagas / Inscritos", value=f"**0 / {vagas}**", inline=True)
+            embed.add_field(name="⚔️ Formato", value=f"**{formato_val.upper()}**", inline=True)
+            embed.add_field(name="👥 Vagas / Inscritos", value=f"**0 / {vagas_val}**", inline=True)
 
             if premio:
                 embed.add_field(name="🎁 Premiação", value=f"**{premio}**", inline=False)
@@ -213,6 +229,7 @@ class TournamentCommands(app_commands.Group):
         except Exception as e:
             logger.error(f"Erro ao criar torneio: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao criar o torneio. Verifique os parâmetros e tente novamente.")
+
 
     @app_commands.command(name="listar", description="Lista os torneios abertos ou recentes do servidor")
     async def listar_torneios(self, interaction: discord.Interaction):
@@ -483,6 +500,57 @@ class TournamentCommands(app_commands.Group):
             logger.error(f"Erro ao exibir Hall da Fama: {e}")
             await interaction.followup.send("❌ Erro ao carregar o Hall da Fama.")
 
+    @app_commands.command(name="sortear", description="Sorteia aleatoriamente as chaves e duplas dos participantes")
+    @app_commands.describe(id="ID do torneio a ser sorteado")
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def sortear_torneio(self, interaction: discord.Interaction, id: int):
+        await interaction.response.defer()
+        try:
+            tourney = await self.db.get_tournament(id)
+            if not tourney or tourney["guild_id"] != interaction.guild.id:
+                await interaction.followup.send("❌ Torneio não encontrado.")
+                return
+
+            res = await self.db.shuffle_tournament_participants(id)
+            if not res.get("success"):
+                await interaction.followup.send(f"⚠️ {res.get('reason', 'Não foi possível realizar o sorteio.')}")
+                return
+
+            participants = res["participants"]
+            fmt = str(tourney.get("format", "1v1")).lower()
+            is_2v2 = any(k in fmt for k in ["2v2", "2x2", "dupla", "duplas"])
+
+            embed = discord.Embed(
+                title=f"🎲 Sorteio Realizado: {tourney['name']}",
+                description="O sorteio aleatório das chaves do torneio foi concluído com sucesso!",
+                color=discord.Color.green()
+            )
+
+            if is_2v2:
+                duos_lines = []
+                for i in range(0, len(participants), 2):
+                    duo = participants[i:i + 2]
+                    duo_names = []
+                    for p in duo:
+                        m = interaction.guild.get_member(p["user_id"])
+                        duo_names.append(m.mention if m else (p.get("username") or f"<@{p['user_id']}>"))
+                    duo_str = " & ".join(duo_names)
+                    duos_lines.append(f"⚔️ **Dupla #{(i // 2) + 1}:** {duo_str}")
+                embed.add_field(name="👥 Duplas Sorteadas", value="\n".join(duos_lines) if duos_lines else "Nenhum participante", inline=False)
+            else:
+                lines = []
+                for idx, p in enumerate(participants, 1):
+                    m = interaction.guild.get_member(p["user_id"])
+                    name = m.mention if m else (p.get("username") or f"<@{p['user_id']}>")
+                    lines.append(f"`#{idx:02d}` {name}")
+                embed.add_field(name="📋 Ordem dos Seeds / Chaves", value="\n".join(lines), inline=False)
+
+            embed.set_footer(text=f"Use /torneio chaveamento id:{id} para visualizar a imagem oficial do chaveamento")
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            logger.error(f"Erro ao sortear torneio {id}: {e}")
+            await interaction.followup.send("❌ Ocorreu um erro ao realizar o sorteio do torneio.")
+
     @app_commands.command(name="chaveamento", description="Gera a imagem oficial do chaveamento/bracket do torneio")
     @app_commands.describe(id="ID do torneio")
     async def chaveamento_torneio(self, interaction: discord.Interaction, id: int):
@@ -506,10 +574,11 @@ class TournamentCommands(app_commands.Group):
                 participants=participants
             )
 
+            status_tag = "🟢 Chaveamento Oficial Sorteado" if tourney.get("is_shuffled") else "🟡 Prévia de Inscrições (Ainda não sorteado)"
             file = discord.File(fp=image_buffer, filename=f"chaveamento_torneio_{id}.png")
             embed = discord.Embed(
-                title=f"⚔️ Chaveamento Oficial: {tourney['name']}",
-                description=f"🎮 **Jogo:** {tourney['game_name']} • **Formato:** {tourney.get('format', '1v1')}\n👥 **Total de Inscritos:** {len(participants)}",
+                title=f"⚔️ Chaveamento: {tourney['name']}",
+                description=f"🎮 **Jogo:** {tourney['game_name']} • **Formato:** {tourney.get('format', '1v1').upper()}\n👥 **Inscritos:** {len(participants)}/{tourney['max_participants']} • **Status:** {status_tag}",
                 color=discord.Color.from_rgb(0, 240, 255)
             )
             embed.set_image(url=f"attachment://chaveamento_torneio_{id}.png")
@@ -519,4 +588,5 @@ class TournamentCommands(app_commands.Group):
         except Exception as e:
             logger.error(f"Erro ao gerar chaveamento do torneio {id}: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao gerar a imagem do chaveamento.")
+
 
