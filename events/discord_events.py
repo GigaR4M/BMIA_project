@@ -11,6 +11,7 @@ import logging
 import discord
 
 from config import DEFAULT_ALLOWED_CHANNELS
+from utils.ai_tools import AIToolkit
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,10 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                         )
 
                         system_instruction = "Você é o BMIA, um bot assistente."
+                        toolkit = None
+                        if message.guild and ctx.db:
+                            toolkit = AIToolkit(ctx.db, message.guild.id)
+
                         if ctx.memory_manager and message.guild:
                             context_block = await ctx.memory_manager.get_relevant_context(
                                 message.guild,
@@ -125,17 +130,35 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
 
                             {context_block}
 
-                            INSTRUÇÕES GERAIS:
-                            1. Responda como um membro participante do servidor, não como uma IA distante.
-                            2. Use o contexto acima para personalizar sua resposta.
-                            3. Não use respostas muito longas e procure manter um tom coloquial.
-                            4. Se houver memórias relevantes, use-as se fizer sentido.
+                            DIRETRIZES DO AGENTE BMIA:
+                            1. Personalidade: Responda como um membro participante e bem-humorado do servidor, descontraído e sagaz, nunca como um robô corporativo ou distante.
+                            2. Uso de Ferramentas (Tools): Sempre que o usuário perguntar sobre estatísticas do servidor, rankings de jogos específicos (ex: Roblox, Valorant), tempo de voz, quantidade de mensagens ou dados de membros, USE as ferramentas disponíveis para obter os dados reais do banco de dados.
+                            3. Fatos e Proibição de Alucinações: NUNCA invente números, horas jogadas ou posições de ranking que não estejam no contexto ou no resultado das ferramentas.
+                            4. Proibição de Templates/Placeholders: NUNCA use marcações entre colchetes como '[Nome do usuário]' ou '[inserir número]'. Se não houver dados, diga a verdade de forma bem-humorada.
+                            5. Conciso e Coloquial: Mantenha as respostas concisas e use o contexto/memórias do servidor para personalizar a interação.
                             """
 
+                        # Contexto de reply se a mensagem for uma resposta a outra
+                        reply_context = ""
+                        if message.reference and message.reference.message_id:
+                            try:
+                                ref_msg = message.reference.resolved
+                                if not ref_msg or not isinstance(ref_msg, discord.Message):
+                                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
+                                if ref_msg and ref_msg.content:
+                                    ref_author = getattr(ref_msg.author, "display_name", str(ref_msg.author))
+                                    ref_text = resolve_mentions_in_text(ref_msg.content, message.guild)
+                                    reply_context = f"[Respondendo à mensagem de {ref_author}: '{ref_text}']\n"
+                            except Exception as ref_err:
+                                logger.debug("Não foi possível obter mensagem de referência: %s", ref_err)
+
+                        user_prompt = f"{reply_context}{message.author.display_name}: {resolved_content}"
+
                         response_text = await ctx.chat_handler.generate_response(
-                            resolved_content,
+                            user_prompt,
                             history=formatted_history,
                             system_instruction=system_instruction,
+                            toolkit=toolkit,
                         )
 
                         if ctx.memory_manager and message.guild:

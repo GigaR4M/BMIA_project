@@ -584,6 +584,68 @@ class Database:
             
             return [dict(row) for row in rows]
     
+    async def get_top_users_by_voice(self, guild_id: int, limit: int = 10, days: int = 30) -> List[Dict[str, Any]]:
+        """Retorna os usuários mais ativos em canais de voz (excluindo bots)."""
+        async with self.pool.acquire() as conn:
+            cutoff_date = datetime.now() - timedelta(days=days)
+            
+            rows = await conn.fetch("""
+                SELECT 
+                    u.user_id,
+                    u.username,
+                    COALESCE(SUM(s.voice_seconds), 0) as total_seconds
+                FROM users u
+                JOIN daily_user_stats s ON u.user_id = s.user_id
+                WHERE s.guild_id = $1 
+                  AND s.date >= $2::DATE
+                  AND u.is_bot = FALSE
+                GROUP BY u.user_id, u.username
+                ORDER BY total_seconds DESC
+                LIMIT $3
+            """, guild_id, cutoff_date, limit)
+            
+            return [dict(row) for row in rows]
+
+    async def get_game_top_users(self, guild_id: int, game_name: str, limit: int = 5, days: int = 30) -> List[Dict[str, Any]]:
+        """Retorna os usuários que mais jogaram um determinado jogo/atividade no servidor."""
+        async with self.pool.acquire() as conn:
+            cutoff_date = datetime.now() - timedelta(days=days)
+            
+            rows = await conn.fetch("""
+                SELECT 
+                    u.user_id,
+                    u.username,
+                    a.activity_name,
+                    COALESCE(SUM(a.duration_seconds), 0) as total_seconds,
+                    COUNT(*) as session_count
+                FROM user_activities a
+                JOIN users u ON a.user_id = u.user_id
+                WHERE a.guild_id = $1 
+                  AND a.activity_name ILIKE $2
+                  AND a.started_at >= $3
+                  AND a.duration_seconds IS NOT NULL
+                  AND a.activity_type = 'playing'
+                  AND u.is_bot = FALSE
+                GROUP BY u.user_id, u.username, a.activity_name
+                ORDER BY total_seconds DESC
+                LIMIT $4
+            """, guild_id, f"%{game_name.strip()}%", cutoff_date, limit)
+            
+            return [dict(row) for row in rows]
+
+    async def find_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Busca usuário pelo nome de usuário aproximado."""
+        async with self.pool.acquire() as conn:
+            clean_name = username.strip().lstrip("@")
+            row = await conn.fetchrow("""
+                SELECT user_id, username, discriminator, is_bot
+                FROM users
+                WHERE username ILIKE $1 AND is_bot = FALSE
+                ORDER BY last_seen DESC
+                LIMIT 1
+            """, f"%{clean_name}%")
+            return dict(row) if row else None
+
     async def get_top_channels(self, guild_id: int, limit: int = 10, days: int = 30) -> List[Dict[str, Any]]:
         """Retorna os canais mais ativos."""
         async with self.pool.acquire() as conn:

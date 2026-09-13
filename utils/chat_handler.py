@@ -91,45 +91,107 @@ class ChatHandler:
 
         self.model = genai.GenerativeModel(self.model_name)
 
-    async def generate_response(self, prompt, history=[], system_instruction=None):
+    async def generate_response(self, prompt, history=[], system_instruction=None, toolkit=None):
         """
-        Generates a response given the current prompt and message history.
+        Generates a response given the current prompt, message history, system instruction, and optional toolkit.
         history: list of dicts with 'role' ('user' or 'model') and 'parts' (list of strings).
         system_instruction: Optional string to define the bot's persona/behavior for this turn.
+        toolkit: Optional AIToolkit instance providing tools for function calling.
         """
         try:
-            # If system_instruction provided, we might need a model instance with that instruction.
-            # Creating a GenerativeModel is lightweight.
-            if system_instruction:
-                model = genai.GenerativeModel(self.model_name, system_instruction=system_instruction)
-            else:
-                if not self.model: # Fallback to default setup if available
-                     self.model = genai.GenerativeModel(self.model_name)
-                model = self.model
+            tools = toolkit.get_tool_callables() if toolkit else None
 
-            chat = model.start_chat(history=history)
+            model_kwargs = {}
+            if system_instruction:
+                model_kwargs["system_instruction"] = system_instruction
+            if tools:
+                model_kwargs["tools"] = tools
+
+            model = genai.GenerativeModel(self.model_name, **model_kwargs)
+            chat = model.start_chat(history=history, enable_automatic_function_calling=False)
             response = await chat.send_message_async(prompt)
-            return response.text
+
+            # Loop para resolver chamadas de ferramentas (Function Calling)
+            max_turns = 3
+            turns = 0
+            while turns < max_turns:
+                function_calls = []
+                if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                    for part in response.candidates[0].content.parts:
+                        fn_call = getattr(part, "function_call", None)
+                        if fn_call and fn_call.name:
+                            function_calls.append(fn_call)
+
+                if not function_calls:
+                    break
+
+                turns += 1
+                response_parts = []
+                for fn_call in function_calls:
+                    fn_name = fn_call.name
+                    fn_args = dict(fn_call.args) if fn_call.args else {}
+                    logger.info(f"Agent BMIA executando tool '{fn_name}' com argumentos: {fn_args}")
+
+                    fn = getattr(toolkit, fn_name, None) if toolkit else None
+                    if fn:
+                        try:
+                            result = await fn(**fn_args)
+                        except Exception as fn_err:
+                            logger.error(f"Erro ao executar tool {fn_name}: {fn_err}")
+                            result = {"erro": f"Erro ao executar ferramenta {fn_name}: {fn_err}"}
+                    else:
+                        result = {"erro": f"Ferramenta '{fn_name}' não encontrada."}
+
+                    response_parts.append(
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=fn_name,
+                                response={"result": result}
+                            )
+                        )
+                    )
+
+                response = await chat.send_message_async(
+                    genai.protos.Content(parts=response_parts)
+                )
+
+            if response.text:
+                return response.text
+            elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                text_parts = [p.text for p in response.candidates[0].content.parts if getattr(p, "text", None)]
+                if text_parts:
+                    return "".join(text_parts)
+            return "Não consegui formular uma resposta no momento."
+
         except ResourceExhausted:
             logger.warning("ChatHandler: Quota exceeded.")
-            return "Estou um pouco sobrecarregado agora. Tente novamente mais tarde."
+            return "Estou um pouco sobrecarregado agora (limite de requisições excedido). Tente novamente em instantes!"
         except Exception as e:
             logger.error(f"ChatHandler Error: {e}")
             return "Desculpe, ocorreu um erro ao processar sua mensagem."
 
     def format_history(self, discord_messages, bot_user):
         """
-        Converts Discord message history to Gemini chat history format.
+        Converts Discord message history to Gemini chat history format,
+        identifying the author of each message to prevent multi-user confusion.
         discord_messages: list of discord.Message objects
         bot_user: discord.User object (the bot itself)
         """
         formatted_history = []
         for msg in discord_messages:
-            role = "model" if msg.author == bot_user else "user"
-            # Filter out empty content or system messages if needed
-            if msg.content:
-                formatted_history.append({
-                    "role": role,
-                    "parts": [msg.content]
-                })
+            if not msg.content:
+                continue
+
+            if msg.author == bot_user:
+                role = "model"
+                content = msg.content
+            else:
+                role = "user"
+                author_name = getattr(msg.author, "display_name", str(msg.author))
+                content = f"{author_name}: {msg.content}"
+
+            formatted_history.append({
+                "role": role,
+                "parts": [content]
+            })
         return formatted_history
