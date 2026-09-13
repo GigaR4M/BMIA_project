@@ -21,8 +21,9 @@ DISCORD_TOKEN: str = os.getenv("DISCORD_TOKEN", "")
 # Google Gemini
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 GEMINI_CHAT_API_KEY: str = os.getenv("GEMINI_CHAT_API_KEY", "") or GEMINI_API_KEY
-GEMINI_CHAT_MODEL: str = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
-GEMINI_MODERATION_MODEL: str = os.getenv("GEMINI_MODERATION_MODEL", "gemini-2.5-flash")
+GEMINI_CHAT_MODEL: str = os.getenv("GEMINI_CHAT_MODEL", "gemini-3.6-flash")
+GEMINI_MODERATION_MODEL: str = os.getenv("GEMINI_MODERATION_MODEL", "gemini-3.6-flash")
+GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
 
 # Banco de dados
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")

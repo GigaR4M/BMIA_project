@@ -4,14 +4,15 @@ import json
 import asyncio
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
+from config import GEMINI_EMBEDDING_MODEL, GEMINI_CHAT_MODEL
 
 logger = logging.getLogger(__name__)
 
 class MemoryManager:
-    def __init__(self, db, chat_handler):
+    def __init__(self, db, chat_handler, embedding_model: Optional[str] = None):
         self.db = db
         self.chat_handler = chat_handler
-        self.model_name = "models/text-embedding-004" # Standard efficient embedding model
+        self.model_name = embedding_model or GEMINI_EMBEDDING_MODEL
 
 
 
@@ -147,8 +148,9 @@ class MemoryManager:
             # We will use the underlying model directly if exposed, or call generic generate.
             # Assuming ChatHandler exposes the model or method.
             
-            # Use a specific version for stability
-            model = genai.GenerativeModel('gemini-2.5-flash') 
+            # Usa o modelo configurado no chat_handler ou fallback do config
+            model_name = getattr(self.chat_handler, "model_name", None) or GEMINI_CHAT_MODEL
+            model = genai.GenerativeModel(model_name)
             response = await model.generate_content_async(prompt)
             data = self._parse_json_response(response.text)
 
@@ -177,6 +179,8 @@ class MemoryManager:
             logger.error(f"Error processing memory: {e}")
 
     async def _generate_embedding(self, text: str) -> Optional[List[float]]:
+        if not text:
+            return None
         try:
             # We use embed_content from genai wrapped in asyncio.to_thread to prevent blocking the event loop
             result = await asyncio.to_thread(
@@ -185,7 +189,9 @@ class MemoryManager:
                 content=text,
                 task_type="retrieval_document"
             )
-            return result['embedding']
+            if isinstance(result, dict):
+                return result.get('embedding')
+            return getattr(result, 'embedding', None)
         except Exception as e:
             logger.error(f"Embedding error: {e}")
             return None
