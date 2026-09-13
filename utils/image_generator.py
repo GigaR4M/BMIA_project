@@ -467,9 +467,10 @@ class BracketBuilder:
                     outline=corner_color,
                     width=2
                 )
-                # Header do Card (Corner Title)
+                # Header do Card (Corner Title) com bolinha vetorial colorida
                 draw.rectangle([x + 2, y + 2, x + CARD_W - 2, y + 36], fill=(26, 34, 52))
-                draw.text((x + 20, y + 10), corner_title, fill=corner_color, font=self._get_font(15, bold=True))
+                draw.ellipse((x + 18, y + 14, x + 28, y + 24), fill=corner_color)
+                draw.text((x + 36, y + 10), corner_title, fill=corner_color, font=self._get_font(15, bold=True))
 
                 if not team_data:
                     ph_av = self._create_placeholder_avatar(size=56, text="?")
@@ -505,10 +506,10 @@ class BracketBuilder:
                     draw.text((x + 140, y + 100), name[:22], fill=self.TEXT_WHITE, font=self._get_font(24, bold=True))
 
             # Card Esquerdo (Time Azul)
-            draw_showdown_card(left_x, 260, team_avatars[0], 0, self.NEON_CYAN, "🔵 DUPLA AZUL" if is_2v2 else "🔵 LADO AZUL")
+            draw_showdown_card(left_x, 260, team_avatars[0], 0, self.NEON_CYAN, "DUPLA AZUL" if is_2v2 else "LADO AZUL")
 
             # Card Direito (Time Laranja/Roxo)
-            draw_showdown_card(right_x, 260, team_avatars[1], 1, self.NEON_PURPLE, "🟣 DUPLA ROXA" if is_2v2 else "🟣 LADO ROXO")
+            draw_showdown_card(right_x, 260, team_avatars[1], 1, self.NEON_PURPLE, "DUPLA ROXA" if is_2v2 else "LADO ROXO")
 
             # Emblema VS Central
             vs_w, vs_h = 160, 80
@@ -517,6 +518,7 @@ class BracketBuilder:
             draw.rounded_rectangle([vs_x, vs_y, vs_x + vs_w, vs_y + vs_h], radius=12, fill=(24, 18, 42), outline=self.NEON_PURPLE, width=3)
             font_vs_large = self._get_font(32, bold=True)
             draw.text((vs_x + 52, vs_y + 22), "VS", fill=self.NEON_CYAN, font=font_vs_large)
+
 
             # Linhas de Conexão Neon (Showdown Faceoff)
             draw.line([(left_x + CARD_W, 385), (vs_x, 385)], fill=self.LINE_ACTIVE, width=4)
