@@ -149,7 +149,7 @@ async def on_ready() -> None:
             ctx.dynamic_roles_config = dict(DEFAULT_DYNAMIC_ROLES_CONFIG)
 
         # Registra slash commands
-        client.tree.add_command(StatsCommands(ctx.db, ctx.leaderboard_updater))
+        client.tree.add_command(StatsCommands(ctx.db, ctx.leaderboard_updater, ctx.points_manager))
         client.tree.add_command(RoleCommands(ctx.db, ctx.role_manager))
         client.tree.add_command(GiveawayCommands(ctx.db, ctx.giveaway_manager))
         client.tree.add_command(ModerationCommands(ctx.db))

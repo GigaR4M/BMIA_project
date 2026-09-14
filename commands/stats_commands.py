@@ -16,12 +16,109 @@ class StatsCommands(app_commands.Group):
     """Grupo de comandos de estatísticas."""
     
     
-    def __init__(self, db: Database, leaderboard_updater: Any = None):
+    def __init__(self, db: Database, leaderboard_updater: Any = None, points_manager: Any = None):
         super().__init__(name="stats", description="Comandos de estatísticas do servidor")
         self.db = db
         self.leaderboard_updater = leaderboard_updater
+        self.points_manager = points_manager
         self.embed_builder = StatsEmbedBuilder()
     
+    @app_commands.command(name="pontos_adicionar", description="Adiciona pontos manualmente a um membro (Apenas Administradores)")
+    @app_commands.describe(
+        membro="Membro que receberá os pontos",
+        pontos="Quantidade de pontos a adicionar",
+        motivo="Motivo da premiação/adição (opcional)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def pontos_adicionar(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        pontos: int,
+        motivo: Optional[str] = "Premiação Manual"
+    ):
+        await interaction.response.defer()
+        if pontos <= 0:
+            await interaction.followup.send("❌ A quantidade de pontos deve ser maior que zero.", ephemeral=True)
+            return
+
+        if membro.bot:
+            await interaction.followup.send("❌ Não é possível conceder pontos a bots.", ephemeral=True)
+            return
+
+        try:
+            if self.points_manager:
+                await self.points_manager.add_points(
+                    membro.id,
+                    pontos,
+                    "manual_reward",
+                    interaction.guild.id,
+                    membro.name,
+                    membro.discriminator,
+                    membro.bot
+                )
+            else:
+                await self.db.upsert_user(membro.id, membro.name, membro.discriminator, membro.bot)
+                await self.db.add_interaction_point(membro.id, pontos, "manual_reward", interaction.guild.id)
+
+            total = await self.db.get_user_current_total_points(membro.id, interaction.guild.id)
+            embed = discord.Embed(
+                title="✨ Pontos Adicionados com Sucesso!",
+                description=f"🎉 **+{pontos:,} pontos** foram adicionados para {membro.mention}!\n\n"
+                            f"📝 **Motivo:** {motivo}\n"
+                            f"📊 **Novo Total de Pontos:** `{total:,} pts`",
+                color=discord.Color.green()
+            )
+            embed.set_footer(text=f"Operação realizada por {interaction.user.display_name}")
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            logger.error(f"Erro ao adicionar pontos manuais para {membro.id}: {e}")
+            await interaction.followup.send("❌ Erro ao adicionar pontos ao membro.", ephemeral=True)
+
+    @app_commands.command(name="pontos_remover", description="Remove pontos de um membro (Apenas Administradores)")
+    @app_commands.describe(
+        membro="Membro que terá os pontos removidos",
+        pontos="Quantidade de pontos a remover",
+        motivo="Motivo da remoção (opcional)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def pontos_remover(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        pontos: int,
+        motivo: Optional[str] = "Penalidade Manual"
+    ):
+        await interaction.response.defer()
+        if pontos <= 0:
+            await interaction.followup.send("❌ A quantidade de pontos deve ser maior que zero.", ephemeral=True)
+            return
+
+        try:
+            if self.points_manager:
+                await self.points_manager.remove_points(
+                    membro.id,
+                    pontos,
+                    interaction.guild.id,
+                    reason=motivo
+                )
+            else:
+                await self.db.add_interaction_point(membro.id, -pontos, "penalty", interaction.guild.id)
+
+            total = await self.db.get_user_current_total_points(membro.id, interaction.guild.id)
+            embed = discord.Embed(
+                title="⚠️ Pontos Removidos",
+                description=f"🔻 **-{pontos:,} pontos** foram removidos de {membro.mention}.\n\n"
+                            f"📝 **Motivo:** {motivo}\n"
+                            f"📊 **Novo Total de Pontos:** `{total:,} pts`",
+                color=discord.Color.orange()
+            )
+            embed.set_footer(text=f"Operação realizada por {interaction.user.display_name}")
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            logger.error(f"Erro ao remover pontos de {membro.id}: {e}")
+            await interaction.followup.send("❌ Erro ao remover pontos do membro.", ephemeral=True)
+
     @app_commands.command(name="setup_leaderboard", description="Configura um leaderboard persistente neste canal")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setup_leaderboard(self, interaction: discord.Interaction):
