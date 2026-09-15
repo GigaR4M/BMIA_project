@@ -1895,3 +1895,371 @@ class LeagueTableBuilder:
         return buffer
 
 
+class RankCardBuilder:
+    """
+    Gerador visual de Rank Card / Perfil de Nível e XP em alta fidelidade (1100x340)
+    utilizando HTML5/CSS3 modernos (Glassmorphism, Neon Glows, Gradients e Tipografia Esports)
+    renderizado via Playwright.
+    """
+
+    async def _get_avatar_data_uri(self, member: Optional[discord.Member], username: str = "User") -> str:
+        """Obtém o avatar do membro em base64 data URI ou fallback SVG."""
+        import base64
+        try:
+            if member:
+                avatar_asset = member.display_avatar.with_size(256)
+                avatar_bytes = await avatar_asset.read()
+                b64 = base64.b64encode(avatar_bytes).decode("utf-8")
+                return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+
+        initial = username[0].upper() if username else "?"
+        svg = f"""<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'>
+            <defs>
+                <linearGradient id='grad' x1='0%' y1='0%' x2='100%' y2='100%'>
+                    <stop offset='0%' stop-color='#00f0ff'/>
+                    <stop offset='100%' stop-color='#b026ff'/>
+                </linearGradient>
+            </defs>
+            <circle cx='80' cy='80' r='76' fill='#151c2e' stroke='url(#grad)' stroke-width='6'/>
+            <text x='80' y='98' font-family='sans-serif' font-size='56' font-weight='bold' fill='#ffffff' text-anchor='middle'>{initial}</text>
+        </svg>"""
+        b64_svg = base64.b64encode(svg.encode("utf-8")).decode("utf-8")
+        return f"data:image/svg+xml;base64,{b64_svg}"
+
+    def _build_html_template(
+        self,
+        username: str,
+        display_name: str,
+        avatar_uri: str,
+        level_data: dict,
+        server_rank: int,
+        messages_count: int,
+        voice_minutes: int,
+        guild_name: str
+    ) -> str:
+        level = level_data.get("level", 1)
+        total_xp = level_data.get("total_xp", 0)
+        xp_in_level = level_data.get("xp_in_level", 0)
+        xp_needed = level_data.get("xp_needed_in_level", 100)
+        progress_pct = level_data.get("progress_pct", 0.0)
+
+        hours_voice = round(voice_minutes / 60, 1)
+
+        # Cor do Nível baseada na faixa
+        if level >= 50:
+            level_color = "#ffd700" # Ouro / Master
+            level_border = "rgba(255, 215, 0, 0.6)"
+            badge_title = "MESTRE"
+        elif level >= 25:
+            level_color = "#00f0ff" # Ciano / Diamond
+            level_border = "rgba(0, 240, 255, 0.6)"
+            badge_title = "DIAMANTE"
+        elif level >= 10:
+            level_color = "#b026ff" # Roxo / Platina
+            level_border = "rgba(176, 38, 255, 0.6)"
+            badge_title = "PLATINA"
+        else:
+            level_color = "#38bdf8" # Azul / Veterano
+            level_border = "rgba(56, 189, 248, 0.5)"
+            badge_title = "EXPLORADOR"
+
+        rank_display = f"#{server_rank}" if server_rank > 0 else "#-"
+
+        return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Rank Card</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }}
+        body {{
+            width: 1100px;
+            height: 340px;
+            background: transparent;
+            font-family: 'Rajdhani', sans-serif;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow: hidden;
+        }}
+        .card-container {{
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(9, 14, 26, 0.98) 100%);
+            border: 2px solid rgba(0, 240, 255, 0.3);
+            border-radius: 24px;
+            padding: 28px 36px;
+            display: flex;
+            align-items: center;
+            gap: 32px;
+            position: relative;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), inset 0 0 40px rgba(0, 240, 255, 0.05);
+            backdrop-filter: blur(20px);
+        }}
+        .card-container::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 10%;
+            right: 10%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00f0ff, #b026ff, transparent);
+            box-shadow: 0 0 15px #00f0ff;
+        }}
+
+        /* Avatar Section */
+        .avatar-box {{
+            position: relative;
+            flex-shrink: 0;
+        }}
+        .avatar-img {{
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid {level_color};
+            box-shadow: 0 0 30px {level_border};
+        }}
+        .rank-pill {{
+            position: absolute;
+            bottom: -6px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            padding: 3px 12px;
+            background: #0f172a;
+            border: 1.5px solid {level_color};
+            border-radius: 12px;
+            color: {level_color};
+            box-shadow: 0 0 15px rgba(0,0,0,0.8);
+            white-space: nowrap;
+        }}
+
+        /* Main Details */
+        .details-box {{
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }}
+
+        /* Top Row: Names and Rank/Level */
+        .top-row {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }}
+        .user-info {{
+            display: flex;
+            flex-direction: column;
+        }}
+        .user-display {{
+            font-size: 32px;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+            line-height: 1.1;
+        }}
+        .user-handle {{
+            font-size: 16px;
+            color: #94a3b8;
+            font-weight: 600;
+        }}
+
+        .rank-level-group {{
+            display: flex;
+            align-items: baseline;
+            gap: 20px;
+        }}
+        .rank-stat {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 20px;
+            font-weight: 800;
+            color: #94a3b8;
+        }}
+        .rank-stat span {{
+            color: #00f0ff;
+            font-size: 28px;
+            font-weight: 900;
+        }}
+        .level-stat {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 20px;
+            font-weight: 800;
+            color: #94a3b8;
+        }}
+        .level-stat span {{
+            color: {level_color};
+            font-size: 38px;
+            font-weight: 900;
+            text-shadow: 0 0 20px {level_border};
+        }}
+
+        /* Progress Bar */
+        .progress-section {{
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }}
+        .progress-meta {{
+            display: flex;
+            justify-content: space-between;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 16px;
+            font-weight: 700;
+            color: #94a3b8;
+        }}
+        .xp-text span {{
+            color: #ffffff;
+            font-weight: 800;
+        }}
+        .bar-bg {{
+            width: 100%;
+            height: 14px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            overflow: hidden;
+            position: relative;
+        }}
+        .bar-fill {{
+            height: 100%;
+            width: {progress_pct}%;
+            background: linear-gradient(90deg, #00f0ff, {level_color});
+            border-radius: 8px;
+            box-shadow: 0 0 20px #00f0ff;
+        }}
+
+        /* Bottom Stats Chips */
+        .bottom-chips {{
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-top: 4px;
+        }}
+        .chip {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 14px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 700;
+            color: #cbd5e1;
+        }}
+        .chip-icon {{
+            font-size: 14px;
+        }}
+        .chip strong {{
+            color: #00f0ff;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card-container">
+        <div class="avatar-box">
+            <img class="avatar-img" src="{avatar_uri}" alt="" />
+            <div class="rank-pill">{badge_title}</div>
+        </div>
+
+        <div class="details-box">
+            <div class="top-row">
+                <div class="user-info">
+                    <span class="user-display">{display_name}</span>
+                    <span class="user-handle">@{username} • {guild_name}</span>
+                </div>
+                <div class="rank-level-group">
+                    <div class="rank-stat">RANK <span>{rank_display}</span></div>
+                    <div class="level-stat">NÍVEL <span>{level}</span></div>
+                </div>
+            </div>
+
+            <div class="progress-section">
+                <div class="progress-meta">
+                    <span class="xp-text"><span>{xp_in_level:,}</span> / {xp_needed:,} XP</span>
+                    <span class="pct-text">{progress_pct:.1f}%</span>
+                </div>
+                <div class="bar-bg">
+                    <div class="bar-fill"></div>
+                </div>
+            </div>
+
+            <div class="bottom-chips">
+                <div class="chip">
+                    <span class="chip-icon">✨</span>
+                    <span>Total: <strong>{total_xp:,} XP</strong></span>
+                </div>
+                <div class="chip">
+                    <span class="chip-icon">💬</span>
+                    <span>Mensagens: <strong>{messages_count:,}</strong></span>
+                </div>
+                <div class="chip">
+                    <span class="chip-icon">🎙️</span>
+                    <span>Voz: <strong>{hours_voice}h</strong></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"""
+
+    async def generate_rank_card(
+        self,
+        member: discord.Member,
+        level_data: dict,
+        server_rank: int,
+        messages_count: int,
+        voice_minutes: int,
+        guild_name: str
+    ) -> BytesIO:
+        """Renderiza o Rank Card do membro em imagem 1100x340 com Playwright."""
+        from playwright.async_api import async_playwright
+
+        username = member.name
+        display_name = member.display_name
+        avatar_uri = await self._get_avatar_data_uri(member, username)
+
+        html_code = self._build_html_template(
+            username=username,
+            display_name=display_name,
+            avatar_uri=avatar_uri,
+            level_data=level_data,
+            server_rank=server_rank,
+            messages_count=messages_count,
+            voice_minutes=voice_minutes,
+            guild_name=guild_name
+        )
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            page = await browser.new_page(viewport={"width": 1100, "height": 340})
+            await page.set_content(html_code, wait_until="networkidle")
+            screenshot_bytes = await page.screenshot(type="png", full_page=False)
+            await browser.close()
+
+        buffer = BytesIO(screenshot_bytes)
+        buffer.seek(0)
+        return buffer
+
+
+

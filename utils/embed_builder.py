@@ -74,9 +74,14 @@ class StatsEmbedBuilder:
     def build_user_stats(self, stats: Dict[str, Any], username: str, 
                         avatar_url: Optional[str] = None) -> discord.Embed:
         """
-        Constrói embed com estatísticas de um usuário.
+        Constrói embed com estatísticas de um usuário incluindo nível e XP.
         """
-        total_points = stats.get('total_points', 0)
+        from utils.level_manager import get_level_progress
+        
+        total_xp = stats.get('total_points', 0)
+        level_data = get_level_progress(total_xp)
+        level = level_data["level"]
+        progress_pct = level_data["progress_pct"]
         
         embed = discord.Embed(
             title=f"📊 Estatísticas de {username}",
@@ -87,11 +92,12 @@ class StatsEmbedBuilder:
         if avatar_url:
             embed.set_thumbnail(url=avatar_url)
         
-        # Período
+        # Período e Nível
         period = stats.get('period_days', 30)
         period_text = "Ano Atual" if period > 365 else f"Últimos {period} dias"
         embed.add_field(name="📅 Período", value=period_text, inline=True)
-        embed.add_field(name="🏆 Total de Pontos", value=f"**{total_points:,}**", inline=True)
+        embed.add_field(name="🎖️ Nível", value=f"**Nv. {level}** ({progress_pct}%)", inline=True)
+        embed.add_field(name="⚡ Total de XP", value=f"**{total_xp:,} XP**", inline=True)
         
         embed.add_field(name="\u200b", value="\u200b", inline=False)
         
@@ -112,20 +118,18 @@ class StatsEmbedBuilder:
         )
         embed.add_field(name="📈 Atividade", value=usage_text, inline=True)
 
-        # 2. Detalhamento de Pontos
+        # 2. Detalhamento de XP
         breakdown = stats.get('points_breakdown', {})
-
         
         # Agrega pontos de mensagem (legacy 'message', 'message_short', 'message_long')
-        points_msg = (
+        xp_msg = (
             breakdown.get('message', 0) + 
             breakdown.get('message_short', 0) + 
             breakdown.get('message_long', 0)
         )
         
         # Agrega pontos de voz (legacy 'voice', 'voice_base', etc. e novo 'minute_tick')
-        # 'minute_tick' engloba voz e jogos atualmente
-        points_voice = (
+        xp_voice = (
             breakdown.get('voice', 0) +
             breakdown.get('voice_base', 0) +
             breakdown.get('voice_crowd_bonus', 0) +
@@ -133,16 +137,16 @@ class StatsEmbedBuilder:
             breakdown.get('minute_tick', 0)
         )
         
-        other_points = total_points - (points_msg + points_voice)
+        other_xp = total_xp - (xp_msg + xp_voice)
         
-        points_text = (
-            f"💬 **Mensagens:** {points_msg:,} pts\n"
-            f"🗣️ **Voz:** {points_voice:,} pts\n"
+        xp_text = (
+            f"💬 **Mensagens:** {xp_msg:,} XP\n"
+            f"🗣️ **Voz & Jogos:** {xp_voice:,} XP\n"
         )
-        if other_points > 0:
-            points_text += f"✨ **Bônus/Outros:** {other_points:,} pts"
+        if other_xp > 0:
+            xp_text += f"✨ **Bônus/Outros:** {other_xp:,} XP"
             
-        embed.add_field(name="⭐ Pontuação", value=points_text, inline=True)
+        embed.add_field(name="⭐ Ganho de XP", value=xp_text, inline=True)
         
         embed.add_field(name="\u200b", value="\u200b", inline=False)
 
@@ -169,9 +173,9 @@ class StatsEmbedBuilder:
             
         if favs_text:
             embed.add_field(name="❤️ Favoritos", value=favs_text, inline=False)
-
         
         return embed
+
     
     def build_top_users(self, users: List[Dict[str, Any]], days: int) -> discord.Embed:
         """
@@ -274,17 +278,19 @@ class StatsEmbedBuilder:
 
     def build_leaderboard(self, leaderboard: List[Dict[str, Any]]) -> discord.Embed:
         """
-        Constrói embed com leaderboard de pontos.
+        Constrói embed com leaderboard de XP e Níveis.
         
         Args:
-            leaderboard: Lista de usuários com pontos
+            leaderboard: Lista de usuários com pontos/XP
             
         Returns:
             Embed formatado
         """
+        from utils.level_manager import get_level_from_xp
+
         embed = discord.Embed(
-            title="🏆 Leaderboard de Pontos",
-            description="Ranking de interação do servidor",
+            title="🏆 Leaderboard de XP",
+            description="Ranking de interação e níveis do servidor",
             color=0xffd700, # Gold
             timestamp=now_brt()
         )
@@ -300,8 +306,9 @@ class StatsEmbedBuilder:
         for i, user in enumerate(leaderboard, 1):
             medal = medals[i-1] if i <= 3 else f"**{i}.**"
             username = user['username']
-            points = user['total_points']
-            ranking_text += f"{medal} **{username}** - {points:,} pontos\n"
+            xp = user['total_points']
+            lvl = get_level_from_xp(xp)
+            ranking_text += f"{medal} **{username}** • `Nv. {lvl}` — **{xp:,} XP**\n"
         
         embed.add_field(
             name="🌟 Top Membros",
@@ -310,3 +317,4 @@ class StatsEmbedBuilder:
         )
         
         return embed
+

@@ -1,22 +1,35 @@
 import discord
-from typing import List
+from typing import List, Optional
 import logging
 from database import Database
 from datetime import datetime
+from utils.level_manager import get_level_from_xp
 
 logger = logging.getLogger(__name__)
 
 class PointsManager:
-    def __init__(self, db: Database, ignored_channels: List[int] = None):
+    def __init__(self, db: Database, ignored_channels: List[int] = None, client: Optional[discord.Client] = None):
         self.db = db
         self.ignored_channels = ignored_channels if ignored_channels else []
+        self.client = client
         # Cache for voice/activity start times: {user_id: start_time}
         # Depreciado para cálculo de pontos, mantido se necessário para legacy analytics
         self.voice_sessions = {}
         self.activity_sessions = {}
 
-    async def add_points(self, user_id: int, points: int, interaction_type: str, guild_id: int, username: str = "Unknown", discriminator: str = "0000", is_bot: bool = False, avatar_url: str = None):
-        """Adds points to a user for a specific interaction type."""
+    async def add_points(
+        self,
+        user_id: int,
+        points: int,
+        interaction_type: str,
+        guild_id: int,
+        username: str = "Unknown",
+        discriminator: str = "0000",
+        is_bot: bool = False,
+        avatar_url: str = None,
+        channel: Optional[discord.abc.Messageable] = None
+    ):
+        """Adiciona XP/pontos a um usuário e verifica subida de nível (Level Up)."""
         try:
             if is_bot:
                 return
@@ -30,26 +43,51 @@ class PointsManager:
             # Fetch updated total
             current_total = await self.db.get_user_current_total_points(user_id, guild_id)
             
-            # Update daily stats with new total (and increment counters if we tracked them here, but counters are separate)
-            # Logic: We only update the Total Points snapshot here. 
-            # (Voice/Msg counts are updated elsewhere or should be passed if available? 
-            #  add_points is generic. We let message_handlers handle specific increments if they want, 
-            #  but here we ensure the 'total_points' column is fresh)
+            # Update daily stats with new total
             await self.db.update_daily_user_stats(user_id, guild_id, total_points_snapshot=current_total)
             
-            logger.info(f"Added {points} points to user {user_id} for {interaction_type}. Total now: {current_total}")
+            # --- VERIFICAÇÃO DE LEVEL UP ---
+            if points > 0:
+                old_total = max(0, current_total - points)
+                old_level = get_level_from_xp(old_total)
+                new_level = get_level_from_xp(current_total)
+                
+                if new_level > old_level:
+                    logger.info(f"🎉 Level Up! Usuário {user_id} ({username}) subiu do Nível {old_level} para {new_level} na Guild {guild_id}!")
+                    if channel:
+                        try:
+                            embed = discord.Embed(
+                                title="🎉 LEVEL UP!",
+                                description=f"Parabéns <@{user_id}>! Você alcançou o **Nível {new_level}**! 🚀\nContinue interagindo para subir ainda mais no ranking!",
+                                color=0x00f0ff
+                            )
+                            if avatar_url:
+                                embed.set_thumbnail(url=avatar_url)
+                            embed.set_footer(text=f"XP Total: {current_total:,} XP")
+                            await channel.send(embed=embed)
+                        except Exception as ann_err:
+                            logger.debug(f"Não foi possível enviar anúncio de level up no canal: {ann_err}")
+            
+            logger.info(f"Added {points} XP to user {user_id} for {interaction_type}. Total now: {current_total}")
         except Exception as e:
-            logger.error(f"Error adding points for user {user_id}: {e}")
+            logger.error(f"Error adding XP for user {user_id}: {e}")
+
+    # Alias add_xp para o novo padrão de nomenclatura
+    add_xp = add_points
 
     async def remove_points(self, user_id: int, points: int, guild_id: int, reason: str = None):
-        """Remove pontos de um usuário (usado para moderação)."""
+        """Remove XP/pontos de um usuário (usado para moderação)."""
         try:
-            # Para simplificar, adicionar pontos negativos é uma forma de remover
-            # Assumindo que o DB suporta incrementos negativos ou criar método específico no DB se precisar
             await self.db.add_interaction_point(user_id, -points, "penalty", guild_id) 
-            logger.info(f"Removed {points} points from user {user_id}. Reason: {reason}")
+            current_total = await self.db.get_user_current_total_points(user_id, guild_id)
+            await self.db.update_daily_user_stats(user_id, guild_id, total_points_snapshot=current_total)
+            logger.info(f"Removed {points} XP from user {user_id}. Reason: {reason}. Total now: {current_total}")
         except Exception as e:
-            logger.error(f"Error removing points for user {user_id}: {e}")
+            logger.error(f"Error removing XP for user {user_id}: {e}")
+
+    # Alias remove_xp para o novo padrão de nomenclatura
+    remove_xp = remove_points
+
 
     async def process_voice_points(self, guilds: List[discord.Guild]):
         """

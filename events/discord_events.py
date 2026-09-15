@@ -228,7 +228,9 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                     message.author.name,
                     message.author.discriminator,
                     avatar_url=avatar_url,
+                    channel=message.channel,
                 )
+
 
         # Buffer de moderação
         ctx.buffer_mensagens.append(message)

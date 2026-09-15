@@ -950,6 +950,25 @@ class Database:
             """, user_id, guild_id)
             return total
 
+    async def get_user_rank_position(self, user_id: int, guild_id: int) -> int:
+        """Retorna a posição de ranking do usuário no servidor com base nos pontos totais."""
+        async with self.pool.acquire() as conn:
+            rank = await conn.fetchval("""
+                WITH user_totals AS (
+                    SELECT user_id, COALESCE(SUM(points), 0) as total
+                    FROM interaction_points
+                    WHERE guild_id = $1
+                    GROUP BY user_id
+                ),
+                ranked AS (
+                    SELECT user_id, RANK() OVER (ORDER BY total DESC) as rank
+                    FROM user_totals
+                )
+                SELECT rank FROM ranked WHERE user_id = $2
+            """, guild_id, user_id)
+            return rank if rank is not None else 1
+
+
 
     async def get_top_users_date_range(self, guild_id: int, start_date: datetime, end_date: datetime, limit: int = 3) -> List[Dict[str, Any]]:
         """Retorna os top usuários por pontos num intervalo de datas."""

@@ -35,7 +35,7 @@ from tasks.moderation import processador_em_lote
 
 from database import Database
 from stats_collector import StatsCollector
-from commands.stats_commands import StatsCommands
+from commands.stats_commands import StatsCommands, handle_rank_card
 from commands.role_commands import RoleCommands
 from commands.giveaway_commands import GiveawayCommands
 from commands.moderation_commands import ModerationCommands
@@ -159,6 +159,17 @@ async def on_ready() -> None:
         client.tree.add_command(TournamentCommands(ctx.db, ctx.points_manager))
         if ctx.memory_manager:
             client.tree.add_command(ContextCommands(ctx.db, ctx.memory_manager))
+
+        @client.tree.command(name="rank", description="Exibe o seu Rank Card ou de outro membro (XP e Nível)")
+        @discord.app_commands.describe(membro="Membro que deseja visualizar o Rank Card (opcional)")
+        async def rank_slash(interaction: discord.Interaction, membro: discord.Member | None = None):
+            await handle_rank_card(ctx.db, interaction, membro)
+
+        @client.tree.command(name="perfil", description="Exibe o seu perfil com Rank Card de XP e Nível")
+        @discord.app_commands.describe(membro="Membro que deseja visualizar o perfil (opcional)")
+        async def perfil_slash(interaction: discord.Interaction, membro: discord.Member | None = None):
+            await handle_rank_card(ctx.db, interaction, membro)
+
 
         # Registra persistent views para torneios ativos (para botões continuarem funcionando)
         for guild in client.guilds:

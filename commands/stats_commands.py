@@ -1,4 +1,4 @@
-# commands/stats_commands.py - Comandos Slash de Estatísticas
+# commands/stats_commands.py - Comandos Slash de Estatísticas e Níveis
 
 import discord
 from discord import app_commands
@@ -12,21 +12,119 @@ from config import now_brt
 logger = logging.getLogger(__name__)
 
 
+async def handle_rank_card(db: Database, interaction: discord.Interaction, membro: Optional[discord.Member] = None):
+    """Gera e envia o Rank Card em imagem de alta fidelidade."""
+    await interaction.response.defer()
+    target = membro or interaction.user
+    if target.bot:
+        await interaction.followup.send("❌ Bots não possuem Rank Card ou progressão de níveis.", ephemeral=True)
+        return
+
+    try:
+        from utils.level_manager import get_level_progress
+        from utils.image_generator import RankCardBuilder
+
+        total_xp = await db.get_user_current_total_points(target.id, interaction.guild.id)
+        level_data = get_level_progress(total_xp)
+        
+        server_rank = await db.get_user_rank_position(target.id, interaction.guild.id)
+        
+        # Estatísticas de uso
+        user_stats = await db.get_user_stats(target.id, interaction.guild.id, 365)
+        total_msgs = user_stats.get('total_messages', 0)
+        voice_mins = user_stats.get('voice_minutes', 0)
+
+        builder = RankCardBuilder()
+        img_buffer = await builder.generate_rank_card(
+            member=target,
+            level_data=level_data,
+            server_rank=server_rank,
+            messages_count=total_msgs,
+            voice_minutes=voice_mins,
+            guild_name=interaction.guild.name
+        )
+
+        file = discord.File(fp=img_buffer, filename=f"rank_{target.id}.png")
+        await interaction.followup.send(file=file)
+    except Exception as e:
+        logger.error(f"Erro ao gerar Rank Card para {target.id}: {e}", exc_info=True)
+        await interaction.followup.send("❌ Ocorreu um erro ao gerar o Rank Card. Tente novamente.", ephemeral=True)
+
+
 class StatsCommands(app_commands.Group):
-    """Grupo de comandos de estatísticas."""
-    
+    """Grupo de comandos de estatísticas e XP."""
     
     def __init__(self, db: Database, leaderboard_updater: Any = None, points_manager: Any = None):
-        super().__init__(name="stats", description="Comandos de estatísticas do servidor")
+        super().__init__(name="stats", description="Comandos de estatísticas e XP do servidor")
         self.db = db
         self.leaderboard_updater = leaderboard_updater
         self.points_manager = points_manager
         self.embed_builder = StatsEmbedBuilder()
-    
-    @app_commands.command(name="pontos_adicionar", description="Adiciona pontos manualmente a um membro (Apenas Administradores)")
+
+    @app_commands.command(name="rank", description="Exibe o Rank Card de XP e nível de um membro")
+    @app_commands.describe(membro="Membro que deseja visualizar o Rank Card (opcional)")
+    async def rank(self, interaction: discord.Interaction, membro: Optional[discord.Member] = None):
+        await handle_rank_card(self.db, interaction, membro)
+
+    @app_commands.command(name="xp_adicionar", description="Adiciona XP manualmente a um membro (Apenas Administradores)")
     @app_commands.describe(
-        membro="Membro que receberá os pontos",
-        pontos="Quantidade de pontos a adicionar",
+        membro="Membro que receberá o XP",
+        xp="Quantidade de XP a adicionar",
+        motivo="Motivo da premiação/adição (opcional)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_adicionar(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        xp: int,
+        motivo: Optional[str] = "Premiação Manual"
+    ):
+        await interaction.response.defer()
+        if xp <= 0:
+            await interaction.followup.send("❌ A quantidade de XP deve ser maior que zero.", ephemeral=True)
+            return
+
+        if membro.bot:
+            await interaction.followup.send("❌ Não é possível conceder XP a bots.", ephemeral=True)
+            return
+
+        try:
+            avatar_url = str(membro.display_avatar.url) if hasattr(membro, 'display_avatar') else None
+            if self.points_manager:
+                await self.points_manager.add_points(
+                    membro.id,
+                    xp,
+                    "manual_reward",
+                    interaction.guild.id,
+                    membro.name,
+                    membro.discriminator,
+                    membro.bot,
+                    avatar_url=avatar_url,
+                    channel=interaction.channel
+                )
+            else:
+                await self.db.upsert_user(membro.id, membro.name, membro.discriminator, membro.bot, avatar_url=avatar_url)
+                await self.db.add_interaction_point(membro.id, xp, "manual_reward", interaction.guild.id)
+
+            total = await self.db.get_user_current_total_points(membro.id, interaction.guild.id)
+            embed = discord.Embed(
+                title="✨ XP Adicionado com Sucesso!",
+                description=f"🎉 **+{xp:,} XP** foram adicionados para {membro.mention}!\n\n"
+                            f"📝 **Motivo:** {motivo}\n"
+                            f"⚡ **Novo Total de XP:** `{total:,} XP`",
+                color=discord.Color.green()
+            )
+            embed.set_footer(text=f"Operação realizada por {interaction.user.display_name}")
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            logger.error(f"Erro ao adicionar XP manual para {membro.id}: {e}")
+            await interaction.followup.send("❌ Erro ao adicionar XP ao membro.", ephemeral=True)
+
+    @app_commands.command(name="pontos_adicionar", description="[Alias] Adiciona XP/pontos a um membro (Apenas Administradores)")
+    @app_commands.describe(
+        membro="Membro que receberá os pontos/XP",
+        pontos="Quantidade de pontos/XP a adicionar",
         motivo="Motivo da premiação/adição (opcional)"
     )
     @app_commands.checks.has_permissions(administrator=True)
@@ -37,46 +135,53 @@ class StatsCommands(app_commands.Group):
         pontos: int,
         motivo: Optional[str] = "Premiação Manual"
     ):
+        await self.xp_adicionar(interaction, membro, pontos, motivo)
+
+    @app_commands.command(name="xp_remover", description="Remove XP de um membro (Apenas Administradores)")
+    @app_commands.describe(
+        membro="Membro que terá o XP removido",
+        xp="Quantidade de XP a remover",
+        motivo="Motivo da remoção (opcional)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_remover(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        xp: int,
+        motivo: Optional[str] = "Penalidade Manual"
+    ):
         await interaction.response.defer()
-        if pontos <= 0:
-            await interaction.followup.send("❌ A quantidade de pontos deve ser maior que zero.", ephemeral=True)
+        if xp <= 0:
+            await interaction.followup.send("❌ A quantidade de XP deve ser maior que zero.", ephemeral=True)
             return
 
-        if membro.bot:
-            await interaction.followup.send("❌ Não é possível conceder pontos a bots.", ephemeral=True)
-            return
-
-            avatar_url = str(membro.display_avatar.url) if hasattr(membro, 'display_avatar') else None
+        try:
             if self.points_manager:
-                await self.points_manager.add_points(
+                await self.points_manager.remove_points(
                     membro.id,
-                    pontos,
-                    "manual_reward",
+                    xp,
                     interaction.guild.id,
-                    membro.name,
-                    membro.discriminator,
-                    membro.bot,
-                    avatar_url=avatar_url
+                    reason=motivo
                 )
             else:
-                await self.db.upsert_user(membro.id, membro.name, membro.discriminator, membro.bot, avatar_url=avatar_url)
-                await self.db.add_interaction_point(membro.id, pontos, "manual_reward", interaction.guild.id)
+                await self.db.add_interaction_point(membro.id, -xp, "penalty", interaction.guild.id)
 
             total = await self.db.get_user_current_total_points(membro.id, interaction.guild.id)
             embed = discord.Embed(
-                title="✨ Pontos Adicionados com Sucesso!",
-                description=f"🎉 **+{pontos:,} pontos** foram adicionados para {membro.mention}!\n\n"
+                title="⚠️ XP Removido",
+                description=f"🔻 **-{xp:,} XP** foram removidos de {membro.mention}.\n\n"
                             f"📝 **Motivo:** {motivo}\n"
-                            f"📊 **Novo Total de Pontos:** `{total:,} pts`",
-                color=discord.Color.green()
+                            f"⚡ **Novo Total de XP:** `{total:,} XP`",
+                color=discord.Color.orange()
             )
             embed.set_footer(text=f"Operação realizada por {interaction.user.display_name}")
             await interaction.followup.send(embed=embed)
         except Exception as e:
-            logger.error(f"Erro ao adicionar pontos manuais para {membro.id}: {e}")
-            await interaction.followup.send("❌ Erro ao adicionar pontos ao membro.", ephemeral=True)
+            logger.error(f"Erro ao remover XP de {membro.id}: {e}")
+            await interaction.followup.send("❌ Erro ao remover XP do membro.", ephemeral=True)
 
-    @app_commands.command(name="pontos_remover", description="Remove pontos de um membro (Apenas Administradores)")
+    @app_commands.command(name="pontos_remover", description="[Alias] Remove pontos/XP de um membro (Apenas Administradores)")
     @app_commands.describe(
         membro="Membro que terá os pontos removidos",
         pontos="Quantidade de pontos a remover",
@@ -90,35 +195,7 @@ class StatsCommands(app_commands.Group):
         pontos: int,
         motivo: Optional[str] = "Penalidade Manual"
     ):
-        await interaction.response.defer()
-        if pontos <= 0:
-            await interaction.followup.send("❌ A quantidade de pontos deve ser maior que zero.", ephemeral=True)
-            return
-
-        try:
-            if self.points_manager:
-                await self.points_manager.remove_points(
-                    membro.id,
-                    pontos,
-                    interaction.guild.id,
-                    reason=motivo
-                )
-            else:
-                await self.db.add_interaction_point(membro.id, -pontos, "penalty", interaction.guild.id)
-
-            total = await self.db.get_user_current_total_points(membro.id, interaction.guild.id)
-            embed = discord.Embed(
-                title="⚠️ Pontos Removidos",
-                description=f"🔻 **-{pontos:,} pontos** foram removidos de {membro.mention}.\n\n"
-                            f"📝 **Motivo:** {motivo}\n"
-                            f"📊 **Novo Total de Pontos:** `{total:,} pts`",
-                color=discord.Color.orange()
-            )
-            embed.set_footer(text=f"Operação realizada por {interaction.user.display_name}")
-            await interaction.followup.send(embed=embed)
-        except Exception as e:
-            logger.error(f"Erro ao remover pontos de {membro.id}: {e}")
-            await interaction.followup.send("❌ Erro ao remover pontos do membro.", ephemeral=True)
+        await self.xp_remover(interaction, membro, pontos, motivo)
 
     @app_commands.command(name="setup_leaderboard", description="Configura um leaderboard persistente neste canal")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -137,9 +214,9 @@ class StatsCommands(app_commands.Group):
             
             # Tenta fixar (pin) a mensagem
             try:
-                await message.pin(reason="Leaderboard de Pontos")
+                await message.pin(reason="Leaderboard de XP")
             except Exception:
-                pass # Ignora se falhar pin (pode não ter permissão ou canal cheio)
+                pass
 
             # Salva no banco
             await self.db.upsert_leaderboard_config(
@@ -187,20 +264,18 @@ class StatsCommands(app_commands.Group):
                 ephemeral=True
             )
     
-    @app_commands.command(name="me", description="Suas estatísticas pessoais e ficha de pontos")
+    @app_commands.command(name="me", description="Suas estatísticas pessoais e ficha de XP/Nível")
     @app_commands.describe(days="Número de dias para análise (padrão: Ano Atual)")
     async def my_stats(self, interaction: discord.Interaction, days: Optional[int] = None):
-        """Mostra estatísticas pessoais e auditoria de pontos."""
+        """Mostra estatísticas pessoais e auditoria de XP."""
         await interaction.response.defer(ephemeral=True)
         
         try:
-            # Se days não for especificado, calcula dias desde o início do ano
             if days is None:
                 now = now_brt()
                 start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
                 days = (now - start_of_year).days + 1
 
-            
             stats = await self.db.get_user_stats(
                 interaction.user.id, 
                 interaction.guild.id, 
@@ -237,7 +312,6 @@ class StatsCommands(app_commands.Group):
                 start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
                 days = (now - start_of_year).days + 1
 
-
             stats = await self.db.get_user_stats(user.id, interaction.guild.id, days)
             embed = self.embed_builder.build_user_stats(
                 stats, 
@@ -253,7 +327,7 @@ class StatsCommands(app_commands.Group):
                 ephemeral=True
             )
     
-    @app_commands.command(name="top", description="Top usuários mais ativos")
+    @app_commands.command(name="top", description="Top usuários mais ativos por mensagens")
     @app_commands.describe(
         limit="Número de usuários para mostrar (padrão: 10)",
         days="Número de dias para análise (padrão: 30)"
@@ -264,7 +338,6 @@ class StatsCommands(app_commands.Group):
         await interaction.response.defer()
         
         try:
-            # Limita entre 1 e 25
             limit = max(1, min(limit, 25))
             
             top_users = await self.db.get_top_users_by_messages(
@@ -293,7 +366,6 @@ class StatsCommands(app_commands.Group):
         await interaction.response.defer()
         
         try:
-            # Limita entre 1 e 25
             limit = max(1, min(limit, 25))
             
             top_channels = await self.db.get_top_channels(
@@ -311,25 +383,23 @@ class StatsCommands(app_commands.Group):
                 ephemeral=True
             )
 
-    @app_commands.command(name="leaderboard", description="Mostra o ranking de pontos de interação")
+    @app_commands.command(name="leaderboard", description="Mostra o ranking de XP e níveis")
     @app_commands.describe(
         limit="Número de usuários para mostrar (padrão: 10)",
         days="Número de dias para análise (padrão: Ano Atual)"
     )
     async def leaderboard(self, interaction: discord.Interaction, limit: int = 10, days: Optional[int] = None):
-        """Mostra o leaderboard de pontos."""
+        """Mostra o leaderboard de XP."""
         await interaction.response.defer()
         
         try:
             limit = max(1, min(limit, 25))
             
-            # Se days não for especificado, calcula dias desde o início do ano
             if days is None:
                 now = now_brt()
                 start_of_year = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
                 days = (now - start_of_year).days + 1
 
-            
             leaderboard = await self.db.get_leaderboard(limit, days, interaction.guild.id)
             embed = self.embed_builder.build_leaderboard(leaderboard)
             await interaction.followup.send(embed=embed)
