@@ -219,6 +219,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                     pass
 
             if points > 0 and message.guild:
+                avatar_url = str(message.author.display_avatar.url) if hasattr(message.author, 'display_avatar') else None
                 await ctx.points_manager.add_points(
                     message.author.id,
                     points,
@@ -226,6 +227,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                     message.guild.id,
                     message.author.name,
                     message.author.discriminator,
+                    avatar_url=avatar_url,
                 )
 
         # Buffer de moderação
@@ -246,8 +248,9 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
 
         allowed = ctx.allowed_channels
         if ctx.points_manager and payload.channel_id in allowed:
-            user_reactor = client.get_user(payload.user_id)
+            user_reactor = payload.member or client.get_user(payload.user_id)
             if user_reactor and payload.guild_id:
+                avatar_url = str(user_reactor.display_avatar.url) if hasattr(user_reactor, 'display_avatar') else None
                 await ctx.points_manager.add_points(
                     payload.user_id,
                     1,
@@ -255,6 +258,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                     payload.guild_id,
                     user_reactor.name,
                     user_reactor.discriminator,
+                    avatar_url=avatar_url,
                 )
 
             try:
@@ -262,6 +266,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                 if channel:
                     msg = await channel.fetch_message(payload.message_id)
                     if msg.author.id != payload.user_id and payload.guild_id:
+                        msg_avatar = str(msg.author.display_avatar.url) if hasattr(msg.author, 'display_avatar') else None
                         await ctx.points_manager.add_points(
                             msg.author.id,
                             1,
@@ -270,6 +275,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             msg.author.name,
                             msg.author.discriminator,
                             msg.author.bot,
+                            avatar_url=msg_avatar,
                         )
             except Exception as exc:
                 logger.error("Erro ao dar ponto de reação para autor: %s", exc)

@@ -15,14 +15,14 @@ class PointsManager:
         self.voice_sessions = {}
         self.activity_sessions = {}
 
-    async def add_points(self, user_id: int, points: int, interaction_type: str, guild_id: int, username: str = "Unknown", discriminator: str = "0000", is_bot: bool = False):
+    async def add_points(self, user_id: int, points: int, interaction_type: str, guild_id: int, username: str = "Unknown", discriminator: str = "0000", is_bot: bool = False, avatar_url: str = None):
         """Adds points to a user for a specific interaction type."""
         try:
             if is_bot:
                 return
 
             # Ensure user exists
-            await self.db.upsert_user(user_id, username, discriminator, is_bot)
+            await self.db.upsert_user(user_id, username, discriminator, is_bot, avatar_url)
             
             await self.db.add_interaction_point(user_id, points, interaction_type, guild_id)
             
@@ -269,7 +269,8 @@ class PointsManager:
                         # Se não for minuto par e não estiver em call, não ganha ponto de jogo
                     
                     if current_points > 0:
-                        await self.add_points(member.id, current_points, "minute_tick", guild.id, member.name, member.discriminator)
+                        avatar_url = str(member.display_avatar.url) if hasattr(member, 'display_avatar') else None
+                        await self.add_points(member.id, current_points, "minute_tick", guild.id, member.name, member.discriminator, avatar_url=avatar_url)
                         
         except Exception as e:
             logger.error(f"Error in execute_points_loop: {e}")

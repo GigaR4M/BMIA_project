@@ -49,11 +49,13 @@ class StatsCollector:
             # Bots também entram no cache para evitar spam de upsert
             if self._should_update(message.author.id, self.user_cache):
                 try:
+                    avatar_url = str(message.author.display_avatar.url) if hasattr(message.author, 'display_avatar') else None
                     await self.db.upsert_user(
                         user_id=message.author.id,
                         username=message.author.name,
                         discriminator=message.author.discriminator,
-                        is_bot=True
+                        is_bot=True,
+                        avatar_url=avatar_url
                     )
                 except Exception as e:
                     logger.error(f"❌ Erro ao registrar bot {message.author.name}: {e}")
@@ -66,11 +68,13 @@ class StatsCollector:
         try:
             # Atualiza usuário (com cache)
             if self._should_update(message.author.id, self.user_cache):
+                avatar_url = str(message.author.display_avatar.url) if hasattr(message.author, 'display_avatar') else None
                 await self.db.upsert_user(
                     user_id=message.author.id,
                     username=message.author.name,
                     discriminator=message.author.discriminator,
-                    is_bot=False
+                    is_bot=False,
+                    avatar_url=avatar_url
                 )
             
             # Atualiza canal (com cache)
@@ -115,11 +119,13 @@ class StatsCollector:
         if member.bot:
             if self._should_update(member.id, self.user_cache):
                 try:
+                    avatar_url = str(member.display_avatar.url) if hasattr(member, 'display_avatar') else None
                     await self.db.upsert_user(
                         user_id=member.id,
                         username=member.name,
                         discriminator=member.discriminator,
-                        is_bot=True
+                        is_bot=True,
+                        avatar_url=avatar_url
                     )
                 except Exception as e:
                     logger.error(f"❌ Erro ao registrar bot de voz {member.name}: {e}")
@@ -128,11 +134,13 @@ class StatsCollector:
         try:
             # Atualiza usuário (com cache)
             if self._should_update(member.id, self.user_cache):
+                avatar_url = str(member.display_avatar.url) if hasattr(member, 'display_avatar') else None
                 await self.db.upsert_user(
                     user_id=member.id,
                     username=member.name,
                     discriminator=member.discriminator,
-                    is_bot=False
+                    is_bot=False,
+                    avatar_url=avatar_url
                 )
             
             # Usuário entrou em um canal de voz

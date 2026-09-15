@@ -46,7 +46,7 @@ class StatsCommands(app_commands.Group):
             await interaction.followup.send("❌ Não é possível conceder pontos a bots.", ephemeral=True)
             return
 
-        try:
+            avatar_url = str(membro.display_avatar.url) if hasattr(membro, 'display_avatar') else None
             if self.points_manager:
                 await self.points_manager.add_points(
                     membro.id,
@@ -55,10 +55,11 @@ class StatsCommands(app_commands.Group):
                     interaction.guild.id,
                     membro.name,
                     membro.discriminator,
-                    membro.bot
+                    membro.bot,
+                    avatar_url=avatar_url
                 )
             else:
-                await self.db.upsert_user(membro.id, membro.name, membro.discriminator, membro.bot)
+                await self.db.upsert_user(membro.id, membro.name, membro.discriminator, membro.bot, avatar_url=avatar_url)
                 await self.db.add_interaction_point(membro.id, pontos, "manual_reward", interaction.guild.id)
 
             total = await self.db.get_user_current_total_points(membro.id, interaction.guild.id)

@@ -1266,15 +1266,22 @@ class BracketBuilder:
         is_3v3 = any(k in fmt_raw for k in ["3v3", "3x3", "trio", "trios"])
         team_size = 2 if is_2v2 else (3 if is_3v3 else 1)
 
-        max_participants = int(tournament.get("max_participants") or 16)
-        num_teams_target = max(2, max_participants // team_size)
-
-        if num_teams_target <= 2:
-            bracket_mode = 2
-        elif num_teams_target <= 4:
-            bracket_mode = 4
+        if matches and len(matches) > 0:
+            if len(matches) == 1:
+                bracket_mode = 2
+            elif len(matches) <= 3:
+                bracket_mode = 4
+            else:
+                bracket_mode = 8
         else:
-            bracket_mode = 8
+            max_participants = int(tournament.get("max_participants") or 16)
+            num_teams_target = max(2, max_participants // team_size)
+            if num_teams_target <= 2:
+                bracket_mode = 2
+            elif num_teams_target <= 4:
+                bracket_mode = 4
+            else:
+                bracket_mode = 8
 
         # Agrupa e carrega avatares em base64 data URI
         teams_data = []
@@ -1321,4 +1328,570 @@ class BracketBuilder:
         buffer = BytesIO(screenshot_bytes)
         buffer.seek(0)
         return buffer
+
+
+class LeagueTableBuilder:
+    """
+    Gerador visual de Tabela de Classificação de Liga / Pontos Corridos em alta fidelidade (1920x1080)
+    utilizando HTML5/CSS3 modernos (Glassmorphism, Cyberpunk Neons, Gradients e Tipografia Esports)
+    renderizados via Playwright.
+    """
+
+    async def _get_avatar_data_uri(self, member: Optional[discord.Member], user_data: dict) -> str:
+        """Obtém o avatar do membro em base64 data URI ou fallback SVG."""
+        import base64
+        try:
+            if member:
+                avatar_asset = member.display_avatar.with_size(128)
+                avatar_bytes = await avatar_asset.read()
+                b64 = base64.b64encode(avatar_bytes).decode("utf-8")
+                return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+
+        name = user_data.get("username") or (member.display_name if member else "P")
+        initial = name[0].upper() if name else "?"
+        svg = f"""<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'>
+            <defs>
+                <linearGradient id='grad' x1='0%' y1='0%' x2='100%' y2='100%'>
+                    <stop offset='0%' stop-color='#00f0ff'/>
+                    <stop offset='100%' stop-color='#b026ff'/>
+                </linearGradient>
+            </defs>
+            <circle cx='40' cy='40' r='38' fill='#151c2e' stroke='url(#grad)' stroke-width='3'/>
+            <text x='40' y='48' font-family='sans-serif' font-size='28' font-weight='bold' fill='#ffffff' text-anchor='middle'>{initial}</text>
+        </svg>"""
+        b64_svg = base64.b64encode(svg.encode("utf-8")).decode("utf-8")
+        return f"data:image/svg+xml;base64,{b64_svg}"
+
+    async def _get_guild_icon_data_uri(self, guild: discord.Guild) -> Optional[str]:
+        import base64
+        if not guild.icon:
+            return None
+        try:
+            icon_asset = guild.icon.with_size(128)
+            icon_bytes = await icon_asset.read()
+            b64 = base64.b64encode(icon_bytes).decode("utf-8")
+            return f"data:image/png;base64,{b64}"
+        except Exception:
+            return None
+
+    def _build_html_template(
+        self,
+        tournament: dict,
+        standings: List[dict],
+        guild_icon_uri: Optional[str],
+        matches: Optional[List[dict]] = None
+    ) -> str:
+        title = str(tournament.get("name", "LIGA OFICIAL")).upper()
+        game = str(tournament.get("game_name", "Geral")).upper()
+        fmt_raw = str(tournament.get("format", "1v1")).upper()
+        prize = str(tournament.get("prize") or "Glória e Pontos")
+        status = tournament.get("status", "open")
+
+        if status == "completed":
+            status_text = "LIGA CONCLUÍDA"
+            status_class = "status-completed"
+        elif tournament.get("is_shuffled"):
+            status_text = "RODADAS EM ANDAMENTO"
+            status_class = "status-official"
+        else:
+            status_text = "INSCRIÇÕES ABERTAS"
+            status_class = "status-open"
+
+        # Constrói linhas da tabela
+        rows_html = []
+        for s in standings:
+            rank = s.get("rank", 1)
+            rank_class = "rank-gold" if rank == 1 else ("rank-silver" if rank == 2 else ("rank-bronze" if rank == 3 else "rank-normal"))
+            medal_badge = "🥇" if rank == 1 else ("🥈" if rank == 2 else ("🥉" if rank == 3 else f"{rank:02d}"))
+
+            # Avatares dos membros da equipe
+            avatars_html = []
+            for m in s.get("members", []):
+                av = m.get("avatar_uri")
+                if av:
+                    avatars_html.append(f'<img class="row-avatar" src="{av}" alt="" />')
+                else:
+                    avatars_html.append('<div class="avatar-ph">?</div>')
+            avatars_str = f'<div class="avatars-group">{"".join(avatars_html)}</div>'
+
+            name_str = s.get("team_name", "Equipe")
+            if len(name_str) > 22:
+                name_str = name_str[:20] + "..."
+
+            pts = s.get("points", 0)
+            j = s.get("played", 0)
+            v = s.get("won", 0)
+            e = s.get("drawn", 0)
+            d = s.get("lost", 0)
+            gp = s.get("goals_for", 0)
+            gc = s.get("goals_against", 0)
+            sg = s.get("goal_diff", 0)
+            sg_str = f"+{sg}" if sg > 0 else str(sg)
+            sg_class = "diff-pos" if sg > 0 else ("diff-neg" if sg < 0 else "diff-zero")
+            win_rate = s.get("win_rate", 0.0)
+
+            row = f"""
+            <tr class="table-row {rank_class}">
+                <td class="col-rank">
+                    <span class="rank-badge">{medal_badge}</span>
+                </td>
+                <td class="col-team">
+                    <div class="team-cell">
+                        {avatars_str}
+                        <span class="team-name">{name_str}</span>
+                    </div>
+                </td>
+                <td class="col-pts"><span class="pts-pill">{pts}</span></td>
+                <td class="col-num">{j}</td>
+                <td class="col-num win-text">{v}</td>
+                <td class="col-num draw-text">{e}</td>
+                <td class="col-num loss-text">{d}</td>
+                <td class="col-num">{gp}</td>
+                <td class="col-num">{gc}</td>
+                <td class="col-num {sg_class}">{sg_str}</td>
+                <td class="col-rate">{win_rate:.0f}%</td>
+            </tr>
+            """
+            rows_html.append(row)
+
+        table_rows_str = "\n".join(rows_html) if rows_html else """
+        <tr><td colspan="11" style="text-align:center; padding: 40px; color:#94a3b8; font-size:22px;">Nenhum participante registrado ainda</td></tr>
+        """
+
+        # Resumo de partidas concluídas vs totais
+        total_matches = len(matches) if matches else 0
+        done_matches = sum(1 for m in (matches or []) if m.get("status") == "completed")
+        progress_pct = round((done_matches / total_matches * 100)) if total_matches > 0 else 0
+
+        return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }}
+        body {{
+            width: 1920px;
+            height: 1080px;
+            background: #07090e;
+            background-image: 
+                radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.12) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(176, 38, 255, 0.12) 0%, transparent 40%),
+                radial-gradient(circle at 50% 50%, rgba(15, 23, 42, 0.9) 0%, #06080d 100%);
+            font-family: 'Rajdhani', sans-serif;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            padding: 40px 60px;
+            overflow: hidden;
+            position: relative;
+        }}
+
+        /* Glow Elements */
+        body::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #00f0ff, #b026ff, #ffd700, #00f0ff);
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.8);
+        }}
+
+        /* Header */
+        .header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            margin-bottom: 28px;
+        }}
+        .header-left {{
+            display: flex;
+            align-items: center;
+            gap: 24px;
+        }}
+        .guild-logo {{
+            width: 80px;
+            height: 80px;
+            border-radius: 16px;
+            border: 2px solid rgba(0, 240, 255, 0.6);
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.3);
+            object-fit: cover;
+        }}
+        .header-title-box {{
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }}
+        .header-title {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 34px;
+            font-weight: 900;
+            letter-spacing: 2px;
+            color: #ffffff;
+            text-shadow: 0 0 25px rgba(0, 240, 255, 0.4);
+        }}
+        .header-meta {{
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }}
+        .meta-pill {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            padding: 4px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            border-radius: 8px;
+            color: #00f0ff;
+        }}
+        .meta-pill.prize {{
+            border-color: rgba(255, 215, 0, 0.4);
+            color: #ffd700;
+        }}
+        .status-badge {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            padding: 10px 22px;
+            border-radius: 30px;
+            background: rgba(14, 20, 36, 0.9);
+            border: 2px solid #22c55e;
+            color: #22c55e;
+            box-shadow: 0 0 25px rgba(34, 197, 94, 0.3);
+        }}
+        .status-badge.status-official {{
+            border-color: #00f0ff;
+            color: #00f0ff;
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.4);
+        }}
+        .status-badge.status-completed {{
+            border-color: #ffd700;
+            color: #ffd700;
+            box-shadow: 0 0 25px rgba(255, 215, 0, 0.4);
+        }}
+
+        /* Main Container */
+        .content-container {{
+            flex: 1;
+            display: flex;
+            gap: 30px;
+            align-items: flex-start;
+        }}
+
+        /* Table Card */
+        .table-card {{
+            flex: 3;
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            border-radius: 20px;
+            padding: 24px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            max-height: 750px;
+            overflow: hidden;
+        }}
+        .standings-table {{
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 10px;
+        }}
+        .standings-table th {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+            color: #94a3b8;
+            padding: 10px 14px;
+            text-align: center;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+        }}
+        .standings-table th.col-team-head {{
+            text-align: left;
+            padding-left: 20px;
+        }}
+        .table-row {{
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.2s ease;
+        }}
+        .table-row td {{
+            padding: 12px 14px;
+            text-align: center;
+            font-size: 20px;
+            font-weight: 700;
+        }}
+        .table-row td:first-child {{
+            border-top-left-radius: 12px;
+            border-bottom-left-radius: 12px;
+        }}
+        .table-row td:last-child {{
+            border-top-right-radius: 12px;
+            border-bottom-right-radius: 12px;
+        }}
+
+        /* Rank Highlights */
+        .table-row.rank-gold {{
+            background: linear-gradient(90deg, rgba(255, 215, 0, 0.15), rgba(30, 41, 59, 0.8));
+            border-left: 4px solid #ffd700;
+        }}
+        .table-row.rank-silver {{
+            background: linear-gradient(90deg, rgba(192, 192, 192, 0.12), rgba(30, 41, 59, 0.8));
+            border-left: 4px solid #c0c0c0;
+        }}
+        .table-row.rank-bronze {{
+            background: linear-gradient(90deg, rgba(205, 127, 50, 0.12), rgba(30, 41, 59, 0.8));
+            border-left: 4px solid #cd7f32;
+        }}
+
+        .rank-badge {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 20px;
+            font-weight: 900;
+        }}
+        .team-cell {{
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            text-align: left;
+            padding-left: 10px;
+        }}
+        .avatars-group {{
+            display: flex;
+            align-items: center;
+        }}
+        .row-avatar {{
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            border: 2px solid #00f0ff;
+            object-fit: cover;
+            margin-left: -10px;
+        }}
+        .row-avatar:first-child {{
+            margin-left: 0;
+        }}
+        .team-name {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 22px;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+        }}
+        .pts-pill {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 20px;
+            font-weight: 900;
+            color: #00f0ff;
+            padding: 4px 14px;
+            background: rgba(0, 240, 255, 0.12);
+            border-radius: 8px;
+            border: 1px solid rgba(0, 240, 255, 0.3);
+        }}
+        .table-row.rank-gold .pts-pill {{
+            color: #ffd700;
+            background: rgba(255, 215, 0, 0.15);
+            border-color: rgba(255, 215, 0, 0.4);
+        }}
+        .win-text {{ color: #22c55e; }}
+        .draw-text {{ color: #f59e0b; }}
+        .loss-text {{ color: #ef4444; }}
+        .diff-pos {{ color: #22c55e; }}
+        .diff-neg {{ color: #ef4444; }}
+        .diff-zero {{ color: #94a3b8; }}
+        .col-rate {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 16px;
+            color: #94a3b8;
+        }}
+
+        /* Sidebar Stats */
+        .sidebar-card {{
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }}
+        .stat-box {{
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 18px;
+            padding: 22px;
+            backdrop-filter: blur(16px);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }}
+        .stat-label {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            color: #94a3b8;
+        }}
+        .stat-value {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 32px;
+            font-weight: 900;
+            color: #00f0ff;
+        }}
+        .progress-bar-bg {{
+            width: 100%;
+            height: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 6px;
+        }}
+        .progress-bar-fill {{
+            height: 100%;
+            width: {progress_pct}%;
+            background: linear-gradient(90deg, #00f0ff, #b026ff);
+            border-radius: 5px;
+        }}
+
+        /* Footer */
+        .footer {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 16px;
+            color: #64748b;
+            font-weight: 600;
+        }}
+        .footer-tag {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            letter-spacing: 2px;
+            color: #00f0ff;
+        }}
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-left">
+            {f'<img class="guild-logo" src="{guild_icon_uri}" alt="" />' if guild_icon_uri else ''}
+            <div class="header-title-box">
+                <h1 class="header-title">{title}</h1>
+                <div class="header-meta">
+                    <span class="meta-pill">🎮 JOGO: {game}</span>
+                    <span class="meta-pill">⚡ FORMATO: PONTOS CORRIDOS ({fmt_raw})</span>
+                    <span class="meta-pill prize">🎁 PRÊMIO: {prize}</span>
+                </div>
+            </div>
+        </div>
+        <div class="status-badge {status_class}">{status_text}</div>
+    </header>
+
+    <main class="content-container">
+        <div class="table-card">
+            <table class="standings-table">
+                <thead>
+                    <tr>
+                        <th style="width: 70px;">#</th>
+                        <th class="col-team-head">EQUIPE / PARTICIPANTE</th>
+                        <th style="width: 90px;">PTS</th>
+                        <th style="width: 60px;">J</th>
+                        <th style="width: 60px;">V</th>
+                        <th style="width: 60px;">E</th>
+                        <th style="width: 60px;">D</th>
+                        <th style="width: 65px;">GP</th>
+                        <th style="width: 65px;">GC</th>
+                        <th style="width: 75px;">SG</th>
+                        <th style="width: 85px;">APROV</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {table_rows_str}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="sidebar-card">
+            <div class="stat-box">
+                <span class="stat-label">PROGRESSO DO TORNEIO</span>
+                <span class="stat-value">{done_matches} / {total_matches} <span style="font-size:16px; color:#94a3b8;">JOGOS</span></span>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill"></div>
+                </div>
+            </div>
+            <div class="stat-box">
+                <span class="stat-label">LÍDER ATUAL</span>
+                <span class="stat-value" style="font-size:24px; color:#ffd700;">
+                    {standings[0].get("team_name") if standings else "A definir"}
+                </span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-label">TOTAL DE PARTICIPANTES</span>
+                <span class="stat-value">{len(standings)} <span style="font-size:16px; color:#94a3b8;">TIMES</span></span>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div>⚡ Sistema BMIA Esports • Liga de Pontos Corridos • Use <strong>/torneio rodadas</strong> para ver os jogos</div>
+        <div class="footer-tag">BDP COMMUNITY • 2026</div>
+    </footer>
+</body>
+</html>"""
+
+    async def generate_table(
+        self,
+        guild: discord.Guild,
+        tournament: dict,
+        standings: List[dict],
+        matches: Optional[List[dict]] = None
+    ) -> BytesIO:
+        """Renderiza a tabela de classificação em imagem 1920x1080 com Playwright."""
+        from playwright.async_api import async_playwright
+
+        # Enriquece os dados de avatares para cada participante na classificação
+        for s in standings:
+            for m_data in s.get("members", []):
+                uid = m_data.get("user_id", 0)
+                m = guild.get_member(uid)
+                m_data["avatar_uri"] = await self._get_avatar_data_uri(m, m_data)
+
+        guild_icon_uri = await self._get_guild_icon_data_uri(guild)
+
+        html_code = self._build_html_template(
+            tournament=tournament,
+            standings=standings,
+            guild_icon_uri=guild_icon_uri,
+            matches=matches
+        )
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            page = await browser.new_page(viewport={"width": 1920, "height": 1080})
+            await page.set_content(html_code, wait_until="networkidle")
+            screenshot_bytes = await page.screenshot(type="png", full_page=False)
+            await browser.close()
+
+        buffer = BytesIO(screenshot_bytes)
+        buffer.seek(0)
+        return buffer
+
 

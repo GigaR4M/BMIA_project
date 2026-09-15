@@ -56,16 +56,18 @@ class Database:
                     username TEXT NOT NULL,
                     discriminator TEXT,
                     is_bot BOOLEAN DEFAULT FALSE,
+                    avatar_url TEXT,
                     first_seen TIMESTAMP DEFAULT NOW(),
                     last_seen TIMESTAMP DEFAULT NOW()
                 )
             """)
             
-            # Adiciona coluna is_bot se não existir (migração manual)
+            # Adiciona colunas se não existirem (migração manual)
             try:
                 await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot BOOLEAN DEFAULT FALSE")
+                await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT")
             except Exception as e:
-                logger.warning(f"⚠️ Erro ao tentar adicionar coluna is_bot: {e}")
+                logger.warning(f"⚠️ Erro ao tentar adicionar colunas na tabela users: {e}")
 
             
             # Tabela de canais
@@ -348,6 +350,9 @@ class Database:
                 await conn.execute("ALTER TABLE tournament_participants ADD COLUMN IF NOT EXISTS seed_number INTEGER")
                 await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS is_shuffled BOOLEAN DEFAULT FALSE")
                 await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS final_score TEXT")
+                await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS tournament_type TEXT DEFAULT 'bracket'")
+                await conn.execute("ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1")
+                await conn.execute("ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS is_draw BOOLEAN DEFAULT FALSE")
             except Exception as e:
                 logger.debug(f"Colunas de torneio já existentes ou migração ignorada: {e}")
 
@@ -469,23 +474,179 @@ class Database:
             except Exception as e:
                 logger.warning(f"⚠️ Erro ao habilitar RLS nas tabelas: {e}")
 
+            # ==================== RPC FUNCTIONS FOR DASHBOARD ====================
+            try:
+                await conn.execute("""
+                    CREATE OR REPLACE FUNCTION get_tournaments_list(p_guild_id BIGINT, p_limit INT DEFAULT 50)
+                    RETURNS TABLE (
+                        id INT,
+                        guild_id TEXT,
+                        name TEXT,
+                        game_name TEXT,
+                        format TEXT,
+                        max_participants INT,
+                        prize TEXT,
+                        start_time TIMESTAMP,
+                        status TEXT,
+                        winner_id TEXT,
+                        winner_name TEXT,
+                        winner_avatar TEXT,
+                        second_place_id TEXT,
+                        second_place_name TEXT,
+                        second_place_avatar TEXT,
+                        third_place_id TEXT,
+                        third_place_name TEXT,
+                        third_place_avatar TEXT,
+                        final_score TEXT,
+                        created_at TIMESTAMP,
+                        participant_count INT,
+                        participants JSONB
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            t.id,
+                            t.guild_id::TEXT,
+                            t.name,
+                            t.game_name,
+                            t.format,
+                            t.max_participants,
+                            t.prize,
+                            t.start_time::TIMESTAMP,
+                            t.status,
+                            t.winner_id::TEXT,
+                            COALESCE(uw.username, 'Jogador')::TEXT,
+                            uw.avatar_url::TEXT,
+                            t.second_place_id::TEXT,
+                            COALESCE(u2.username, 'Jogador')::TEXT,
+                            u2.avatar_url::TEXT,
+                            t.third_place_id::TEXT,
+                            COALESCE(u3.username, 'Jogador')::TEXT,
+                            u3.avatar_url::TEXT,
+                            t.final_score,
+                            t.created_at::TIMESTAMP,
+                            COALESCE(p_agg.part_count, 0)::INT AS participant_count,
+                            COALESCE(p_agg.parts_json, '[]'::JSONB) AS participants
+                        FROM tournaments t
+                        LEFT JOIN users uw ON t.winner_id = uw.user_id
+                        LEFT JOIN users u2 ON t.second_place_id = u2.user_id
+                        LEFT JOIN users u3 ON t.third_place_id = u3.user_id
+                        LEFT JOIN LATERAL (
+                            SELECT 
+                                COUNT(*)::INT AS part_count,
+                                COALESCE(
+                                    JSONB_AGG(
+                                        JSONB_BUILD_OBJECT(
+                                            'user_id', tp.user_id::TEXT,
+                                            'username', COALESCE(up.username, 'Jogador'),
+                                            'discriminator', COALESCE(up.discriminator, '0000'),
+                                            'avatar_url', up.avatar_url,
+                                            'status', tp.status,
+                                            'seed_number', tp.seed_number
+                                        ) ORDER BY tp.seed_number NULLS LAST, tp.registered_at ASC
+                                    ),
+                                    '[]'::JSONB
+                                ) AS parts_json
+                            FROM tournament_participants tp
+                            LEFT JOIN users up ON tp.user_id = up.user_id
+                            WHERE tp.tournament_id = t.id
+                        ) p_agg ON TRUE
+                        WHERE t.guild_id = p_guild_id
+                        ORDER BY t.created_at DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    CREATE OR REPLACE FUNCTION get_events_list(p_guild_id BIGINT, p_limit INT DEFAULT 50)
+                    RETURNS TABLE (
+                        event_id TEXT,
+                        guild_id TEXT,
+                        name TEXT,
+                        description TEXT,
+                        start_time TIMESTAMPTZ,
+                        end_time TIMESTAMPTZ,
+                        location TEXT,
+                        entity_type TEXT,
+                        status TEXT,
+                        creator_id TEXT,
+                        creator_name TEXT,
+                        creator_avatar TEXT,
+                        created_at TIMESTAMP,
+                        participant_count INT,
+                        interested_count INT,
+                        attended_count INT,
+                        participants JSONB
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            se.event_id::TEXT,
+                            se.guild_id::TEXT,
+                            se.name,
+                            se.description,
+                            se.start_time,
+                            se.end_time,
+                            se.location,
+                            se.entity_type,
+                            se.status,
+                            se.creator_id::TEXT,
+                            COALESCE(uc.username, 'Organizador')::TEXT,
+                            uc.avatar_url::TEXT,
+                            se.created_at::TIMESTAMP,
+                            COALESCE(ep_agg.total_count, 0)::INT AS participant_count,
+                            COALESCE(ep_agg.interested_count, 0)::INT AS interested_count,
+                            COALESCE(ep_agg.attended_count, 0)::INT AS attended_count,
+                            COALESCE(ep_agg.parts_json, '[]'::JSONB) AS participants
+                        FROM scheduled_events se
+                        LEFT JOIN users uc ON se.creator_id = uc.user_id
+                        LEFT JOIN LATERAL (
+                            SELECT 
+                                COUNT(*)::INT AS total_count,
+                                COUNT(*) FILTER (WHERE ep.status = 'interested')::INT AS interested_count,
+                                COUNT(*) FILTER (WHERE ep.status = 'attended')::INT AS attended_count,
+                                COALESCE(
+                                    JSONB_AGG(
+                                        JSONB_BUILD_OBJECT(
+                                            'user_id', ep.user_id::TEXT,
+                                            'username', COALESCE(up.username, 'Membro'),
+                                            'discriminator', COALESCE(up.discriminator, '0000'),
+                                            'avatar_url', up.avatar_url,
+                                            'status', ep.status
+                                        ) ORDER BY ep.joined_at ASC
+                                    ),
+                                    '[]'::JSONB
+                                ) AS parts_json
+                            FROM event_participants ep
+                            LEFT JOIN users up ON ep.user_id = up.user_id
+                            WHERE ep.event_id = se.event_id
+                        ) ep_agg ON TRUE
+                        WHERE se.guild_id = p_guild_id
+                        ORDER BY se.start_time DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+                """)
+            except Exception as e:
+                logger.warning(f"⚠️ Erro ao criar funções RPC para o dashboard: {e}")
+
             logger.info("✅ Schema do banco de dados inicializado")
     
     # ==================== INSERÇÃO DE DADOS ====================
     
-    async def upsert_user(self, user_id: int, username: str, discriminator: str = None, is_bot: bool = False):
+    async def upsert_user(self, user_id: int, username: str, discriminator: str = None, is_bot: bool = False, avatar_url: str = None):
         """Insere ou atualiza um usuário."""
         async with self.pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO users (user_id, username, discriminator, is_bot, last_seen)
-                VALUES ($1, $2, $3, $4, NOW())
+                INSERT INTO users (user_id, username, discriminator, is_bot, avatar_url, last_seen)
+                VALUES ($1, $2, $3, $4, $5, NOW())
                 ON CONFLICT (user_id) 
                 DO UPDATE SET 
                     username = CASE WHEN EXCLUDED.username != 'Unknown' THEN EXCLUDED.username ELSE users.username END,
                     discriminator = CASE WHEN EXCLUDED.discriminator != '0000' THEN EXCLUDED.discriminator ELSE users.discriminator END,
                     is_bot = EXCLUDED.is_bot,
+                    avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
                     last_seen = NOW()
-            """, user_id, username, discriminator, is_bot)
+            """, user_id, username, discriminator, is_bot, avatar_url)
             
     async def add_interaction_point(self, user_id: int, points: int, interaction_type: str, guild_id: int):
         """Adiciona pontos de interação para um usuário."""
@@ -1997,18 +2158,19 @@ class Database:
         start_time: Optional[datetime] = None,
         channel_id: Optional[int] = None,
         message_id: Optional[int] = None,
-        created_by: Optional[int] = None
+        created_by: Optional[int] = None,
+        tournament_type: str = "bracket"
     ) -> int:
         """Cria um novo torneio e retorna o ID."""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
                 INSERT INTO tournaments (
                     guild_id, name, game_name, format, max_participants,
-                    prize, start_time, channel_id, message_id, created_by, status
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open')
+                    prize, start_time, channel_id, message_id, created_by, status, tournament_type
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11)
                 RETURNING id
             """, guild_id, name, game_name, format, max_participants,
-               prize, start_time, channel_id, message_id, created_by)
+               prize, start_time, channel_id, message_id, created_by, tournament_type)
             return row["id"]
 
     async def update_tournament_message(self, tournament_id: int, channel_id: int, message_id: int):
@@ -2170,8 +2332,171 @@ class Database:
             # Retorna lista atualizada
             updated = await self.get_tournament_participants(tournament_id)
             fmt_str = tournament.get("format") or "1v1"
-            await self.init_tournament_bracket_matches(tournament_id, fmt_str, updated)
+            t_type = tournament.get("tournament_type") or "bracket"
+            if t_type == "round_robin":
+                await self.init_round_robin_matches(tournament_id, fmt_str, updated)
+            else:
+                await self.init_tournament_bracket_matches(tournament_id, fmt_str, updated)
             return {"success": True, "participants": updated}
+
+    async def init_round_robin_matches(
+        self,
+        tournament_id: int,
+        format_str: str,
+        participants: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Gera e inicializa os confrontos de todas as rodadas no formato Todos Contra Todos (Round-Robin) usando o Algoritmo de Berger."""
+        fmt_raw = str(format_str).lower().strip()
+        is_2v2 = any(k in fmt_raw for k in ["2v2", "2x2", "dupla", "duplas"])
+        is_3v3 = any(k in fmt_raw for k in ["3v3", "3x3", "trio", "trios"])
+        team_size = 2 if is_2v2 else (3 if is_3v3 else 1)
+
+        # Agrupa os participantes em equipes
+        teams = []
+        for i in range(0, len(participants), team_size):
+            chunk = participants[i:i + team_size]
+            teams.append([p["user_id"] for p in chunk])
+
+        team_list = list(teams)
+        if len(team_list) % 2 != 0:
+            team_list.append(None)  # Bye / Folga
+
+        n = len(team_list)
+        rounds_count = n - 1
+        matches_per_round = n // 2
+
+        matches_to_insert = []
+        match_counter = 1
+
+        for r in range(rounds_count):
+            round_num = r + 1
+            for i in range(matches_per_round):
+                t1 = team_list[i]
+                t2 = team_list[n - 1 - i]
+                # Se ambos forem válidos (sem bye)
+                if t1 is not None and t2 is not None:
+                    matches_to_insert.append({
+                        "round_name": f"Rodada {round_num}",
+                        "round_number": round_num,
+                        "match_number": match_counter,
+                        "team_a_ids": t1,
+                        "team_b_ids": t2,
+                        "next_match_number": None,
+                        "next_match_slot": None
+                    })
+                    match_counter += 1
+
+            # Rotaciona a lista de equipes mantendo o primeiro fixo
+            team_list = [team_list[0]] + [team_list[-1]] + team_list[1:-1]
+
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM tournament_matches WHERE tournament_id = $1", tournament_id)
+            for m in matches_to_insert:
+                await conn.execute("""
+                    INSERT INTO tournament_matches (
+                        tournament_id, round_name, round_number, match_number,
+                        team_a_ids, team_b_ids, next_match_number, next_match_slot
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """, tournament_id, m["round_name"], m["round_number"], m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"])
+
+        return await self.get_tournament_matches(tournament_id)
+
+    async def get_tournament_standings(self, tournament_id: int) -> List[Dict[str, Any]]:
+        """Calcula e retorna a tabela de classificação de um torneio de pontos corridos."""
+        async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            if not tournament:
+                return []
+
+            participants = await self.get_tournament_participants(tournament_id)
+            fmt_raw = str(tournament.get("format", "1v1")).lower().strip()
+            is_2v2 = any(k in fmt_raw for k in ["2v2", "2x2", "dupla", "duplas"])
+            is_3v3 = any(k in fmt_raw for k in ["3v3", "3x3", "trio", "trios"])
+            team_size = 2 if is_2v2 else (3 if is_3v3 else 1)
+
+            # Agrupa equipes
+            teams = []
+            for i in range(0, len(participants), team_size):
+                chunk = participants[i:i + team_size]
+                teams.append([p["user_id"] for p in chunk])
+
+            user_map = {p["user_id"]: p for p in participants}
+
+            # Inicializa estatísticas para cada equipe
+            table = {}
+            for t in teams:
+                key = tuple(sorted(t))
+                team_users = [user_map.get(uid, {"username": f"User {uid}", "user_id": uid}) for uid in t]
+                table[key] = {
+                    "team_ids": t,
+                    "members": team_users,
+                    "team_name": " & ".join(u.get("username") or f"<@{u.get('user_id')}>" for u in team_users),
+                    "played": 0,
+                    "won": 0,
+                    "drawn": 0,
+                    "lost": 0,
+                    "goals_for": 0,
+                    "goals_against": 0,
+                    "goal_diff": 0,
+                    "points": 0,
+                    "win_rate": 0.0
+                }
+
+            matches = await self.get_tournament_matches(tournament_id)
+            for m in matches:
+                if m["status"] == "completed":
+                    ta_key = tuple(sorted(m.get("team_a_ids") or []))
+                    tb_key = tuple(sorted(m.get("team_b_ids") or []))
+                    sa = m["score_a"] or 0
+                    sb = m["score_b"] or 0
+
+                    if ta_key in table:
+                        table[ta_key]["played"] += 1
+                        table[ta_key]["goals_for"] += sa
+                        table[ta_key]["goals_against"] += sb
+
+                    if tb_key in table:
+                        table[tb_key]["played"] += 1
+                        table[tb_key]["goals_for"] += sb
+                        table[tb_key]["goals_against"] += sa
+
+                    if m.get("is_draw") or sa == sb:
+                        if ta_key in table:
+                            table[ta_key]["drawn"] += 1
+                            table[ta_key]["points"] += 1
+                        if tb_key in table:
+                            table[tb_key]["drawn"] += 1
+                            table[tb_key]["points"] += 1
+                    elif sa > sb:
+                        if ta_key in table:
+                            table[ta_key]["won"] += 1
+                            table[ta_key]["points"] += 3
+                        if tb_key in table:
+                            table[tb_key]["lost"] += 1
+                    else:
+                        if tb_key in table:
+                            table[tb_key]["won"] += 1
+                            table[tb_key]["points"] += 3
+                        if ta_key in table:
+                            table[ta_key]["lost"] += 1
+
+            # Calcula SG e Aproveitamento
+            standings = list(table.values())
+            for s in standings:
+                s["goal_diff"] = s["goals_for"] - s["goals_against"]
+                max_pts = s["played"] * 3
+                s["win_rate"] = round((s["points"] / max_pts) * 100, 1) if max_pts > 0 else 0.0
+
+            # Ordena por Pontos DESC, Vitórias DESC, SG DESC, GP DESC
+            standings.sort(
+                key=lambda x: (x["points"], x["won"], x["goal_diff"], x["goals_for"]),
+                reverse=True
+            )
+
+            for idx, s in enumerate(standings, 1):
+                s["rank"] = idx
+
+            return standings
 
     async def init_tournament_bracket_matches(
         self,
@@ -2206,6 +2531,7 @@ class Database:
             team_b = teams[1] if len(teams) > 1 else []
             matches_to_insert.append({
                 "round_name": "final",
+                "round_number": 1,
                 "match_number": 1,
                 "team_a_ids": team_a,
                 "team_b_ids": team_b,
@@ -2216,6 +2542,7 @@ class Database:
             # Semifinal 1 (Jogo 1) -> Final (Jogo 3, Slot A)
             matches_to_insert.append({
                 "round_name": "semifinal",
+                "round_number": 1,
                 "match_number": 1,
                 "team_a_ids": teams[0] if len(teams) > 0 else [],
                 "team_b_ids": teams[1] if len(teams) > 1 else [],
@@ -2225,6 +2552,7 @@ class Database:
             # Semifinal 2 (Jogo 2) -> Final (Jogo 3, Slot B)
             matches_to_insert.append({
                 "round_name": "semifinal",
+                "round_number": 1,
                 "match_number": 2,
                 "team_a_ids": teams[2] if len(teams) > 2 else [],
                 "team_b_ids": teams[3] if len(teams) > 3 else [],
@@ -2234,6 +2562,7 @@ class Database:
             # Final (Jogo 3)
             matches_to_insert.append({
                 "round_name": "final",
+                "round_number": 2,
                 "match_number": 3,
                 "team_a_ids": [],
                 "team_b_ids": [],
@@ -2244,6 +2573,7 @@ class Database:
             # 8 Equipes: Quartas 1..4, Semis 5..6, Final 7
             matches_to_insert.append({
                 "round_name": "quartas",
+                "round_number": 1,
                 "match_number": 1,
                 "team_a_ids": teams[0] if len(teams) > 0 else [],
                 "team_b_ids": teams[1] if len(teams) > 1 else [],
@@ -2252,6 +2582,7 @@ class Database:
             })
             matches_to_insert.append({
                 "round_name": "quartas",
+                "round_number": 1,
                 "match_number": 2,
                 "team_a_ids": teams[2] if len(teams) > 2 else [],
                 "team_b_ids": teams[3] if len(teams) > 3 else [],
@@ -2260,6 +2591,7 @@ class Database:
             })
             matches_to_insert.append({
                 "round_name": "quartas",
+                "round_number": 1,
                 "match_number": 3,
                 "team_a_ids": teams[4] if len(teams) > 4 else [],
                 "team_b_ids": teams[5] if len(teams) > 5 else [],
@@ -2268,6 +2600,7 @@ class Database:
             })
             matches_to_insert.append({
                 "round_name": "quartas",
+                "round_number": 1,
                 "match_number": 4,
                 "team_a_ids": teams[6] if len(teams) > 6 else [],
                 "team_b_ids": teams[7] if len(teams) > 7 else [],
@@ -2276,6 +2609,7 @@ class Database:
             })
             matches_to_insert.append({
                 "round_name": "semifinal",
+                "round_number": 2,
                 "match_number": 5,
                 "team_a_ids": [],
                 "team_b_ids": [],
@@ -2284,6 +2618,7 @@ class Database:
             })
             matches_to_insert.append({
                 "round_name": "semifinal",
+                "round_number": 2,
                 "match_number": 6,
                 "team_a_ids": [],
                 "team_b_ids": [],
@@ -2292,6 +2627,7 @@ class Database:
             })
             matches_to_insert.append({
                 "round_name": "final",
+                "round_number": 3,
                 "match_number": 7,
                 "team_a_ids": [],
                 "team_b_ids": [],
@@ -2304,10 +2640,10 @@ class Database:
             for m in matches_to_insert:
                 await conn.execute("""
                     INSERT INTO tournament_matches (
-                        tournament_id, round_name, match_number,
+                        tournament_id, round_name, round_number, match_number,
                         team_a_ids, team_b_ids, next_match_number, next_match_slot
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-                """, tournament_id, m["round_name"], m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"])
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """, tournament_id, m["round_name"], m.get("round_number", 1), m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"])
 
         return await self.get_tournament_matches(tournament_id)
 
@@ -2327,9 +2663,9 @@ class Database:
         match_number: int,
         score_a: int,
         score_b: int,
-        winner_team_ids: List[int]
+        winner_team_ids: Optional[List[int]] = None
     ) -> Dict[str, Any]:
-        """Registra o placar de uma partida e avança o vencedor para a próxima fase."""
+        """Registra o placar de uma partida e avança o vencedor para a próxima fase (ou pontua na liga)."""
         async with self.pool.acquire() as conn:
             match = await conn.fetchrow("""
                 SELECT * FROM tournament_matches
@@ -2339,19 +2675,33 @@ class Database:
             if not match:
                 return {"success": False, "reason": f"Partida #{match_number} não encontrada para este torneio."}
 
+            tourney = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            t_type = tourney["tournament_type"] if tourney else "bracket"
+
+            is_draw = (score_a == score_b)
+            if is_draw and t_type != "round_robin":
+                return {"success": False, "reason": "Em torneios de mata-mata não são permitidos empates. Deve haver um vencedor."}
+
+            if not is_draw and not winner_team_ids:
+                if score_a > score_b:
+                    winner_team_ids = match["team_a_ids"]
+                else:
+                    winner_team_ids = match["team_b_ids"]
+
             await conn.execute("""
                 UPDATE tournament_matches
                 SET score_a = $3,
                     score_b = $4,
                     winner_team_ids = $5,
+                    is_draw = $6,
                     status = 'completed'
                 WHERE tournament_id = $1 AND match_number = $2
-            """, tournament_id, match_number, score_a, score_b, winner_team_ids)
+            """, tournament_id, match_number, score_a, score_b, winner_team_ids if not is_draw else None, is_draw)
 
-            # Avança o vencedor para a próxima partida se houver
+            # Avança o vencedor para a próxima partida se houver (mata-mata)
             next_num = match["next_match_number"]
             next_slot = match["next_match_slot"]
-            if next_num and next_slot:
+            if next_num and next_slot and not is_draw:
                 if next_slot == "A":
                     await conn.execute("""
                         UPDATE tournament_matches
@@ -2373,10 +2723,17 @@ class Database:
                     WHERE id = $1
                 """, tournament_id, f"{score_a} x {score_b}")
 
+            # Verifica se todas as partidas foram concluídas
+            all_matches = await conn.fetch("SELECT status FROM tournament_matches WHERE tournament_id = $1", tournament_id)
+            all_done = len(all_matches) > 0 and all(m["status"] == "completed" for m in all_matches)
+
             return {
                 "success": True,
                 "match": dict(match),
+                "is_draw": is_draw,
                 "is_final": (match["round_name"] == "final"),
+                "tournament_type": t_type,
+                "all_completed": all_done,
                 "next_match_number": next_num
             }
 

@@ -90,7 +90,8 @@ class TestTournamentCommands:
             format="1v1",
             max_participants=16,
             prize="500 pontos",
-            created_by=999
+            created_by=999,
+            tournament_type="bracket"
         )
         mock_db.update_tournament_message.assert_awaited_once_with(1, 555, 777)
 
@@ -353,3 +354,105 @@ class TestTournamentAITools:
         assert res[0]["posicao"] == 1
         assert res[0]["usuario"] == "Pedrinho"
         assert res[0]["titulos"] == 3
+
+
+class TestRoundRobinSystem:
+    @pytest.mark.asyncio
+    async def test_init_round_robin_matches_berger_4_teams(self):
+        """Testa o algoritmo Berger para 4 equipes (deve gerar 3 rodadas, 6 jogos)."""
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        participants = [{"user_id": 1}, {"user_id": 2}, {"user_id": 3}, {"user_id": 4}]
+        matches = await db.init_round_robin_matches(1, "1v1", participants)
+        assert mock_conn.execute.await_count == 7  # 1 DELETE + 6 INSERTs
+
+    @pytest.mark.asyncio
+    async def test_init_round_robin_matches_berger_3_teams_odd(self):
+        """Testa o algoritmo Berger para 3 equipes (número ímpar com bye, deve gerar 3 rodadas e 3 jogos)."""
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        participants = [{"user_id": 1}, {"user_id": 2}, {"user_id": 3}]
+        matches = await db.init_round_robin_matches(1, "1v1", participants)
+        assert mock_conn.execute.await_count == 4  # 1 DELETE + 3 INSERTs
+
+    @pytest.mark.asyncio
+    async def test_get_tournament_standings_calculation(self):
+        """Testa o cálculo da tabela de classificação, saldo de gols, pontuação e ordenação."""
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.fetchrow = AsyncMock(return_value={"id": 1, "format": "1v1"})
+        mock_conn.fetch = AsyncMock()
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        db.get_tournament_participants = AsyncMock(return_value=[
+            {"user_id": 1, "username": "Alpha"},
+            {"user_id": 2, "username": "Beta"},
+            {"user_id": 3, "username": "Gamma"}
+        ])
+
+        db.get_tournament_matches = AsyncMock(return_value=[
+            # Jogo 1: Alpha 3 x 1 Beta (Alpha vence)
+            {"match_number": 1, "team_a_ids": [1], "team_b_ids": [2], "score_a": 3, "score_b": 1, "status": "completed", "is_draw": False},
+            # Jogo 2: Gamma 2 x 2 Alpha (Empate)
+            {"match_number": 2, "team_a_ids": [3], "team_b_ids": [1], "score_a": 2, "score_b": 2, "status": "completed", "is_draw": True},
+            # Jogo 3: Beta 0 x 1 Gamma (Gamma vence)
+            {"match_number": 3, "team_a_ids": [2], "team_b_ids": [3], "score_a": 0, "score_b": 1, "status": "completed", "is_draw": False},
+        ])
+
+        standings = await db.get_tournament_standings(1)
+        assert len(standings) == 3
+
+        # 1º lugar: Alpha ou Gamma (ambos com 4 pts, mas Alpha tem 5 GP e Gamma tem 3 GP)
+        assert standings[0]["points"] == 4
+        assert standings[0]["rank"] == 1
+        assert standings[0]["played"] == 2
+
+        # Beta deve estar em último com 0 pts e 2 derrotas
+        beta_stat = next(s for s in standings if s["team_ids"] == [2])
+        assert beta_stat["points"] == 0
+        assert beta_stat["lost"] == 2
+        assert beta_stat["goal_diff"] == -3
+
+    @pytest.mark.asyncio
+    async def test_league_table_builder(self):
+        """Testa a geração de imagem da tabela de classificação da liga."""
+        from utils.image_generator import LeagueTableBuilder
+        builder = LeagueTableBuilder()
+
+        guild = MagicMock()
+        guild.icon = None
+        guild.get_member.return_value = None
+
+        tournament = {
+            "id": 1,
+            "name": "Liga dos Campeões BMIA",
+            "game_name": "Rocket League",
+            "format": "1v1",
+            "prize": "1000 Pontos",
+            "status": "open",
+            "is_shuffled": True
+        }
+
+        standings = [
+            {"rank": 1, "team_name": "Alpha", "points": 9, "played": 3, "won": 3, "drawn": 0, "lost": 0, "goals_for": 8, "goals_against": 2, "goal_diff": 6, "win_rate": 100.0, "members": [{"user_id": 1, "username": "Alpha"}]},
+            {"rank": 2, "team_name": "Beta", "points": 4, "played": 3, "won": 1, "drawn": 1, "lost": 1, "goals_for": 4, "goals_against": 4, "goal_diff": 0, "win_rate": 44.4, "members": [{"user_id": 2, "username": "Beta"}]},
+        ]
+
+        buf = await builder.generate_table(guild, tournament, standings)
+        assert buf is not None
+        assert buf.getvalue().startswith(b"\x89PNG")
+
