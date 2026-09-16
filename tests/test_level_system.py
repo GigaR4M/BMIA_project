@@ -81,3 +81,28 @@ class TestLevelUpDetection:
         embed = call_kwargs["embed"]
         assert "LEVEL UP" in embed.title
         assert "Nível 2" in embed.description
+
+
+class TestPodiumBuilder:
+    @pytest.mark.asyncio
+    async def test_generate_podium(self):
+        from utils.image_generator import PodiumBuilder
+        
+        guild = MagicMock()
+        guild.name = "Servidor BMIA Esports"
+        guild.icon = None
+        guild.get_member.return_value = None
+
+        top_users = [
+            {"user_id": 1, "username": "GigaR4M", "total_points": 9238},
+            {"user_id": 2, "username": "PlayerTwo", "total_points": 7450},
+            {"user_id": 3, "username": "PlayerThree", "total_points": 5120},
+            {"user_id": 4, "username": "PlayerFour", "total_points": 3800},
+            {"user_id": 5, "username": "PlayerFive", "total_points": 2900},
+        ]
+
+        builder = PodiumBuilder()
+        buf = await builder.generate_podium(guild, top_users, "MARÇO 2026")
+        assert buf is not None
+        assert buf.getbuffer().nbytes > 1000
+

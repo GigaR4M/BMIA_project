@@ -5,202 +5,493 @@ import aiohttp
 from typing import Optional, List, Any
 
 class PodiumBuilder:
-    def __init__(self):
-        # Cores
-        self.BACKGROUND_COLOR = (43, 45, 49) # Discord Dark Mode
-        self.TEXT_COLOR = (255, 255, 255)
-        self.GOLD = (255, 215, 0)
-        self.SILVER = (192, 192, 192)
-        self.BRONZE = (205, 127, 50)
+    """
+    Gerador visual de Pódio e Ranking Periódico em alta fidelidade (1300x850)
+    utilizando HTML5/CSS3 modernos (Glassmorphism, Neon Glows, Gradients e Tipografia Esports)
+    renderizados via Playwright.
+    """
+
+    async def _get_avatar_data_uri(self, member: Optional[discord.Member], user_data: dict) -> str:
+        """Obtém o avatar do membro em base64 data URI ou fallback SVG sofisticado."""
+        import base64
+        try:
+            if member:
+                avatar_asset = member.display_avatar.with_size(128)
+                avatar_bytes = await avatar_asset.read()
+                b64 = base64.b64encode(avatar_bytes).decode("utf-8")
+                return f"data:image/png;base64,{b64}"
+        except Exception:
+            pass
+
+        name = user_data.get("username") or (member.display_name if member else "M")
+        initial = name[0].upper() if name else "?"
+        svg = f"""<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'>
+            <defs>
+                <linearGradient id='grad' x1='0%' y1='0%' x2='100%' y2='100%'>
+                    <stop offset='0%' stop-color='#00f0ff'/>
+                    <stop offset='100%' stop-color='#b026ff'/>
+                </linearGradient>
+            </defs>
+            <circle cx='40' cy='40' r='38' fill='#151c2e' stroke='url(#grad)' stroke-width='3'/>
+            <text x='40' y='48' font-family='sans-serif' font-size='28' font-weight='bold' fill='#ffffff' text-anchor='middle'>{initial}</text>
+        </svg>"""
+        b64_svg = base64.b64encode(svg.encode("utf-8")).decode("utf-8")
+        return f"data:image/svg+xml;base64,{b64_svg}"
+
+    async def _get_guild_icon_data_uri(self, guild: discord.Guild) -> Optional[str]:
+        """Obtém o ícone do servidor em base64 data URI."""
+        import base64
+        if not guild or not guild.icon:
+            return None
+        try:
+            icon_asset = guild.icon.with_size(128)
+            icon_bytes = await icon_asset.read()
+            b64 = base64.b64encode(icon_bytes).decode("utf-8")
+            return f"data:image/png;base64,{b64}"
+        except Exception:
+            return None
+
+    def _build_html_template(
+        self,
+        guild_name: str,
+        guild_icon_uri: Optional[str],
+        top_3_data: list,
+        others_data: list,
+        period_text: Optional[str] = None
+    ) -> str:
+        from utils.level_manager import get_level_from_xp
+
+        period_label = period_text if period_text else "PÓDIO OFICIAL DE INTERAÇÃO"
+
+        # Formata Top 3
+        # Ordem visual do pódio: [2º Lugar, 1º Lugar, 3º Lugar]
+        podium_slots = []
         
+        # Mapeamento para visual: idx 0 = 2º, idx 1 = 1º, idx 2 = 3º
+        slot_configs = [
+            {"rank": 2, "color": "#00f0ff", "border": "rgba(0, 240, 255, 0.5)", "pedestal_h": "130px", "badge": "2º LUGAR", "crown": "🥈", "avatar_size": "95px"},
+            {"rank": 1, "color": "#ffd700", "border": "rgba(255, 215, 0, 0.6)", "pedestal_h": "170px", "badge": "1º LUGAR", "crown": "👑", "avatar_size": "115px"},
+            {"rank": 3, "color": "#b026ff", "border": "rgba(176, 38, 255, 0.5)", "pedestal_h": "100px", "badge": "3º LUGAR", "crown": "🥉", "avatar_size": "85px"}
+        ]
+
+        # Monta dados do pódio
+        for cfg in slot_configs:
+            rank_num = cfg["rank"]
+            # Encontra o usuário do ranking
+            user = None
+            for u in top_3_data:
+                if u.get("rank") == rank_num:
+                    user = u
+                    break
+            
+            if user:
+                total_xp = user.get("total_points", 0)
+                lvl = get_level_from_xp(total_xp)
+                podium_slots.append(f"""
+                <div class="podium-column" style="order: {1 if rank_num == 2 else (2 if rank_num == 1 else 3)};">
+                    <div class="avatar-wrapper">
+                        <div class="crown-badge">{cfg['crown']}</div>
+                        <img class="podium-avatar" src="{user['avatar_uri']}" style="width: {cfg['avatar_size']}; height: {cfg['avatar_size']}; border-color: {cfg['color']}; box-shadow: 0 0 25px {cfg['border']};" alt="{user['name']}" />
+                    </div>
+                    <div class="podium-user-card" style="border-top: 2px solid {cfg['color']};">
+                        <div class="podium-username">{user['name']}</div>
+                        <div class="podium-meta">
+                            <span class="level-tag" style="border-color: {cfg['color']}; color: {cfg['color']};">Nv. {lvl}</span>
+                            <span class="xp-val">{total_xp:,} XP</span>
+                        </div>
+                    </div>
+                    <div class="pedestal" style="height: {cfg['pedestal_h']}; border-color: {cfg['border']}; background: linear-gradient(180deg, {cfg['color']}22 0%, rgba(10, 16, 30, 0.8) 100%);">
+                        <div class="pedestal-rank" style="color: {cfg['color']}; text-shadow: 0 0 15px {cfg['color']};">#{rank_num}</div>
+                    </div>
+                </div>
+                """)
+            else:
+                podium_slots.append(f"""
+                <div class="podium-column empty" style="order: {1 if rank_num == 2 else (2 if rank_num == 1 else 3)};">
+                    <div class="pedestal" style="height: {cfg['pedestal_h']}; border-color: rgba(255,255,255,0.1);">
+                        <div class="pedestal-rank" style="color: rgba(255,255,255,0.2);">#{rank_num}</div>
+                    </div>
+                </div>
+                """)
+
+        # Formata Top 4-10
+        others_html = ""
+        for u in others_data:
+            rank_num = u.get("rank", 4)
+            total_xp = u.get("total_points", 0)
+            lvl = get_level_from_xp(total_xp)
+            others_html += f"""
+            <div class="list-item">
+                <div class="list-rank">#{rank_num}</div>
+                <img class="list-avatar" src="{u['avatar_uri']}" alt="{u['name']}" />
+                <div class="list-name">{u['name']}</div>
+                <div class="list-level">Nv. {lvl}</div>
+                <div class="list-xp">{total_xp:,} <span style="font-size: 11px; color: #94a3b8;">XP</span></div>
+            </div>
+            """
+
+        guild_icon_html = f'<img src="{guild_icon_uri}" class="guild-icon" alt="Guild Icon" />' if guild_icon_uri else '<div class="guild-icon placeholder">⚔️</div>'
+
+        return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Pódio Oficial</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }}
+        body {{
+            width: 1300px;
+            height: 850px;
+            background: transparent;
+            font-family: 'Rajdhani', sans-serif;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }}
+        .card-container {{
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #070a14 0%, #0d1527 50%, #080c18 100%);
+            border: 1.5px solid rgba(0, 240, 255, 0.35);
+            border-radius: 24px;
+            padding: 28px 36px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            position: relative;
+            box-shadow: inset 0 0 50px rgba(0, 240, 255, 0.05);
+        }}
+        .card-container::before {{
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 15%;
+            right: 15%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00f0ff, #ffd700, #b026ff, transparent);
+            box-shadow: 0 0 20px #00f0ff;
+        }}
+
+        /* Header */
+        .header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }}
+        .guild-info {{
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }}
+        .guild-icon {{
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            border: 2px solid #00f0ff;
+            object-fit: cover;
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.4);
+        }}
+        .guild-icon.placeholder {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1e293b;
+            font-size: 24px;
+        }}
+        .header-titles h1 {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 22px;
+            font-weight: 900;
+            color: #ffffff;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }}
+        .header-titles p {{
+            font-size: 15px;
+            color: #94a3b8;
+            font-weight: 600;
+        }}
+        .period-badge {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            padding: 6px 16px;
+            background: rgba(0, 240, 255, 0.08);
+            border: 1.5px solid rgba(0, 240, 255, 0.4);
+            border-radius: 12px;
+            color: #00f0ff;
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+        }}
+
+        /* Main Content Grid */
+        .content-area {{
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 28px;
+            align-items: center;
+        }}
+
+        /* Podium Stage */
+        .podium-stage {{
+            height: 100%;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 16px;
+            padding-bottom: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 18px;
+            padding: 20px 16px;
+        }}
+        .podium-column {{
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }}
+        .avatar-wrapper {{
+            position: relative;
+            display: flex;
+            justify-content: center;
+        }}
+        .crown-badge {{
+            position: absolute;
+            top: -16px;
+            font-size: 24px;
+            z-index: 2;
+            filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.6));
+        }}
+        .podium-avatar {{
+            border-radius: 50%;
+            object-fit: cover;
+            background: #0f172a;
+            border-width: 3px;
+            border-style: solid;
+        }}
+        .podium-user-card {{
+            width: 100%;
+            text-align: center;
+            background: rgba(15, 23, 42, 0.9);
+            border-radius: 10px;
+            padding: 6px 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }}
+        .podium-username {{
+            font-size: 16px;
+            font-weight: 800;
+            color: #ffffff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .podium-meta {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }}
+        .level-tag {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 11px;
+            font-weight: 800;
+            padding: 1px 6px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid;
+            border-radius: 6px;
+        }}
+        .xp-val {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 14px;
+            font-weight: 700;
+            color: #cbd5e1;
+        }}
+        .pedestal {{
+            width: 100%;
+            border-radius: 12px 12px 0 0;
+            border-width: 2px 2px 0 2px;
+            border-style: solid;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .pedestal-rank {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 32px;
+            font-weight: 900;
+        }}
+
+        /* List Top 4-10 */
+        .list-section {{
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            justify-content: center;
+        }}
+        .list-title {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            font-weight: 800;
+            color: #94a3b8;
+            letter-spacing: 1px;
+            margin-bottom: 2px;
+        }}
+        .list-item {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 10px;
+            padding: 7px 14px;
+            transition: all 0.2s;
+        }}
+        .list-rank {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            font-weight: 800;
+            color: #00f0ff;
+            min-width: 26px;
+        }}
+        .list-avatar {{
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            object-fit: cover;
+            background: #0f172a;
+            border: 1.5px solid rgba(255, 255, 255, 0.2);
+        }}
+        .list-name {{
+            flex: 1;
+            font-size: 16px;
+            font-weight: 700;
+            color: #f1f5f9;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        .list-level {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 11px;
+            font-weight: 800;
+            color: #b026ff;
+            background: rgba(176, 38, 255, 0.1);
+            border: 1px solid rgba(176, 38, 255, 0.3);
+            border-radius: 6px;
+            padding: 2px 6px;
+        }}
+        .list-xp {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 15px;
+            font-weight: 800;
+            color: #ffd700;
+            min-width: 75px;
+            text-align: right;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card-container">
+        <div class="header">
+            <div class="guild-info">
+                {guild_icon_html}
+                <div class="header-titles">
+                    <h1>{guild_name}</h1>
+                    <p>Membros com maior destaque e atividade</p>
+                </div>
+            </div>
+            <div class="period-badge">{period_label}</div>
+        </div>
+
+        <div class="content-area">
+            <div class="podium-stage">
+                {''.join(podium_slots)}
+            </div>
+            <div class="list-section">
+                <div class="list-title">HONORABLE MENTIONS (TOP 4 - 10)</div>
+                {others_html if others_html else '<div style="color: #64748b; font-size: 14px; padding: 10px;">Sem mais participantes no período.</div>'}
+            </div>
+        </div>
+    </div>
+</body>
+</html>"""
+
     async def generate_podium(self, guild: discord.Guild, top_users: list, period_text: str = None) -> BytesIO:
         """
-        Gera uma imagem de pódio com os top 10 usuários (3 no pódio + 7 em lista).
-        top_users: lista de dicts com 'user_id', 'username', 'total_points'
-        period_text: texto opcional para exibir periodo (ex: "Novembro 2025")
+        Gera uma imagem moderna de pódio com os top 10 usuários (3 no pódio + 7 em lista)
+        via Playwright 1300x850.
         """
-        # Separa Top 3 e Restante
-        top_3 = top_users[:3]
-        others = top_users[3:]
+        from playwright.async_api import async_playwright
 
-        # Dimensões e Configurações
-        PODIUM_HEIGHT = 500
-        LIST_ITEM_HEIGHT = 70
-        LIST_PADDING = 10
-        
-        # Calcula altura total
-        list_height = len(others) * (LIST_ITEM_HEIGHT + LIST_PADDING) + 20 # +20 margem inferior
-        total_height = PODIUM_HEIGHT + list_height
+        guild_name = guild.name if guild else "Servidor BMIA"
+        guild_icon_uri = await self._get_guild_icon_data_uri(guild)
 
-        # 1. Configurar Canvas (800xAlturaTotal)
-        img = Image.new('RGB', (800, total_height), color=self.BACKGROUND_COLOR)
-        draw = ImageDraw.Draw(img)
-        
-        # Posições dos pódios (Centro, Esquerda, Direita)
-        # Formato: (x, y_chão, largura, altura_pilar, cor, ranking)
-        positions = [
-            (400, 450, 180, 200, self.GOLD, 0),   # 1º Lugar (Meio)
-            (200, 450, 180, 140, self.SILVER, 1), # 2º Lugar (Esq)
-            (600, 450, 180, 80, self.BRONZE, 2)   # 3º Lugar (Dir)
-        ]
-        
-        # Fonte (Tenta carregar Arial ou padrão)
-        try:
-            # Tenta usar Arial no Windows ou DejaVuSans no Linux
-            import os
-            font_path = "arial.ttf" if os.name == 'nt' else "DejaVuSans.ttf"
-            font_name = ImageFont.truetype(font_path, 30)
-            font_score = ImageFont.truetype(font_path, 24)
-            # Novas fontes para a lista
-            font_list_rank = ImageFont.truetype(font_path, 36)
-            font_list_name = ImageFont.truetype(font_path, 28)
-            font_list_score = ImageFont.truetype(font_path, 28)
-        except:
-            font_score = ImageFont.load_default()
-            font_list_rank = ImageFont.load_default()
-            font_list_name = ImageFont.load_default()
-            font_list_score = ImageFont.load_default()
+        top_3 = []
+        others = []
 
-        # Desenhar o texto do período se fornecido
-        if period_text:
-            try:
-                # Tenta uma fonte maior para o título
-                font_title = ImageFont.truetype(font_path, 40)
-            except:
-                font_title = font_name
-            
-            # Centralizar texto "Ranking: {period_text}" ou apenas o texto
-            title = f"Ranking: {period_text}"
-            # Posição aproximada centralizada no topo (800 largura / 2 = 400)
-            # Ajuste fino: subtrair metado do tamanho estimado do texto (aprox 15px por char com fonte 40)
-            text_width = len(title) * 20 
-            draw.text((400 - (text_width // 2), 50), title, fill=self.GOLD, font=font_title)
+        for i, user_data in enumerate(top_users[:10]):
+            uid = user_data.get("user_id", 0)
+            member = guild.get_member(uid) if guild else None
+            avatar_uri = await self._get_avatar_data_uri(member, user_data)
+            display_name = member.display_name if member else user_data.get("username", "Membro")
 
-        # 2. Desenhar cada vencedor (Top 3)
-        for i, user_data in enumerate(top_3):
-            if i >= 3: break
-            
-            # Ajusta índice para ordem visual (1º no meio, 2º na esq, 3º na dir)
-            # A lista top_users vem ordenada [1º, 2º, 3º]
-            
-            x_center, y_floor, width, height, color, rank_idx = positions[i]
-            
-            # Desenha o pilar
-            left = x_center - (width // 2)
-            top = y_floor - height
-            right = x_center + (width // 2)
-            bottom = y_floor
-            
-            draw.rectangle([left, top, right, bottom], fill=color)
-            draw.text((x_center - 10, bottom - 40), f"#{i+1}", fill=(0,0,0), font=font_name)
-            
-            # Pegar Avatar e Nome
-            # user pode ser Mock ou Real
-            user = guild.get_member(user_data['user_id'])
-            
-            # --- Desenhar Avatar ---
-            if user:
-                # Trata avatar mockado no teste vs real no discord.py
-                # No script de teste, vamos mockar display_avatar.with_size().read()
-                try:
-                    avatar_asset = user.display_avatar.with_size(128)
-                    avatar_bytes = await avatar_asset.read()
-                    
-                    avatar_img = Image.open(BytesIO(avatar_bytes)).convert("RGBA")
-                    avatar_img = avatar_img.resize((100, 100))
-                    
-                    # Criar máscara circular
-                    mask = Image.new('L', (100, 100), 0)
-                    mask_draw = ImageDraw.Draw(mask)
-                    mask_draw.ellipse((0, 0, 100, 100), fill=255)
-                    
-                    # Colar avatar em cima do pilar
-                    avatar_x = x_center - 50
-                    avatar_y = top - 110 # 10px de margem + 100px altura
-                    img.paste(avatar_img, (avatar_x, avatar_y), mask)
-                except Exception as e:
-                    print(f"Erro ao desenhar avatar de {user_data.get('username')}: {e}")
-                
-                # Nome e Pontos
-                name = user.display_name[:12] # Limitar caracteres
-                points = f"{user_data['total_points']} pts"
-                
-                # Centralizar texto (cálculo básico)
-                # Para centralizar direito, idealmente usamos draw.textbbox, mas hardcoded serve por agora
-                draw.text((x_center - 40, avatar_y - 40), name, fill=self.TEXT_COLOR, font=font_name)
-                draw.text((x_center - 30, avatar_y - 70), points, fill=self.GOLD, font=font_score)
+            item = {
+                "rank": i + 1,
+                "user_id": uid,
+                "name": display_name,
+                "total_points": user_data.get("total_points", 0),
+                "avatar_uri": avatar_uri
+            }
+
+            if i < 3:
+                top_3.append(item)
             else:
-                # Caso usuário tenha saído do servidor, desenha apenas os dados do DB se possivel
-                name = user_data.get('username', 'Desconhecido')[:12]
-                draw.text((x_center - 40, top - 50), f"{name}\n(Saiu)", fill=self.TEXT_COLOR, font=font_name)
+                others.append(item)
 
-        # 3. Desenhar a Lista (Top 4-10)
-        start_y = 520 # Logo abaixo do pódio
-        
-        for i, user_data in enumerate(others):
-            rank = i + 4
-            row_y = start_y + (i * (LIST_ITEM_HEIGHT + LIST_PADDING))
-            
-            # Fundo da linha (alternado para melhor leitura)
-            if i % 2 == 0:
-                draw.rectangle([50, row_y, 750, row_y + LIST_ITEM_HEIGHT], fill=(50, 53, 59))
+        html_code = self._build_html_template(
+            guild_name=guild_name,
+            guild_icon_uri=guild_icon_uri,
+            top_3_data=top_3,
+            others_data=others,
+            period_text=period_text
+        )
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            page = await browser.new_page(viewport={"width": 1300, "height": 850})
+            await page.set_content(html_code, wait_until="networkidle")
+            element = await page.query_selector('.card-container')
+            if element:
+                screenshot_bytes = await element.screenshot(type="png", omit_background=True)
             else:
-                 draw.rectangle([50, row_y, 750, row_y + LIST_ITEM_HEIGHT], fill=(43, 45, 49)) # Mesma cor fundo principal
+                screenshot_bytes = await page.screenshot(type="png", omit_background=True)
+            await browser.close()
 
-            # Rank
-            draw.text((70, row_y + 15), f"#{rank}", fill=(150, 150, 150), font=font_list_rank)
-            
-            # Avatar Pequeno
-            avatar_size = 50
-            avatar_x = 160
-            avatar_y_pos = row_y + 10
-            
-            user = guild.get_member(user_data['user_id'])
-            if user:
-                try:
-                    avatar_asset = user.display_avatar.with_size(64)
-                    avatar_bytes = await avatar_asset.read()
-                    
-                    avatar_img = Image.open(BytesIO(avatar_bytes)).convert("RGBA")
-                    avatar_img = avatar_img.resize((avatar_size, avatar_size))
-                    
-                    # Máscara circular
-                    mask = Image.new('L', (avatar_size, avatar_size), 0)
-                    mask_draw = ImageDraw.Draw(mask)
-                    mask_draw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
-                    
-                    img.paste(avatar_img, (avatar_x, int(avatar_y_pos)), mask)
-                except Exception as e:
-                    # Fallback (círculo cinza)
-                    draw.ellipse((avatar_x, avatar_y_pos, avatar_x + avatar_size, avatar_y_pos + avatar_size), fill=(100,100,100))
-            else:
-                 # Fallback usuário saiu
-                 draw.ellipse((avatar_x, avatar_y_pos, avatar_x + avatar_size, avatar_y_pos + avatar_size), fill=(100,100,100))
-
-            # Nome
-            if user:
-                name = user.display_name[:20]
-            else:
-                name = user_data.get('username', 'Desconhecido')[:20]
-
-            draw.text((230, row_y + 18), name, fill=self.TEXT_COLOR, font=font_list_name)
-            
-            # Pontos (Alinhado a direita)
-            points_text = f"{user_data['total_points']} pts"
-            # Usar textbbox para alinhar à direita (se disponível) ou estimativa
-            try:
-                bbox = draw.textbbox((0, 0), points_text, font=font_list_score)
-                p_width = bbox[2] - bbox[0]
-                draw.text((730 - p_width, row_y + 18), points_text, fill=self.GOLD, font=font_list_score)
-            except:
-                # Fallback para versões antigas do PIL
-                draw.text((650, row_y + 18), points_text, fill=self.GOLD, font=font_list_score)
-
-        # 3. Retornar buffer
-        buffer = BytesIO()
-        img.save(buffer, format='PNG')
+        buffer = BytesIO(screenshot_bytes)
         buffer.seek(0)
         return buffer
+
 
 
 class BracketBuilder:
