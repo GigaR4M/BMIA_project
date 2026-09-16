@@ -144,10 +144,10 @@ async def check_monthly_podium(
                             await db.log_periodic_leaderboard_sent(guild.id, "MONTHLY", monthly_identifier)
                             logger.info("Sem dados suficientes para pódio mensal em %s", guild.name)
 
-                    # Verifica e envia Pódio Anual (se virou o ano)
+                    # Verifica e envia Pódio Anual e Destaques (se virou o ano)
                     if now.month == 1:
                         if not await db.check_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier):
-                            logger.info("Gerando pódio anual (%s) para %s...", yearly_identifier, guild.name)
+                            logger.info("Gerando pódio anual e destaques (%s) para %s...", yearly_identifier, guild.name)
                             top_yearly = await db.get_top_users_date_range(guild.id, yearly_start, yearly_end, limit=10)
 
                             if top_yearly:
@@ -158,11 +158,38 @@ async def check_monthly_podium(
                                     f"**{yearly_title}**\nParabéns às lendas do servidor em {prev_year}! 🏆👑",
                                     file=file,
                                 )
-                                await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier)
-                                logger.info("✅ Pódio anual enviado para %s", guild.name)
-                            else:
-                                await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier)
-                                logger.info("Sem dados suficientes para pódio anual em %s", guild.name)
+
+                            # Envia também a galeria de Destaques do Ano
+                            try:
+                                from utils.highlights_scanner import HighlightsScanner
+                                from utils.image_generator import HighlightsBuilder
+                                from commands.stats_commands import HIGHLIGHTS_CATEGORIES
+
+                                top_clip = await HighlightsScanner.scan_guild_top_clip(guild, prev_year, timeout=3.0)
+                                h_data = await db.get_annual_highlights_data(guild.id, prev_year)
+                                h_files = await HighlightsBuilder.generate_all_slides_files(
+                                    guild=guild,
+                                    year=prev_year,
+                                    highlights_data=h_data,
+                                    top_clip=top_clip,
+                                    categories=HIGHLIGHTS_CATEGORIES
+                                )
+                                if h_files:
+                                    f1, f2 = h_files[:7], h_files[7:]
+                                    await target_channel.send(
+                                        f"🌟 **DESTAQUES DO ANO {prev_year} • {guild.name} (Parte 1/2)**\n*Confira os maiores recordes e destaques da comunidade:*",
+                                        files=f1
+                                    )
+                                    if f2:
+                                        await target_channel.send(
+                                            f"🌟 **DESTAQUES DO ANO {prev_year} • {guild.name} (Parte 2/2)**",
+                                            files=f2
+                                        )
+                            except Exception as h_err:
+                                logger.warning("Erro ao enviar galeria de destaques no background: %s", h_err)
+
+                            await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier)
+                            logger.info("✅ Pódio e destaques anuais concluídos para %s", guild.name)
 
         except Exception as exc:
             logger.error("❌ Erro no check_monthly_podium: %s", exc)

@@ -4,12 +4,81 @@ import discord
 from discord import app_commands
 from database import Database
 from utils.embed_builder import StatsEmbedBuilder
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 import logging
 from config import now_brt
 
-
 logger = logging.getLogger(__name__)
+
+HIGHLIGHTS_CATEGORIES = [
+    {"id": "cover", "label": "Capa", "title": "DESTAQUES DO ANO", "subtitle": "Apresentação Oficial", "icon": "✨", "color": "#00f0ff"},
+    {"id": "mvp", "label": "MVP", "title": "O MVP DO ANO", "subtitle": "Maior Acúmulo de XP e Pontos", "icon": "👑", "color": "#ffd700", "unit": "XP"},
+    {"id": "tagarela", "label": "Tagarela", "title": "O TAGARELA", "subtitle": "Mais Mensagens de Texto Enviadas", "icon": "💬", "color": "#38bdf8", "unit": "msgs"},
+    {"id": "rei_da_call", "label": "Rei da Call", "title": "REI DA CALL", "subtitle": "Maior Tempo Conectado em Canais de Voz", "icon": "🎙️", "color": "#a855f7", "is_time": True},
+    {"id": "corujao", "label": "O Corujão", "title": "O CORUJÃO", "subtitle": "Mais Horas em Voz na Madrugada (00h-06h)", "icon": "🦉", "color": "#6366f1", "is_time": True},
+    {"id": "streamer", "label": "Streamer", "title": "STREAMER DO SERVIDOR", "subtitle": "Maior Tempo em Transmissão / Ao Vivo", "icon": "📺", "color": "#ec4899", "is_time": True},
+    {"id": "top_gamers", "label": "Top Gamers", "title": "TOP GAMERS", "subtitle": "Maior Tempo Jogado no Ano", "icon": "🎮", "color": "#22c55e", "is_time": True},
+    {"id": "jogo_do_ano", "label": "Jogo do Ano", "title": "JOGO DO ANO", "subtitle": "Jogos Mais Populares da Comunidade", "icon": "🕹️", "color": "#eab308", "is_time": True},
+    {"id": "media", "label": "Clipe do Ano", "title": "CLIPE / PRINT DO ANO", "subtitle": "Momento Mais Votado da Comunidade", "icon": "📸", "color": "#f43f5e"},
+    {"id": "o_midia", "label": "O Mídia", "title": "O MÍDIA", "subtitle": "Mais Imagens, Prints e Anexos Enviados", "icon": "🖼️", "color": "#06b6d4", "unit": "anexos"},
+    {"id": "o_onipresente", "label": "Onipresente", "title": "O ONIPRESENTE", "subtitle": "Mais Dias Ativos no Servidor", "icon": "📅", "color": "#10b981", "unit": "dias"},
+    {"id": "ima_da_galera", "label": "Ímã da Galera", "title": "ÍMÃ DA GALERA", "subtitle": "Membro Mais Interativo e Citado", "icon": "🧲", "color": "#f97316", "unit": "pontos"},
+    {"id": "boca_suja", "label": "Boca Suja", "title": "BOCA SUJA", "subtitle": "Mais Mensagens com Linguajar Ofensivo", "icon": "🤬", "color": "#ef4444", "unit": "msgs"},
+]
+
+
+async def handle_highlights_gallery(db: Database, interaction: discord.Interaction, year: Optional[int] = None):
+    """Renderiza e envia a Retrospectiva Anual como uma Galeria de Imagens de Alta Performance."""
+    await interaction.response.defer(thinking=True)
+
+    if year is None:
+        year = now_brt().year
+
+    try:
+        from utils.highlights_scanner import HighlightsScanner
+        from utils.image_generator import HighlightsBuilder
+
+        top_clip = await HighlightsScanner.scan_guild_top_clip(interaction.guild, year, timeout=3.0)
+        highlights_data = await db.get_annual_highlights_data(interaction.guild.id, year)
+
+        files = await HighlightsBuilder.generate_all_slides_files(
+            guild=interaction.guild,
+            year=year,
+            highlights_data=highlights_data,
+            top_clip=top_clip,
+            categories=HIGHLIGHTS_CATEGORIES
+        )
+
+        if not files:
+            await interaction.followup.send("❌ Não foi possível gerar os slides da retrospectiva.", ephemeral=True)
+            return
+
+        files_part1 = files[:7]
+        files_part2 = files[7:]
+
+        await interaction.followup.send(
+            content=f"🌟 **DESTAQUES DO ANO {year} • {interaction.guild.name} (Parte 1/2)**\n*Navegue pelas fotos da galeria em tela cheia abaixo:*",
+            files=files_part1
+        )
+
+        if files_part2:
+            if hasattr(interaction, "channel") and interaction.channel:
+                await interaction.channel.send(
+                    content=f"🌟 **DESTAQUES DO ANO {year} • {interaction.guild.name} (Parte 2/2)**",
+                    files=files_part2
+                )
+            else:
+                await interaction.followup.send(
+                    content=f"🌟 **DESTAQUES DO ANO {year} • {interaction.guild.name} (Parte 2/2)**",
+                    files=files_part2
+                )
+
+    except Exception as e:
+        logger.error("❌ Erro ao gerar galeria de Destaques do Ano: %s", e, exc_info=True)
+        await interaction.followup.send(
+            "❌ Ocorreu um erro ao processar a Retrospectiva Anual. Tente novamente mais tarde.",
+            ephemeral=True
+        )
 
 
 async def handle_rank_card(db: Database, interaction: discord.Interaction, membro: Optional[discord.Member] = None):
@@ -430,6 +499,12 @@ class StatsCommands(app_commands.Group):
                 ephemeral=True
             )
     
+    @app_commands.command(name="destaques", description="Mostra a Retrospectiva e os Destaques do Ano do Servidor em Galeria Visual")
+    @app_commands.describe(ano="Ano dos destaques para consulta (padrão: ano atual)")
+    async def destaques(self, interaction: discord.Interaction, ano: Optional[int] = None):
+        """Comando slash para exibir a Retrospectiva e Destaques do Ano."""
+        await handle_highlights_gallery(self.db, interaction, ano)
+
     @user_stats.error
     async def user_stats_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         """Handler de erro para comando que requer permissões."""

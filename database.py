@@ -2851,4 +2851,199 @@ class Database:
                 results.append(item)
             return results
 
+    async def get_annual_highlights_data(self, guild_id: int, year: int) -> Dict[str, Any]:
+        """
+        Coleta os rankings dos Destaques do Ano para um servidor e ano específicos.
+        Garante total isolamento por guild_id e conformidade com o fuso de Brasília.
+        """
+        highlights = {}
+        async with self.pool.acquire() as conn:
+            # 1. MVP (Mais Pontos / XP acumulados no Ano)
+            rows = await conn.fetch("""
+                SELECT dus.user_id, COALESCE(u.username, '') as username, SUM(COALESCE(dus.total_points, 0)) as value
+                FROM daily_user_stats dus
+                LEFT JOIN users u ON dus.user_id = u.user_id
+                WHERE dus.guild_id = $1 AND EXTRACT(YEAR FROM dus.date) = $2
+                GROUP BY dus.user_id, u.username
+                HAVING SUM(COALESCE(dus.total_points, 0)) > 0
+                ORDER BY value DESC
+                LIMIT 5
+            """, guild_id, year)
+            highlights["mvp"] = [dict(r) for r in rows]
 
+            # 2. Tagarela (Mais Mensagens de Texto no Ano)
+            rows = await conn.fetch("""
+                SELECT dus.user_id, COALESCE(u.username, '') as username, SUM(dus.messages_count) as value
+                FROM daily_user_stats dus
+                LEFT JOIN users u ON dus.user_id = u.user_id
+                WHERE dus.guild_id = $1 AND EXTRACT(YEAR FROM dus.date) = $2
+                GROUP BY dus.user_id, u.username
+                HAVING SUM(dus.messages_count) > 0
+                ORDER BY value DESC
+                LIMIT 5
+            """, guild_id, year)
+            if not rows:
+                # Fallback para tabela messages direta se daily_user_stats estiver vazia
+                rows = await conn.fetch("""
+                    SELECT m.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
+                    FROM messages m
+                    LEFT JOIN users u ON m.user_id = u.user_id
+                    WHERE m.guild_id = $1 
+                      AND EXTRACT(YEAR FROM m.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                    GROUP BY m.user_id, u.username
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
+            highlights["tagarela"] = [dict(r) for r in rows]
+
+            # 3. Rei da Call (Mais Tempo Total em Voz no Ano)
+            rows = await conn.fetch("""
+                SELECT dus.user_id, COALESCE(u.username, '') as username, SUM(dus.voice_seconds) as value_seconds
+                FROM daily_user_stats dus
+                LEFT JOIN users u ON dus.user_id = u.user_id
+                WHERE dus.guild_id = $1 AND EXTRACT(YEAR FROM dus.date) = $2
+                GROUP BY dus.user_id, u.username
+                HAVING SUM(dus.voice_seconds) > 0
+                ORDER BY value_seconds DESC
+                LIMIT 5
+            """, guild_id, year)
+            if not rows:
+                rows = await conn.fetch("""
+                    SELECT va.user_id, COALESCE(u.username, '') as username, SUM(COALESCE(va.duration_seconds, 0)) as value_seconds
+                    FROM voice_activity va
+                    LEFT JOIN users u ON va.user_id = u.user_id
+                    WHERE va.guild_id = $1 
+                      AND EXTRACT(YEAR FROM va.joined_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                    GROUP BY va.user_id, u.username
+                    HAVING SUM(COALESCE(va.duration_seconds, 0)) > 0
+                    ORDER BY value_seconds DESC
+                    LIMIT 5
+                """, guild_id, year)
+            highlights["rei_da_call"] = [dict(r) for r in rows]
+
+            # 4. O Corujão (Mais Tempo em Call na Madrugada: 00:00 às 06:00 BRT)
+            rows = await conn.fetch("""
+                SELECT va.user_id, COALESCE(u.username, '') as username, SUM(COALESCE(va.duration_seconds, 0)) as value_seconds
+                FROM voice_activity va
+                LEFT JOIN users u ON va.user_id = u.user_id
+                WHERE va.guild_id = $1 
+                  AND EXTRACT(YEAR FROM va.joined_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                  AND EXTRACT(HOUR FROM va.joined_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') >= 0
+                  AND EXTRACT(HOUR FROM va.joined_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') < 6
+                GROUP BY va.user_id, u.username
+                HAVING SUM(COALESCE(va.duration_seconds, 0)) > 0
+                ORDER BY value_seconds DESC
+                LIMIT 5
+            """, guild_id, year)
+            highlights["corujao"] = [dict(r) for r in rows]
+
+            # 5. Streamer do Servidor (Tempo em Live / Transmissão)
+            rows = await conn.fetch("""
+                SELECT ua.user_id, COALESCE(u.username, '') as username, SUM(COALESCE(ua.duration_seconds, 0)) as value_seconds
+                FROM user_activities ua
+                LEFT JOIN users u ON ua.user_id = u.user_id
+                WHERE ua.guild_id = $1 
+                  AND EXTRACT(YEAR FROM ua.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                  AND (ua.activity_type ILIKE '%stream%' OR ua.activity_name ILIKE '%live%' OR ua.activity_type = 'Streaming')
+                GROUP BY ua.user_id, u.username
+                HAVING SUM(COALESCE(ua.duration_seconds, 0)) > 0
+                ORDER BY value_seconds DESC
+                LIMIT 5
+            """, guild_id, year)
+            highlights["streamer"] = [dict(r) for r in rows]
+
+            # 6. Top Gamers (Mais Tempo Jogado no Ano)
+            rows = await conn.fetch("""
+                SELECT ua.user_id, COALESCE(u.username, '') as username, SUM(COALESCE(ua.duration_seconds, 0)) as value_seconds
+                FROM user_activities ua
+                LEFT JOIN users u ON ua.user_id = u.user_id
+                WHERE ua.guild_id = $1 
+                  AND EXTRACT(YEAR FROM ua.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                  AND ua.activity_name NOT ILIKE '%Spotify%'
+                GROUP BY ua.user_id, u.username
+                HAVING SUM(COALESCE(ua.duration_seconds, 0)) > 0
+                ORDER BY value_seconds DESC
+                LIMIT 5
+            """, guild_id, year)
+            highlights["top_gamers"] = [dict(r) for r in rows]
+
+            # 7. Jogo do Ano (Mais Jogado pela Comunidade)
+            rows = await conn.fetch("""
+                SELECT ua.activity_name, SUM(COALESCE(ua.duration_seconds, 0)) as value_seconds
+                FROM user_activities ua
+                WHERE ua.guild_id = $1 
+                  AND EXTRACT(YEAR FROM ua.started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                  AND ua.activity_name IS NOT NULL
+                  AND ua.activity_name NOT ILIKE '%Spotify%'
+                GROUP BY ua.activity_name
+                HAVING SUM(COALESCE(ua.duration_seconds, 0)) > 0
+                ORDER BY value_seconds DESC
+                LIMIT 5
+            """, guild_id, year)
+            highlights["jogo_do_ano"] = [dict(r) for r in rows]
+
+            # 8. O Mídia (Mais Imagens, Prints e Anexos Enviados)
+            rows = await conn.fetch("""
+                SELECT m.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
+                FROM messages m
+                LEFT JOIN users u ON m.user_id = u.user_id
+                WHERE m.guild_id = $1 
+                  AND EXTRACT(YEAR FROM m.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                  AND (m.has_attachments = TRUE OR m.has_embeds = TRUE)
+                GROUP BY m.user_id, u.username
+                ORDER BY value DESC
+                LIMIT 5
+            """, guild_id, year)
+            highlights["o_midia"] = [dict(r) for r in rows]
+
+            # 9. O Onipresente (Mais Dias Ativos no Ano)
+            rows = await conn.fetch("""
+                SELECT dus.user_id, COALESCE(u.username, '') as username, COUNT(DISTINCT dus.date) as value
+                FROM daily_user_stats dus
+                LEFT JOIN users u ON dus.user_id = u.user_id
+                WHERE dus.guild_id = $1 AND EXTRACT(YEAR FROM dus.date) = $2
+                GROUP BY dus.user_id, u.username
+                HAVING COUNT(DISTINCT dus.date) > 0
+                ORDER BY value DESC
+                LIMIT 5
+            """, guild_id, year)
+            if not rows:
+                rows = await conn.fetch("""
+                    SELECT m.user_id, COALESCE(u.username, '') as username, COUNT(DISTINCT DATE(m.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) as value
+                    FROM messages m
+                    LEFT JOIN users u ON m.user_id = u.user_id
+                    WHERE m.guild_id = $1 
+                      AND EXTRACT(YEAR FROM m.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                    GROUP BY m.user_id, u.username
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
+            highlights["o_onipresente"] = [dict(r) for r in rows]
+
+            # 10. Ímã da Galera (Membro Mais Notório / Interações)
+            rows = await conn.fetch("""
+                SELECT dus.user_id, COALESCE(u.username, '') as username, SUM(dus.messages_count) as value
+                FROM daily_user_stats dus
+                LEFT JOIN users u ON dus.user_id = u.user_id
+                WHERE dus.guild_id = $1 AND EXTRACT(YEAR FROM dus.date) = $2
+                GROUP BY dus.user_id, u.username
+                ORDER BY value DESC
+                LIMIT 5
+            """, guild_id, year)
+            highlights["ima_da_galera"] = [dict(r) for r in rows]
+
+            # 11. Boca Suja (Mais Mensagens Moderadas / Linguajar Ofensivo)
+            rows = await conn.fetch("""
+                SELECT m.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
+                FROM messages m
+                LEFT JOIN users u ON m.user_id = u.user_id
+                WHERE m.guild_id = $1 
+                  AND EXTRACT(YEAR FROM m.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') = $2
+                  AND m.was_moderated = TRUE
+                GROUP BY m.user_id, u.username
+                ORDER BY value DESC
+                LIMIT 5
+            """, guild_id, year)
+            highlights["boca_suja"] = [dict(r) for r in rows]
+
+        return highlights
