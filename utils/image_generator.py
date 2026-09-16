@@ -1981,30 +1981,30 @@ class RankCardBuilder:
             user-select: none;
         }}
         body {{
-            width: 1100px;
-            height: 340px;
+            width: 1060px;
+            height: 300px;
             background: transparent;
             font-family: 'Rajdhani', sans-serif;
             color: #ffffff;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            margin: 0;
+            padding: 0;
             overflow: hidden;
         }}
         .card-container {{
             width: 100%;
             height: 100%;
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(9, 14, 26, 0.98) 100%);
-            border: 2px solid rgba(0, 240, 255, 0.3);
-            border-radius: 24px;
-            padding: 28px 36px;
+            background: linear-gradient(135deg, #0b1120 0%, #070a14 100%);
+            border: 1.5px solid rgba(0, 240, 255, 0.35);
+            border-radius: 20px;
+            padding: 24px 32px;
             display: flex;
             align-items: center;
-            gap: 32px;
+            gap: 28px;
             position: relative;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), inset 0 0 40px rgba(0, 240, 255, 0.05);
-            backdrop-filter: blur(20px);
+            box-shadow: inset 0 0 40px rgba(0, 240, 255, 0.04);
         }}
         .card-container::before {{
             content: '';
@@ -2023,12 +2023,13 @@ class RankCardBuilder:
             flex-shrink: 0;
         }}
         .avatar-img {{
-            width: 140px;
-            height: 140px;
+            width: 130px;
+            height: 130px;
             border-radius: 50%;
             object-fit: cover;
+            background: #0f172a;
             border: 3px solid {level_color};
-            box-shadow: 0 0 30px {level_border};
+            box-shadow: 0 0 25px {level_border};
         }}
         .rank-pill {{
             position: absolute;
@@ -2040,13 +2041,14 @@ class RankCardBuilder:
             font-weight: 800;
             letter-spacing: 1px;
             padding: 3px 12px;
-            background: #0f172a;
+            background: #070a14;
             border: 1.5px solid {level_color};
             border-radius: 12px;
             color: {level_color};
-            box-shadow: 0 0 15px rgba(0,0,0,0.8);
+            box-shadow: 0 0 15px rgba(0,0,0,0.9);
             white-space: nowrap;
         }}
+
 
         /* Main Details */
         .details-box {{
@@ -2252,14 +2254,19 @@ class RankCardBuilder:
                 headless=True,
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
             )
-            page = await browser.new_page(viewport={"width": 1100, "height": 340})
+            page = await browser.new_page(viewport={"width": 1060, "height": 300})
             await page.set_content(html_code, wait_until="networkidle")
-            screenshot_bytes = await page.screenshot(type="png", full_page=False)
+            element = await page.query_selector('.card-container')
+            if element:
+                screenshot_bytes = await element.screenshot(type="png", omit_background=True)
+            else:
+                screenshot_bytes = await page.screenshot(type="png", omit_background=True)
             await browser.close()
 
         buffer = BytesIO(screenshot_bytes)
         buffer.seek(0)
         return buffer
+
 
 
 
