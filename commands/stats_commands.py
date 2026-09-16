@@ -66,14 +66,7 @@ class StatsCommands(app_commands.Group):
     async def rank(self, interaction: discord.Interaction, membro: Optional[discord.Member] = None):
         await handle_rank_card(self.db, interaction, membro)
 
-    @app_commands.command(name="xp_adicionar", description="Adiciona XP manualmente a um membro (Apenas Administradores)")
-    @app_commands.describe(
-        membro="Membro que receberá o XP",
-        xp="Quantidade de XP a adicionar",
-        motivo="Motivo da premiação/adição (opcional)"
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def xp_adicionar(
+    async def _add_xp_logic(
         self,
         interaction: discord.Interaction,
         membro: discord.Member,
@@ -121,30 +114,7 @@ class StatsCommands(app_commands.Group):
             logger.error(f"Erro ao adicionar XP manual para {membro.id}: {e}")
             await interaction.followup.send("❌ Erro ao adicionar XP ao membro.", ephemeral=True)
 
-    @app_commands.command(name="pontos_adicionar", description="[Alias] Adiciona XP/pontos a um membro (Apenas Administradores)")
-    @app_commands.describe(
-        membro="Membro que receberá os pontos/XP",
-        pontos="Quantidade de pontos/XP a adicionar",
-        motivo="Motivo da premiação/adição (opcional)"
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def pontos_adicionar(
-        self,
-        interaction: discord.Interaction,
-        membro: discord.Member,
-        pontos: int,
-        motivo: Optional[str] = "Premiação Manual"
-    ):
-        await self.xp_adicionar(interaction, membro, pontos, motivo)
-
-    @app_commands.command(name="xp_remover", description="Remove XP de um membro (Apenas Administradores)")
-    @app_commands.describe(
-        membro="Membro que terá o XP removido",
-        xp="Quantidade de XP a remover",
-        motivo="Motivo da remoção (opcional)"
-    )
-    @app_commands.checks.has_permissions(administrator=True)
-    async def xp_remover(
+    async def _remove_xp_logic(
         self,
         interaction: discord.Interaction,
         membro: discord.Member,
@@ -181,6 +151,54 @@ class StatsCommands(app_commands.Group):
             logger.error(f"Erro ao remover XP de {membro.id}: {e}")
             await interaction.followup.send("❌ Erro ao remover XP do membro.", ephemeral=True)
 
+    @app_commands.command(name="xp_adicionar", description="Adiciona XP manualmente a um membro (Apenas Administradores)")
+    @app_commands.describe(
+        membro="Membro que receberá o XP",
+        xp="Quantidade de XP a adicionar",
+        motivo="Motivo da premiação/adição (opcional)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_adicionar(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        xp: int,
+        motivo: Optional[str] = "Premiação Manual"
+    ):
+        await self._add_xp_logic(interaction, membro, xp, motivo)
+
+    @app_commands.command(name="pontos_adicionar", description="[Alias] Adiciona XP/pontos a um membro (Apenas Administradores)")
+    @app_commands.describe(
+        membro="Membro que receberá os pontos/XP",
+        pontos="Quantidade de pontos/XP a adicionar",
+        motivo="Motivo da premiação/adição (opcional)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def pontos_adicionar(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        pontos: int,
+        motivo: Optional[str] = "Premiação Manual"
+    ):
+        await self._add_xp_logic(interaction, membro, pontos, motivo)
+
+    @app_commands.command(name="xp_remover", description="Remove XP de um membro (Apenas Administradores)")
+    @app_commands.describe(
+        membro="Membro que terá o XP removido",
+        xp="Quantidade de XP a remover",
+        motivo="Motivo da remoção (opcional)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def xp_remover(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        xp: int,
+        motivo: Optional[str] = "Penalidade Manual"
+    ):
+        await self._remove_xp_logic(interaction, membro, xp, motivo)
+
     @app_commands.command(name="pontos_remover", description="[Alias] Remove pontos/XP de um membro (Apenas Administradores)")
     @app_commands.describe(
         membro="Membro que terá os pontos removidos",
@@ -195,7 +213,8 @@ class StatsCommands(app_commands.Group):
         pontos: int,
         motivo: Optional[str] = "Penalidade Manual"
     ):
-        await self.xp_remover(interaction, membro, pontos, motivo)
+        await self._remove_xp_logic(interaction, membro, pontos, motivo)
+
 
     @app_commands.command(name="setup_leaderboard", description="Configura um leaderboard persistente neste canal")
     @app_commands.checks.has_permissions(manage_guild=True)
