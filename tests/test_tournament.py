@@ -212,10 +212,8 @@ class TestTournamentCommands:
         mock_db.get_tournament.assert_awaited_once_with(1)
         mock_db.get_tournament_participants.assert_awaited_once_with(1)
         interaction.followup.send.assert_awaited_once()
-        # Verifica se o arquivo gerado foi enviado
         call_kwargs = interaction.followup.send.call_args[1]
         assert "file" in call_kwargs
-        assert "embed" in call_kwargs
 
 
 class TestBracketBuilder:

@@ -911,17 +911,8 @@ class TournamentCommands(app_commands.Group):
                 matches=matches
             )
 
-            status_tag = "🟢 Chaveamento Oficial Sorteado" if tourney.get("is_shuffled") else "🟡 Prévia de Inscrições (Ainda não sorteado)"
             file = discord.File(fp=image_buffer, filename=f"chaveamento_torneio_{id}.png")
-            embed = discord.Embed(
-                title=f"⚔️ Chaveamento: {tourney['name']}",
-                description=f"🎮 **Jogo:** {tourney['game_name']} • **Formato:** {tourney.get('format', '1v1').upper()}\n👥 **Inscritos:** {len(participants)}/{tourney['max_participants']} • **Status:** {status_tag}",
-                color=discord.Color.from_rgb(0, 240, 255)
-            )
-            embed.set_image(url=f"attachment://chaveamento_torneio_{id}.png")
-            embed.set_footer(text=f"Torneio #{id} • BMIA Esports")
-
-            await interaction.followup.send(embed=embed, file=file)
+            await interaction.followup.send(file=file)
         except Exception as e:
             logger.error(f"Erro ao gerar chaveamento do torneio {id}: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao gerar a imagem do chaveamento.")
@@ -968,15 +959,7 @@ class TournamentCommands(app_commands.Group):
             )
 
             file = discord.File(fp=image_buffer, filename=f"tabela_liga_{id}.png")
-            embed = discord.Embed(
-                title=f"📊 Classificação: {tourney['name']}",
-                description=f"🎮 **Jogo:** {tourney['game_name']} • **Formato:** Pontos Corridos ({tourney.get('format', '1v1').upper()})",
-                color=discord.Color.from_rgb(0, 240, 255)
-            )
-            embed.set_image(url=f"attachment://tabela_liga_{id}.png")
-            embed.set_footer(text=f"Torneio #{id} • BMIA Esports")
-
-            await interaction.followup.send(embed=embed, file=file)
+            await interaction.followup.send(file=file)
         except Exception as e:
             logger.error(f"Erro ao gerar tabela do torneio {id}: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao gerar a tabela de classificação.")
