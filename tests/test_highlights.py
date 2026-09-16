@@ -18,8 +18,8 @@ def mock_db():
         "longestStreaming": [{"user_id": 105, "username": "StreamerPro", "value_seconds": 72000}],
         "topGamers": [{"user_id": 106, "username": "PlayerOne", "value_seconds": 540000}],
         "gameOfTheYear": [{"activity_name": "VALORANT", "value_seconds": 980000}],
+        "mostOffensive": [{"user_id": 108, "username": "BocaSujaPro", "value": 45}],
         "mostReactionsReceived": [{"user_id": 101, "username": "GigaR4M", "value": 350}],
-        "mostReactionsGiven": [{"user_id": 102, "username": "Shadow", "value": 520}],
         "mediaKing": [{"user_id": 107, "username": "MemeLord", "value": 412}],
         "omnipresent": [{"user_id": 101, "username": "GigaR4M", "value": 310}],
     })

@@ -2707,6 +2707,201 @@ class Database:
                 else:
                     winner_team_ids = match["team_b_ids"]
 
+            for idx, s in enumerate(standings, 1):
+                s["rank"] = idx
+
+            return standings
+
+    async def init_tournament_bracket_matches(
+        self,
+        tournament_id: int,
+        format_str: str,
+        participants: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Gera e inicializa os confrontos do chaveamento no banco de dados."""
+        fmt_raw = str(format_str).lower().strip()
+        is_2v2 = any(k in fmt_raw for k in ["2v2", "2x2", "dupla", "duplas"])
+        is_3v3 = any(k in fmt_raw for k in ["3v3", "3x3", "trio", "trios"])
+        team_size = 2 if is_2v2 else (3 if is_3v3 else 1)
+
+        # Agrupa os participantes em equipes ordenadas por seed
+        teams = []
+        for i in range(0, len(participants), team_size):
+            chunk = participants[i:i + team_size]
+            teams.append([p["user_id"] for p in chunk])
+
+        num_teams = len(teams)
+        if num_teams <= 2:
+            bracket_mode = 2
+        elif num_teams <= 4:
+            bracket_mode = 4
+        else:
+            bracket_mode = 8
+
+        matches_to_insert = []
+        if bracket_mode == 2:
+            # Final direta (Jogo 1)
+            team_a = teams[0] if len(teams) > 0 else []
+            team_b = teams[1] if len(teams) > 1 else []
+            matches_to_insert.append({
+                "round_name": "final",
+                "round_number": 1,
+                "match_number": 1,
+                "team_a_ids": team_a,
+                "team_b_ids": team_b,
+                "next_match_number": None,
+                "next_match_slot": None
+            })
+        elif bracket_mode == 4:
+            # Semifinal 1 (Jogo 1) -> Final (Jogo 3, Slot A)
+            matches_to_insert.append({
+                "round_name": "semifinal",
+                "round_number": 1,
+                "match_number": 1,
+                "team_a_ids": teams[0] if len(teams) > 0 else [],
+                "team_b_ids": teams[1] if len(teams) > 1 else [],
+                "next_match_number": 3,
+                "next_match_slot": "A"
+            })
+            # Semifinal 2 (Jogo 2) -> Final (Jogo 3, Slot B)
+            matches_to_insert.append({
+                "round_name": "semifinal",
+                "round_number": 1,
+                "match_number": 2,
+                "team_a_ids": teams[2] if len(teams) > 2 else [],
+                "team_b_ids": teams[3] if len(teams) > 3 else [],
+                "next_match_number": 3,
+                "next_match_slot": "B"
+            })
+            # Final (Jogo 3)
+            matches_to_insert.append({
+                "round_name": "final",
+                "round_number": 2,
+                "match_number": 3,
+                "team_a_ids": [],
+                "team_b_ids": [],
+                "next_match_number": None,
+                "next_match_slot": None
+            })
+        else:
+            # 8 Equipes: Quartas 1..4, Semis 5..6, Final 7
+            matches_to_insert.append({
+                "round_name": "quartas",
+                "round_number": 1,
+                "match_number": 1,
+                "team_a_ids": teams[0] if len(teams) > 0 else [],
+                "team_b_ids": teams[1] if len(teams) > 1 else [],
+                "next_match_number": 5,
+                "next_match_slot": "A"
+            })
+            matches_to_insert.append({
+                "round_name": "quartas",
+                "round_number": 1,
+                "match_number": 2,
+                "team_a_ids": teams[2] if len(teams) > 2 else [],
+                "team_b_ids": teams[3] if len(teams) > 3 else [],
+                "next_match_number": 5,
+                "next_match_slot": "B"
+            })
+            matches_to_insert.append({
+                "round_name": "quartas",
+                "round_number": 1,
+                "match_number": 3,
+                "team_a_ids": teams[4] if len(teams) > 4 else [],
+                "team_b_ids": teams[5] if len(teams) > 5 else [],
+                "next_match_number": 6,
+                "next_match_slot": "A"
+            })
+            matches_to_insert.append({
+                "round_name": "quartas",
+                "round_number": 1,
+                "match_number": 4,
+                "team_a_ids": teams[6] if len(teams) > 6 else [],
+                "team_b_ids": teams[7] if len(teams) > 7 else [],
+                "next_match_number": 6,
+                "next_match_slot": "B"
+            })
+            matches_to_insert.append({
+                "round_name": "semifinal",
+                "round_number": 2,
+                "match_number": 5,
+                "team_a_ids": [],
+                "team_b_ids": [],
+                "next_match_number": 7,
+                "next_match_slot": "A"
+            })
+            matches_to_insert.append({
+                "round_name": "semifinal",
+                "round_number": 2,
+                "match_number": 6,
+                "team_a_ids": [],
+                "team_b_ids": [],
+                "next_match_number": 7,
+                "next_match_slot": "B"
+            })
+            matches_to_insert.append({
+                "round_name": "final",
+                "round_number": 3,
+                "match_number": 7,
+                "team_a_ids": [],
+                "team_b_ids": [],
+                "next_match_number": None,
+                "next_match_slot": None
+            })
+
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM tournament_matches WHERE tournament_id = $1", tournament_id)
+            for m in matches_to_insert:
+                await conn.execute("""
+                    INSERT INTO tournament_matches (
+                        tournament_id, round_name, round_number, match_number,
+                        team_a_ids, team_b_ids, next_match_number, next_match_slot
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """, tournament_id, m["round_name"], m.get("round_number", 1), m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"])
+
+        return await self.get_tournament_matches(tournament_id)
+
+    async def get_tournament_matches(self, tournament_id: int) -> List[Dict[str, Any]]:
+        """Retorna todas as partidas do chaveamento de um torneio."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM tournament_matches
+                WHERE tournament_id = $1
+                ORDER BY match_number ASC
+            """, tournament_id)
+            return [dict(r) for r in rows]
+
+    async def record_match_result(
+        self,
+        tournament_id: int,
+        match_number: int,
+        score_a: int,
+        score_b: int,
+        winner_team_ids: Optional[List[int]] = None
+    ) -> Dict[str, Any]:
+        """Registra o placar de uma partida e avança o vencedor para a próxima fase (ou pontua na liga)."""
+        async with self.pool.acquire() as conn:
+            match = await conn.fetchrow("""
+                SELECT * FROM tournament_matches
+                WHERE tournament_id = $1 AND match_number = $2
+            """, tournament_id, match_number)
+
+            if not match:
+                return {"success": False, "reason": f"Partida #{match_number} não encontrada para este torneio."}
+
+            tourney = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            t_type = tourney["tournament_type"] if tourney else "bracket"
+
+            is_draw = (score_a == score_b)
+            if is_draw and t_type != "round_robin":
+                return {"success": False, "reason": "Em torneios de mata-mata não são permitidos empates. Deve haver um vencedor."}
+
+            if not is_draw and not winner_team_ids:
+                if score_a > score_b:
+                    winner_team_ids = match["team_a_ids"]
+                else:
+                    winner_team_ids = match["team_b_ids"]
+
             await conn.execute("""
                 UPDATE tournament_matches
                 SET score_a = $3,
@@ -2813,48 +3008,26 @@ class Database:
             return True
 
     async def get_tournament_hall_of_fame(self, guild_id: int, limit: int = 5) -> List[Dict[str, Any]]:
-        """Retorna o ranking histórico de campeões de torneios com jogos e torneios vencidos."""
+        """Retorna o ranking histórico de campeões de torneios."""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT 
-                    tp.user_id,
-                    COALESCE(u.username, '') as username,
-                    COUNT(DISTINCT tp.tournament_id) as titles_count,
-                    ARRAY_AGG(DISTINCT t.game_name) FILTER (WHERE t.game_name IS NOT NULL) as games,
-                    JSON_AGG(
-                        JSON_BUILD_OBJECT(
-                            'id', t.id,
-                            'name', t.name,
-                            'game_name', t.game_name
-                        ) ORDER BY t.id DESC
-                    ) as tournaments
-                FROM tournament_participants tp
-                JOIN tournaments t ON tp.tournament_id = t.id
-                LEFT JOIN users u ON tp.user_id = u.user_id
-                WHERE t.guild_id = $1 AND t.status = 'completed' AND tp.status = 'winner'
-                GROUP BY tp.user_id, u.username
+                    u.user_id,
+                    u.username,
+                    COUNT(t.id) as titles_count
+                FROM tournaments t
+                JOIN users u ON t.winner_id = u.user_id
+                WHERE t.guild_id = $1 AND t.status = 'completed' AND t.winner_id IS NOT NULL
+                GROUP BY u.user_id, u.username
                 ORDER BY titles_count DESC
                 LIMIT $2
             """, guild_id, limit)
-            
-            results = []
-            for row in rows:
-                item = dict(row)
-                tourneys = item.get("tournaments")
-                if isinstance(tourneys, str):
-                    try:
-                        item["tournaments"] = json.loads(tourneys)
-                    except Exception:
-                        item["tournaments"] = []
-                elif not isinstance(tourneys, list):
-                    item["tournaments"] = []
-                results.append(item)
-            return results
+            return [dict(row) for row in rows]
 
     async def get_guild_annual_highlights(self, guild_id: int, year: int, limit: int = 5) -> Dict[str, Any]:
         """
-        Retorna todas as estatísticas consolidadas dos Destaques do Ano para uma guilda,
-        aplicando fuso horário oficial de Brasília (America/Sao_Paulo).
+        Retorna todas as estatísticas consolidadas dos Destaques do Ano estritamente para a guilda fornecida,
+        aplicando fuso horário oficial de Brasília (America/Sao_Paulo) e ignorando canais AFK configurados.
         """
         start_date = datetime(year, 1, 1)
         end_date = datetime(year + 1, 1, 1)
@@ -2865,18 +3038,22 @@ class Database:
                 SELECT ip.user_id, COALESCE(u.username, '') as username, SUM(ip.points) as value
                 FROM interaction_points ip
                 LEFT JOIN users u ON ip.user_id = u.user_id
-                WHERE ip.created_at >= $1 AND ip.created_at < $2
+                WHERE ip.guild_id = $1
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
+                  AND ip.created_at >= $2 AND ip.created_at < $3
                 GROUP BY ip.user_id, u.username
                 ORDER BY value DESC
-                LIMIT $3
-            """, start_date, end_date, limit)
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
 
             # 2. Mais Mensagens de Texto (Tagarela)
             most_messages_rows = await conn.fetch("""
                 SELECT m.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
                 FROM messages m
                 LEFT JOIN users u ON m.user_id = u.user_id
-                WHERE m.guild_id = $1 AND m.created_at >= $2 AND m.created_at < $3
+                WHERE m.guild_id = $1
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
+                  AND m.created_at >= $2 AND m.created_at < $3
                   AND m.was_moderated = FALSE
                 GROUP BY m.user_id, u.username
                 ORDER BY value DESC
@@ -2888,7 +3065,10 @@ class Database:
                 SELECT v.user_id, COALESCE(u.username, '') as username, COALESCE(SUM(v.duration_seconds), 0) as value_seconds
                 FROM voice_activity v
                 LEFT JOIN users u ON v.user_id = u.user_id
-                WHERE v.guild_id = $1 AND v.joined_at >= $2 AND v.joined_at < $3
+                WHERE v.guild_id = $1
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
+                  AND v.joined_at >= $2 AND v.joined_at < $3
+                  AND (v.channel_id NOT IN (1335352978986635468, 1356045946743689236) OR v.channel_id IS NULL)
                 GROUP BY v.user_id, u.username
                 ORDER BY value_seconds DESC
                 LIMIT $4
@@ -2900,8 +3080,10 @@ class Database:
                 FROM voice_activity v
                 LEFT JOIN users u ON v.user_id = u.user_id
                 WHERE v.guild_id = $1 
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
                   AND v.joined_at >= $2 AND v.joined_at < $3
-                  AND EXTRACT(HOUR FROM (v.joined_at AT TIME ZONE 'America/Sao_Paulo')) BETWEEN 0 AND 5
+                  AND (v.channel_id NOT IN (1335352978986635468, 1356045946743689236) OR v.channel_id IS NULL)
+                  AND EXTRACT(HOUR FROM (v.joined_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) BETWEEN 0 AND 5
                 GROUP BY v.user_id, u.username
                 ORDER BY value_seconds DESC
                 LIMIT $4
@@ -2913,8 +3095,12 @@ class Database:
                 FROM user_activities a
                 LEFT JOIN users u ON a.user_id = u.user_id
                 WHERE a.guild_id = $1 
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
                   AND a.started_at >= $2 AND a.started_at < $3
-                  AND a.activity_type IN ('streaming', 'screen_share')
+                  AND (
+                      a.activity_type IN ('streaming', 'screen_share')
+                      OR a.activity_name IN ('Streaming', 'Screen Share')
+                  )
                 GROUP BY a.user_id, u.username
                 ORDER BY value_seconds DESC
                 LIMIT $4
@@ -2926,9 +3112,11 @@ class Database:
                 FROM user_activities a
                 LEFT JOIN users u ON a.user_id = u.user_id
                 WHERE a.guild_id = $1 
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
                   AND a.started_at >= $2 AND a.started_at < $3
-                  AND a.activity_type NOT IN ('streaming', 'screen_share', 'custom')
+                  AND a.activity_type IN ('playing', 'PLAYING')
                   AND a.activity_name NOT ILIKE 'Spotify'
+                  AND a.activity_name NOT IN ('Streaming', 'Screen Share')
                 GROUP BY a.user_id, u.username
                 ORDER BY value_seconds DESC
                 LIMIT $4
@@ -2940,36 +3128,41 @@ class Database:
                 FROM user_activities a
                 WHERE a.guild_id = $1 
                   AND a.started_at >= $2 AND a.started_at < $3
-                  AND a.activity_type NOT IN ('streaming', 'screen_share', 'custom')
+                  AND a.activity_type IN ('playing', 'PLAYING')
                   AND a.activity_name NOT ILIKE 'Spotify'
+                  AND a.activity_name NOT IN ('Streaming', 'Screen Share')
                 GROUP BY a.activity_name
                 ORDER BY value_seconds DESC
                 LIMIT $4
             """, guild_id, start_date, end_date, limit)
 
-            # 8. Ímã da Galera (Reações Recebidas)
+            # 8. Boca Suja (Mensagens Ofensivas / Moderadas)
+            most_offensive_rows = await conn.fetch("""
+                SELECT m.user_id, COALESCE(u.username, '') as username, COUNT(m.message_id) as value
+                FROM messages m
+                LEFT JOIN users u ON m.user_id = u.user_id
+                WHERE m.guild_id = $1
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
+                  AND m.was_moderated = TRUE
+                  AND m.created_at >= $2 AND m.created_at < $3
+                GROUP BY m.user_id, u.username
+                ORDER BY value DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            # 9. Ímã da Galera (Reações Recebidas)
             reactions_rcv_rows = await conn.fetch("""
                 SELECT ip.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
                 FROM interaction_points ip
                 LEFT JOIN users u ON ip.user_id = u.user_id
-                WHERE ip.interaction_type = 'reaction_received'
-                  AND ip.created_at >= $1 AND ip.created_at < $2
+                WHERE ip.guild_id = $1
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
+                  AND ip.interaction_type = 'reaction_received'
+                  AND ip.created_at >= $2 AND ip.created_at < $3
                 GROUP BY ip.user_id, u.username
                 ORDER BY value DESC
-                LIMIT $3
-            """, start_date, end_date, limit)
-
-            # 9. O Reativo (Reações Dadas)
-            reactions_gvn_rows = await conn.fetch("""
-                SELECT ip.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
-                FROM interaction_points ip
-                LEFT JOIN users u ON ip.user_id = u.user_id
-                WHERE ip.interaction_type = 'reaction_given'
-                  AND ip.created_at >= $1 AND ip.created_at < $2
-                GROUP BY ip.user_id, u.username
-                ORDER BY value DESC
-                LIMIT $3
-            """, start_date, end_date, limit)
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
 
             # 10. O Mídia (Arquivos / Anexos Enviados)
             media_king_rows = await conn.fetch("""
@@ -2977,6 +3170,7 @@ class Database:
                 FROM messages m
                 LEFT JOIN users u ON m.user_id = u.user_id
                 WHERE m.guild_id = $1 
+                  AND (u.is_bot = FALSE OR u.is_bot IS NULL)
                   AND m.has_attachments = TRUE
                   AND m.created_at >= $2 AND m.created_at < $3
                 GROUP BY m.user_id, u.username
@@ -2987,17 +3181,18 @@ class Database:
             # 11. O Onipresente (Dias Distintos Ativos no Ano)
             omnipresent_rows = await conn.fetch("""
                 WITH combined_activity AS (
-                    SELECT user_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date as act_date
+                    SELECT user_id, ((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date as act_date
                     FROM messages
                     WHERE guild_id = $1 AND created_at >= $2 AND created_at < $3
                     UNION ALL
-                    SELECT user_id, (joined_at AT TIME ZONE 'America/Sao_Paulo')::date as act_date
+                    SELECT user_id, ((joined_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::date as act_date
                     FROM voice_activity
                     WHERE guild_id = $1 AND joined_at >= $2 AND joined_at < $3
                 )
                 SELECT ca.user_id, COALESCE(u.username, '') as username, COUNT(DISTINCT ca.act_date) as value
                 FROM combined_activity ca
                 LEFT JOIN users u ON ca.user_id = u.user_id
+                WHERE (u.is_bot = FALSE OR u.is_bot IS NULL)
                 GROUP BY ca.user_id, u.username
                 ORDER BY value DESC
                 LIMIT $4
@@ -3011,8 +3206,8 @@ class Database:
                 "longestStreaming": [dict(r) for r in longest_streaming_rows],
                 "topGamers": [dict(r) for r in top_gamers_rows],
                 "gameOfTheYear": [dict(r) for r in game_of_year_rows],
+                "mostOffensive": [dict(r) for r in most_offensive_rows],
                 "mostReactionsReceived": [dict(r) for r in reactions_rcv_rows],
-                "mostReactionsGiven": [dict(r) for r in reactions_gvn_rows],
                 "mediaKing": [dict(r) for r in media_king_rows],
                 "omnipresent": [dict(r) for r in omnipresent_rows],
             }
