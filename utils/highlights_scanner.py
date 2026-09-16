@@ -77,11 +77,20 @@ class HighlightsScanner:
 
         logger.info("🔍 Escaneando %d canal(is) para Clipes/Prints de %d em %s...", len(channels_to_scan), year, guild.name)
         top_item = None
-        max_reactions = 0
+        max_score = -1
 
         for ch in channels_to_scan:
             try:
-                async for message in ch.history(after=start_of_year, limit=200):
+                messages = []
+                reply_counts: Dict[int, int] = {}
+
+                async for message in ch.history(after=start_of_year, limit=300):
+                    messages.append(message)
+                    if message.reference and message.reference.message_id:
+                        ref_id = message.reference.message_id
+                        reply_counts[ref_id] = reply_counts.get(ref_id, 0) + 1
+
+                for message in messages:
                     if message.author.bot:
                         continue
 
@@ -103,8 +112,13 @@ class HighlightsScanner:
                         continue
 
                     total_reactions = sum(r.count for r in message.reactions)
-                    if total_reactions > max_reactions:
-                        max_reactions = total_reactions
+                    direct_replies = reply_counts.get(message.id, 0)
+                    
+                    # Fórmula de engajamento: 1 reação = 1 pt, 1 resposta = 2 pts
+                    popularity_score = total_reactions + (direct_replies * 2)
+
+                    if popularity_score > max_score or (popularity_score == max_score and total_reactions > (top_item.get("reaction_count", 0) if top_item else -1)):
+                        max_score = popularity_score
                         top_item = {
                             "message_id": message.id,
                             "channel_name": ch.name,
@@ -113,6 +127,8 @@ class HighlightsScanner:
                             "avatar_url": str(message.author.display_avatar.url),
                             "media_url": media_url,
                             "reaction_count": total_reactions,
+                            "reply_count": direct_replies,
+                            "popularity_score": popularity_score,
                             "reaction_summary": " ".join(f"{r.emoji} {r.count}" for r in message.reactions[:5]),
                             "created_at": message.created_at.strftime("%d/%m/%Y"),
                             "jump_url": message.jump_url,

@@ -175,16 +175,10 @@ async def check_monthly_podium(
                                     categories=HIGHLIGHTS_CATEGORIES
                                 )
                                 if h_files:
-                                    f1, f2 = h_files[:7], h_files[7:]
                                     await target_channel.send(
-                                        f"🌟 **DESTAQUES DO ANO {prev_year} • {guild.name} (Parte 1/2)**\n*Confira os maiores recordes e destaques da comunidade:*",
-                                        files=f1
+                                        f"🌟 **DESTAQUES DO ANO {prev_year} • {guild.name}**\n*Confira os maiores recordes e destaques da comunidade:*",
+                                        files=h_files
                                     )
-                                    if f2:
-                                        await target_channel.send(
-                                            f"🌟 **DESTAQUES DO ANO {prev_year} • {guild.name} (Parte 2/2)**",
-                                            files=f2
-                                        )
                             except Exception as h_err:
                                 logger.warning("Erro ao enviar galeria de destaques no background: %s", h_err)
 

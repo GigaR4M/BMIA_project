@@ -15,15 +15,12 @@ HIGHLIGHTS_CATEGORIES = [
     {"id": "mvp", "label": "MVP", "title": "O MVP DO ANO", "subtitle": "Maior Acúmulo de XP e Pontos", "icon": "👑", "color": "#ffd700", "unit": "XP"},
     {"id": "tagarela", "label": "Tagarela", "title": "O TAGARELA", "subtitle": "Mais Mensagens de Texto Enviadas", "icon": "💬", "color": "#38bdf8", "unit": "msgs"},
     {"id": "rei_da_call", "label": "Rei da Call", "title": "REI DA CALL", "subtitle": "Maior Tempo Conectado em Canais de Voz", "icon": "🎙️", "color": "#a855f7", "is_time": True},
-    {"id": "corujao", "label": "O Corujão", "title": "O CORUJÃO", "subtitle": "Mais Horas em Voz na Madrugada (00h-06h)", "icon": "🦉", "color": "#6366f1", "is_time": True},
+    {"id": "corujao", "label": "O Corujão", "title": "O CORUJÃO", "subtitle": "Mais Horas em Voz na Madrugada (01h-05h BRT)", "icon": "🦉", "color": "#6366f1", "is_time": True},
     {"id": "streamer", "label": "Streamer", "title": "STREAMER DO SERVIDOR", "subtitle": "Maior Tempo em Transmissão / Ao Vivo", "icon": "📺", "color": "#ec4899", "is_time": True},
     {"id": "top_gamers", "label": "Top Gamers", "title": "TOP GAMERS", "subtitle": "Maior Tempo Jogado no Ano", "icon": "🎮", "color": "#22c55e", "is_time": True},
     {"id": "jogo_do_ano", "label": "Jogo do Ano", "title": "JOGO DO ANO", "subtitle": "Jogos Mais Populares da Comunidade", "icon": "🕹️", "color": "#eab308", "is_time": True},
-    {"id": "media", "label": "Clipe do Ano", "title": "CLIPE / PRINT DO ANO", "subtitle": "Momento Mais Votado da Comunidade", "icon": "📸", "color": "#f43f5e"},
-    {"id": "o_midia", "label": "O Mídia", "title": "O MÍDIA", "subtitle": "Mais Imagens, Prints e Anexos Enviados", "icon": "🖼️", "color": "#06b6d4", "unit": "anexos"},
-    {"id": "o_onipresente", "label": "Onipresente", "title": "O ONIPRESENTE", "subtitle": "Mais Dias Ativos no Servidor", "icon": "📅", "color": "#10b981", "unit": "dias"},
-    {"id": "ima_da_galera", "label": "Ímã da Galera", "title": "ÍMÃ DA GALERA", "subtitle": "Membro Mais Interativo e Citado", "icon": "🧲", "color": "#f97316", "unit": "pontos"},
-    {"id": "boca_suja", "label": "Boca Suja", "title": "BOCA SUJA", "subtitle": "Mais Mensagens com Linguajar Ofensivo", "icon": "🤬", "color": "#ef4444", "unit": "msgs"},
+    {"id": "media", "label": "Clipe do Ano", "title": "CLIPE / PRINT DO ANO", "subtitle": "Momento Mais Popular da Comunidade", "icon": "📸", "color": "#f43f5e"},
+    {"id": "outros_destaques", "label": "Outros Destaques", "title": "OUTROS DESTAQUES DO ANO", "subtitle": "Recordes e Menções Honrosas", "icon": "🌟", "color": "#8b5cf6"},
 ]
 
 
@@ -53,25 +50,10 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
             await interaction.followup.send("❌ Não foi possível gerar os slides da retrospectiva.", ephemeral=True)
             return
 
-        files_part1 = files[:7]
-        files_part2 = files[7:]
-
         await interaction.followup.send(
-            content=f"🌟 **DESTAQUES DO ANO {year} • {interaction.guild.name} (Parte 1/2)**\n*Navegue pelas fotos da galeria em tela cheia abaixo:*",
-            files=files_part1
+            content=f"🌟 **DESTAQUES DO ANO {year} • {interaction.guild.name}**\n*Navegue pelas fotos da galeria em tela cheia abaixo:*",
+            files=files
         )
-
-        if files_part2:
-            if hasattr(interaction, "channel") and interaction.channel:
-                await interaction.channel.send(
-                    content=f"🌟 **DESTAQUES DO ANO {year} • {interaction.guild.name} (Parte 2/2)**",
-                    files=files_part2
-                )
-            else:
-                await interaction.followup.send(
-                    content=f"🌟 **DESTAQUES DO ANO {year} • {interaction.guild.name} (Parte 2/2)**",
-                    files=files_part2
-                )
 
     except Exception as e:
         logger.error("❌ Erro ao gerar galeria de Destaques do Ano: %s", e, exc_info=True)

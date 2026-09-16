@@ -3151,9 +3151,11 @@ class HighlightsBuilder:
         author_name = clip_data.get("username", "Autor")
         avatar_uri = await cls._fetch_avatar_data_uri(clip_data.get("avatar_url"), author_name)
         channel_name = clip_data.get("channel_name", "prints-e-clips")
-        reactions_str = clip_data.get("reaction_summary") or f"🔥 {clip_data.get('reaction_count', 0)}"
-        date_str = clip_data.get("created_at", "")
-        media_url = clip_data.get("media_url")
+        reactions_cnt = clip_data.get("reaction_count", 0)
+        reply_cnt = clip_data.get("reply_count", 0)
+        engagement_str = f"🔥 {reactions_cnt} reações"
+        if reply_cnt > 0:
+            engagement_str += f" • 💬 {reply_cnt} respostas"
 
         preview_html = f"""<img class="media-preview" src="{media_url}" alt="Clipe do Ano">""" if media_url else """
         <div class="no-preview">
@@ -3292,7 +3294,7 @@ class HighlightsBuilder:
             margin-bottom: 8px;
         }}
         .reactions-val {{
-            font-size: 28px;
+            font-size: 24px;
             font-weight: 700;
             color: #ffffff;
         }}
@@ -3334,14 +3336,276 @@ class HighlightsBuilder:
             </div>
 
             <div class="reactions-card">
-                <div class="reactions-title">🔥 Total de Reações</div>
-                <div class="reactions-val">{reactions_str}</div>
+                <div class="reactions-title">🔥 Engajamento da Comunidade</div>
+                <div class="reactions-val">{engagement_str}</div>
             </div>
 
             <div class="info-pill">
                 📅 Publicado em: <strong>{date_str}</strong>
             </div>
         </div>
+    </div>
+</body>
+</html>"""
+
+    @classmethod
+    async def _build_other_highlights_html(
+        cls,
+        guild: Optional[discord.Guild],
+        year: int,
+        highlights_data: Dict[str, Any]
+    ) -> str:
+        """Renderiza o slide especial #10 de 'Outros Destaques' com grid 3x2 reunindo os 6 rankings secundários."""
+        subcats = [
+            {"key": "o_midia", "title": "O MÍDIA", "subtitle": "Mais Anexos & Prints", "icon": "🖼️", "color": "#06b6d4", "unit": "anexos", "is_time": False},
+            {"key": "o_onipresente", "title": "O ONIPRESENTE", "subtitle": "Mais Dias Ativos", "icon": "📅", "color": "#10b981", "unit": "dias", "is_time": False},
+            {"key": "ima_da_galera", "title": "ÍMÃ DA GALERA", "subtitle": "Reações & Menções", "icon": "🧲", "color": "#f97316", "unit": "reações", "is_time": False},
+            {"key": "boca_suja", "title": "BOCA SUJA", "subtitle": "Mensagens Ofensivas", "icon": "🤬", "color": "#ef4444", "unit": "msgs", "is_time": False},
+            {"key": "rei_das_demos", "title": "REI DAS DEMOS", "subtitle": "Jogos Demo Registrados", "icon": "🎮", "color": "#8b5cf6", "unit": "demos", "is_time": False},
+            {"key": "maratonista", "title": "O MARATONISTA", "subtitle": "Maior Sessão de Voz", "icon": "⏱️", "color": "#3b82f6", "unit": "", "is_time": True}
+        ]
+
+        def format_val_str(val_any: Any, is_time: bool) -> str:
+            if is_time:
+                sec = float(val_any or 0)
+                hours = int(sec // 3600)
+                mins = int((sec % 3600) // 60)
+                return f"{hours}h {mins}m"
+            try:
+                num = int(val_any or 0)
+                return f"{num:,}".replace(",", ".")
+            except (ValueError, TypeError):
+                return str(val_any or 0)
+
+        rendered_panels = []
+        for scat in subcats:
+            raw_winners = highlights_data.get(scat["key"], [])
+            panel_rows = []
+            
+            medals = ["🥇", "🥈", "🥉"]
+            border_colors = ["#ffd700", "#e2e8f0", "#cd7f32"]
+
+            for rank_idx in range(3):
+                if rank_idx < len(raw_winners):
+                    w = raw_winners[rank_idx]
+                    uid = w.get("user_id")
+                    uname = w.get("username") or f"Membro #{rank_idx+1}"
+                    avatar_url = w.get("avatar_url")
+                    if guild and uid:
+                        member = guild.get_member(uid)
+                        if member:
+                            avatar_url = str(member.display_avatar.url)
+                    
+                    val_raw = w.get("value_seconds") if scat["is_time"] else (w.get("value") or w.get("count") or 0)
+                    formatted_val = format_val_str(val_raw, scat["is_time"])
+                    if scat["unit"] and not scat["is_time"]:
+                        formatted_val = f"{formatted_val} {scat['unit']}"
+
+                    avatar_uri = await cls._fetch_avatar_data_uri(avatar_url, uname)
+
+                    panel_rows.append(f"""
+                    <div class="user-row">
+                        <div class="user-left">
+                            <span class="rank-badge" style="color: {border_colors[rank_idx]};">{medals[rank_idx]}</span>
+                            <img class="user-avatar" src="{avatar_uri}" alt="{uname}">
+                            <span class="user-name">{uname}</span>
+                        </div>
+                        <span class="user-val" style="color: {scat['color']};">{formatted_val}</span>
+                    </div>
+                    """)
+                else:
+                    panel_rows.append(f"""
+                    <div class="user-row empty">
+                        <div class="user-left">
+                            <span class="rank-badge">—</span>
+                            <span class="user-name empty-text">Sem registro</span>
+                        </div>
+                        <span class="user-val">—</span>
+                    </div>
+                    """)
+
+            rows_html = "".join(panel_rows)
+            rendered_panels.append(f"""
+            <div class="mini-card" style="border-top: 3px solid {scat['color']};">
+                <div class="mini-card-header">
+                    <span class="mini-icon">{scat['icon']}</span>
+                    <div>
+                        <div class="mini-title">{scat['title']}</div>
+                        <div class="mini-subtitle">{scat['subtitle']}</div>
+                    </div>
+                </div>
+                <div class="mini-card-body">
+                    {rows_html}
+                </div>
+            </div>
+            """)
+
+        all_panels_html = "".join(rendered_panels)
+
+        return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            width: 1300px;
+            height: 850px;
+            background: #06080d;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(0, 240, 255, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 85% 15%, rgba(139, 92, 246, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 50% 85%, rgba(249, 115, 22, 0.12) 0%, transparent 50%),
+                radial-gradient(circle at 50% 50%, rgba(15, 23, 42, 0.95) 0%, #06080d 100%);
+            font-family: 'Rajdhani', sans-serif;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            padding: 35px 50px;
+            overflow: hidden;
+            position: relative;
+        }}
+        .top-glow {{
+            position: absolute; top: 0; left: 0; right: 0; height: 4px;
+            background: linear-gradient(90deg, #06b6d4, #10b981, #f97316, #ef4444, #8b5cf6, #3b82f6);
+            box-shadow: 0 0 25px rgba(0, 240, 255, 0.8);
+        }}
+        .header {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding-bottom: 16px;
+            margin-bottom: 24px;
+        }}
+        .header-left {{ display: flex; align-items: center; gap: 18px; }}
+        .header-icon {{
+            font-size: 38px;
+            background: rgba(255,255,255,0.05);
+            border: 2px solid #8b5cf6;
+            border-radius: 16px;
+            width: 68px; height: 68px;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 20px rgba(139, 92, 246, 0.5);
+        }}
+        .title {{ font-family: 'Orbitron', sans-serif; font-size: 32px; font-weight: 900; color: #fff; letter-spacing: 2px; text-transform: uppercase; }}
+        .subtitle {{ font-size: 16px; color: #94a3b8; font-weight: 600; }}
+        .badge-year {{ background: rgba(255,215,0,0.1); border: 1px solid #ffd700; color: #ffd700; padding: 6px 18px; border-radius: 999px; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: 800; letter-spacing: 2px; }}
+
+        .grid-layout {{
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(2, 1fr);
+            gap: 22px;
+            height: 660px;
+        }}
+        .mini-card {{
+            background: rgba(15, 23, 42, 0.75);
+            border-radius: 18px;
+            border-left: 1px solid rgba(255,255,255,0.08);
+            border-right: 1px solid rgba(255,255,255,0.08);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            padding: 18px 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+        }}
+        .mini-card-header {{
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 8px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }}
+        .mini-icon {{ font-size: 26px; }}
+        .mini-title {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 16px;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 1px;
+        }}
+        .mini-subtitle {{
+            font-size: 13px;
+            color: #94a3b8;
+            font-weight: 600;
+        }}
+        .mini-card-body {{
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }}
+        .user-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(255,255,255,0.035);
+            border: 1px solid rgba(255,255,255,0.03);
+            border-radius: 10px;
+            padding: 9px 12px;
+        }}
+        .user-row.empty {{
+            opacity: 0.4;
+        }}
+        .user-left {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            overflow: hidden;
+        }}
+        .rank-badge {{
+            font-size: 18px;
+            font-weight: 700;
+            width: 24px;
+            text-align: center;
+        }}
+        .user-avatar {{
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1.5px solid rgba(255,255,255,0.25);
+        }}
+        .user-name {{
+            font-size: 16px;
+            font-weight: 700;
+            color: #f1f5f9;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 140px;
+        }}
+        .empty-text {{
+            color: #64748b;
+            font-style: italic;
+        }}
+        .user-val {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="top-glow"></div>
+    <div class="header">
+        <div class="header-left">
+            <div class="header-icon">🌟</div>
+            <div>
+                <h1 class="title">OUTROS DESTAQUES DO ANO</h1>
+                <p class="subtitle">Recordes e menções honrosas da comunidade</p>
+            </div>
+        </div>
+        <div class="badge-year">BMIA WRAPPED {year}</div>
+    </div>
+
+    <div class="grid-layout">
+        {all_panels_html}
     </div>
 </body>
 </html>"""
@@ -3356,6 +3620,31 @@ class HighlightsBuilder:
         """Renderiza o slide especial de '📸 Clipe / Print do Ano' com preview e estatísticas."""
         from playwright.async_api import async_playwright
         html = await cls._build_media_html(guild, year, clip_data)
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            page = await browser.new_page(viewport={"width": 1300, "height": 850})
+            await page.set_content(html, wait_until="load")
+            screenshot_bytes = await page.screenshot(type="png", omit_background=True)
+            await browser.close()
+
+        buffer = BytesIO(screenshot_bytes)
+        buffer.seek(0)
+        return buffer
+
+    @classmethod
+    async def generate_other_highlights_slide(
+        cls,
+        guild: Optional[discord.Guild],
+        year: int,
+        highlights_data: Dict[str, Any]
+    ) -> BytesIO:
+        """Renderiza o slide composto de '🌟 Outros Destaques do Ano'."""
+        from playwright.async_api import async_playwright
+        html = await cls._build_other_highlights_html(guild, year, highlights_data)
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -3397,6 +3686,8 @@ class HighlightsBuilder:
                 html = await cls._build_cover_html(guild, year, len(categories))
             elif cat_id == "media":
                 html = await cls._build_media_html(guild, year, top_clip)
+            elif cat_id == "outros_destaques":
+                html = await cls._build_other_highlights_html(guild, year, highlights_data)
             else:
                 winners = highlights_data.get(cat_id, [])
                 html = await cls._build_category_html(

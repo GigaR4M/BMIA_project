@@ -8,7 +8,7 @@ from utils.image_generator import HighlightsBuilder
 
 
 def test_highlights_categories_count_and_structure():
-    assert len(HIGHLIGHTS_CATEGORIES) == 13
+    assert len(HIGHLIGHTS_CATEGORIES) == 10
     cat_ids = [c["id"] for c in HIGHLIGHTS_CATEGORIES]
     assert "cover" in cat_ids
     assert "mvp" in cat_ids
@@ -19,10 +19,7 @@ def test_highlights_categories_count_and_structure():
     assert "top_gamers" in cat_ids
     assert "jogo_do_ano" in cat_ids
     assert "media" in cat_ids
-    assert "o_midia" in cat_ids
-    assert "o_onipresente" in cat_ids
-    assert "ima_da_galera" in cat_ids
-    assert "boca_suja" in cat_ids
+    assert "outros_destaques" in cat_ids
 
 
 @pytest.mark.asyncio

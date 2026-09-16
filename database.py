@@ -2930,7 +2930,7 @@ class Database:
                 logger.warning("Erro get_highlight_omnipresent: %s", e)
                 highlights["o_onipresente"] = []
 
-            # 10. Ímã da Galera (Reações Recebidas)
+            # 10. Ímã da Galera (Reações / Interações Recebidas)
             try:
                 rows = await conn.fetch("SELECT * FROM get_highlight_most_reactions_received($1, $2)", guild_id, 5)
                 highlights["ima_da_galera"] = [dict(r) for r in rows]
@@ -2945,5 +2945,35 @@ class Database:
             except Exception as e:
                 logger.warning("Erro get_highlight_most_offensive: %s", e)
                 highlights["boca_suja"] = []
+
+            # 12. O Maratonista (Maior Sessão Contínua de Voz)
+            try:
+                rows = await conn.fetch("SELECT * FROM get_highlight_longest_session($1, $2)", guild_id, 5)
+                highlights["maratonista"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("Erro get_highlight_longest_session: %s", e)
+                highlights["maratonista"] = []
+
+            # 13. Rei das Demos (Jogos Demo / Partidas Analisadas)
+            try:
+                start_date = datetime(year, 1, 1)
+                end_date = datetime(year + 1, 1, 1)
+                rows = await conn.fetch("""
+                    SELECT u.user_id, u.username, u.avatar_url, COUNT(DISTINCT activity_name) as count
+                    FROM user_activities ua
+                    JOIN users u ON u.user_id = ua.user_id
+                    WHERE ua.guild_id = $1 
+                      AND ua.activity_type = 'playing'
+                      AND ua.started_at >= $2 AND ua.started_at < $3
+                      AND ua.duration_seconds > 60
+                      AND ua.activity_name ILIKE '%demo%'
+                    GROUP BY u.user_id, u.username, u.avatar_url
+                    ORDER BY count DESC
+                    LIMIT 5
+                """, guild_id, start_date, end_date)
+                highlights["rei_das_demos"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("Erro consulta rei_das_demos: %s", e)
+                highlights["rei_das_demos"] = []
 
         return highlights
