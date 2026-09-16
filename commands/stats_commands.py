@@ -336,11 +336,7 @@ async def handle_highlights_carousel(
     interaction: discord.Interaction,
     year: Optional[int] = None
 ):
-    """
-    Gera e envia a Galeria Nativa dos Destaques do Ano (BMIA Wrapped) em mosaicos de alta fidelidade.
-    As imagens são enviadas em 2 lotes (Parte 1 e Parte 2) organizadas pelo Discord em mosaicos,
-    permitindo que qualquer membro clique e navegue em tela cheia com 0ms de delay e sem expiração.
-    """
+    """Gera e inicializa o carrossel interativo de Destaques do Ano."""
     await interaction.response.defer()
     target_year = year or now_brt().year
 
@@ -352,48 +348,20 @@ async def handle_highlights_carousel(
         top_clips = await HighlightsScanner.find_top_clips_and_prints(interaction.guild, target_year, limit=1)
         top_clip = top_clips[0] if top_clips else None
 
-        # Renderiza todos os slides simultaneamente em lote
-        all_files = await HighlightsBuilder.generate_all_slides_files(
+        view = HighlightsCarouselView(
             guild=interaction.guild,
             year=target_year,
             highlights_data=stats_data,
             top_clip=top_clip,
-            categories=HIGHLIGHTS_CATEGORIES
+            author_id=interaction.user.id
         )
 
-        # Divisão em 2 partes (Discord permite até 10 anexos por mensagem):
-        # Parte 1: 7 slides (Capa + 6 primeiras categorias)
-        # Parte 2: 6 slides (Restantes categorias)
-        part1_files = all_files[:7]
-        part2_files = all_files[7:]
+        initial_buf = await view._render_current_slide()
+        file = discord.File(fp=initial_buf, filename=f"destaques_{target_year}_0.png")
 
-        # Envia a Parte 1
-        await interaction.followup.send(
-            content=f"🌟 **BMIA WRAPPED {target_year} — DESTAQUES DO ANO (PARTE 1/2)** 🏆\n"
-                    f"*💡 Clique em qualquer imagem para abrir a galeria nativa em tela cheia e navegar com as setas do teclado ou touch.*",
-            files=part1_files
-        )
-
-        # Prepara a View para a Parte 2 (botão com link para a mensagem original do clipe, se houver)
-        view = None
-        if top_clip and top_clip.get("jump_url"):
-            view = discord.ui.View()
-            view.add_item(
-                discord.ui.Button(
-                    label="🔗 Ver Mensagem Original do Clipe do Ano",
-                    url=top_clip["jump_url"],
-                    style=discord.ButtonStyle.link
-                )
-            )
-
-        # Envia a Parte 2
-        await interaction.followup.send(
-            content=f"🌟 **BMIA WRAPPED {target_year} — DESTAQUES DO ANO (PARTE 2/2)** 📸",
-            files=part2_files,
-            view=view
-        )
+        await interaction.followup.send(file=file, view=view)
     except Exception as e:
-        logger.error(f"Erro ao gerar galeria de destaques para {target_year}: {e}", exc_info=True)
+        logger.error(f"Erro ao inicializar carrossel de destaques para {target_year}: {e}", exc_info=True)
         await interaction.followup.send("❌ Ocorreu um erro ao gerar os Destaques do Ano. Tente novamente.", ephemeral=True)
 
 
@@ -815,10 +783,10 @@ class StatsCommands(app_commands.Group):
                 ephemeral=True
             )
 
-    @app_commands.command(name="destaques", description="Exibe a galeria visual dos Destaques do Ano do servidor (BMIA Wrapped)")
+    @app_commands.command(name="destaques", description="Abre o carrossel interativo dos Destaques do Ano do servidor (BMIA Wrapped)")
     @app_commands.describe(ano="Ano da retrospectiva (opcional, padrão: ano atual)")
     async def destaques(self, interaction: discord.Interaction, ano: Optional[int] = None):
-        """Exibe a galeria de Destaques do Ano."""
+        """Exibe o carrossel de Destaques do Ano."""
         await handle_highlights_carousel(self.db, interaction, ano)
     
     @user_stats.error
