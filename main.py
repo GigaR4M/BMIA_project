@@ -35,7 +35,7 @@ from tasks.moderation import processador_em_lote
 
 from database import Database
 from stats_collector import StatsCollector
-from commands.stats_commands import StatsCommands, handle_rank_card, handle_highlights_carousel
+from commands.stats_commands import StatsCommands, handle_rank_card
 from commands.role_commands import RoleCommands
 from commands.giveaway_commands import GiveawayCommands
 from commands.moderation_commands import ModerationCommands
@@ -169,11 +169,6 @@ async def on_ready() -> None:
         @discord.app_commands.describe(membro="Membro que deseja visualizar o perfil (opcional)")
         async def perfil_slash(interaction: discord.Interaction, membro: discord.Member | None = None):
             await handle_rank_card(ctx.db, interaction, membro)
-
-        @client.tree.command(name="destaques", description="Abre o carrossel interativo com os Destaques do Ano do servidor (BMIA Wrapped)")
-        @discord.app_commands.describe(ano="Ano da retrospectiva (opcional, padrão: ano atual)")
-        async def destaques_slash(interaction: discord.Interaction, ano: int | None = None):
-            await handle_highlights_carousel(ctx.db, interaction, ano)
 
 
         # Registra persistent views para torneios ativos (para botões continuarem funcionando)
