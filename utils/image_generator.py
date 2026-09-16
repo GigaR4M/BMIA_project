@@ -2769,14 +2769,16 @@ class HighlightsBuilder:
     ) -> str:
         def format_val(item: Dict[str, Any]) -> str:
             if is_time:
-                sec = item.get("value_seconds", 0) or item.get("value", 0)
+                sec = float(item.get("value_seconds", 0) or item.get("value", 0) or 0)
                 hours = int(sec // 3600)
                 mins = int((sec % 3600) // 60)
                 return f"{hours}h {mins}m"
             val = item.get("value", 0)
-            if isinstance(val, (int, float)):
-                return f"{val:,}".replace(",", ".")
-            return str(val)
+            try:
+                num = int(val)
+                return f"{num:,}".replace(",", ".")
+            except (ValueError, TypeError):
+                return str(val)
 
         top_data = []
         for i in range(3):
