@@ -2851,4 +2851,168 @@ class Database:
                 results.append(item)
             return results
 
+    async def get_guild_annual_highlights(self, guild_id: int, year: int, limit: int = 5) -> Dict[str, Any]:
+        """
+        Retorna todas as estatísticas consolidadas dos Destaques do Ano para uma guilda,
+        aplicando fuso horário oficial de Brasília (America/Sao_Paulo).
+        """
+        start_date = datetime(year, 1, 1)
+        end_date = datetime(year + 1, 1, 1)
 
+        async with self.pool.acquire() as conn:
+            # 1. Maior Ganho de XP (MVP)
+            highest_score_rows = await conn.fetch("""
+                SELECT ip.user_id, COALESCE(u.username, '') as username, SUM(ip.points) as value
+                FROM interaction_points ip
+                LEFT JOIN users u ON ip.user_id = u.user_id
+                WHERE ip.created_at >= $1 AND ip.created_at < $2
+                GROUP BY ip.user_id, u.username
+                ORDER BY value DESC
+                LIMIT $3
+            """, start_date, end_date, limit)
+
+            # 2. Mais Mensagens de Texto (Tagarela)
+            most_messages_rows = await conn.fetch("""
+                SELECT m.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
+                FROM messages m
+                LEFT JOIN users u ON m.user_id = u.user_id
+                WHERE m.guild_id = $1 AND m.created_at >= $2 AND m.created_at < $3
+                  AND m.was_moderated = FALSE
+                GROUP BY m.user_id, u.username
+                ORDER BY value DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            # 3. Mais Tempo em Voz (Rei da Call)
+            most_voice_rows = await conn.fetch("""
+                SELECT v.user_id, COALESCE(u.username, '') as username, COALESCE(SUM(v.duration_seconds), 0) as value_seconds
+                FROM voice_activity v
+                LEFT JOIN users u ON v.user_id = u.user_id
+                WHERE v.guild_id = $1 AND v.joined_at >= $2 AND v.joined_at < $3
+                GROUP BY v.user_id, u.username
+                ORDER BY value_seconds DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            # 4. O Corujão (Voz na Madrugada 00:00 - 06:00 horário de Brasília)
+            night_owl_rows = await conn.fetch("""
+                SELECT v.user_id, COALESCE(u.username, '') as username, COALESCE(SUM(v.duration_seconds), 0) as value_seconds
+                FROM voice_activity v
+                LEFT JOIN users u ON v.user_id = u.user_id
+                WHERE v.guild_id = $1 
+                  AND v.joined_at >= $2 AND v.joined_at < $3
+                  AND EXTRACT(HOUR FROM (v.joined_at AT TIME ZONE 'America/Sao_Paulo')) BETWEEN 0 AND 5
+                GROUP BY v.user_id, u.username
+                ORDER BY value_seconds DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            # 5. Streamer da Comunidade (Screen Share / Streaming)
+            longest_streaming_rows = await conn.fetch("""
+                SELECT a.user_id, COALESCE(u.username, '') as username, COALESCE(SUM(a.duration_seconds), 0) as value_seconds
+                FROM user_activities a
+                LEFT JOIN users u ON a.user_id = u.user_id
+                WHERE a.guild_id = $1 
+                  AND a.started_at >= $2 AND a.started_at < $3
+                  AND a.activity_type IN ('streaming', 'screen_share')
+                GROUP BY a.user_id, u.username
+                ORDER BY value_seconds DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            # 6. Top Gamers (Tempo Jogado em Jogos)
+            top_gamers_rows = await conn.fetch("""
+                SELECT a.user_id, COALESCE(u.username, '') as username, COALESCE(SUM(a.duration_seconds), 0) as value_seconds
+                FROM user_activities a
+                LEFT JOIN users u ON a.user_id = u.user_id
+                WHERE a.guild_id = $1 
+                  AND a.started_at >= $2 AND a.started_at < $3
+                  AND a.activity_type NOT IN ('streaming', 'screen_share', 'custom')
+                  AND a.activity_name NOT ILIKE 'Spotify'
+                GROUP BY a.user_id, u.username
+                ORDER BY value_seconds DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            # 7. Jogo do Ano da Comunidade
+            game_of_year_rows = await conn.fetch("""
+                SELECT a.activity_name, COALESCE(SUM(a.duration_seconds), 0) as value_seconds
+                FROM user_activities a
+                WHERE a.guild_id = $1 
+                  AND a.started_at >= $2 AND a.started_at < $3
+                  AND a.activity_type NOT IN ('streaming', 'screen_share', 'custom')
+                  AND a.activity_name NOT ILIKE 'Spotify'
+                GROUP BY a.activity_name
+                ORDER BY value_seconds DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            # 8. Ímã da Galera (Reações Recebidas)
+            reactions_rcv_rows = await conn.fetch("""
+                SELECT ip.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
+                FROM interaction_points ip
+                LEFT JOIN users u ON ip.user_id = u.user_id
+                WHERE ip.interaction_type = 'reaction_received'
+                  AND ip.created_at >= $1 AND ip.created_at < $2
+                GROUP BY ip.user_id, u.username
+                ORDER BY value DESC
+                LIMIT $3
+            """, start_date, end_date, limit)
+
+            # 9. O Reativo (Reações Dadas)
+            reactions_gvn_rows = await conn.fetch("""
+                SELECT ip.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
+                FROM interaction_points ip
+                LEFT JOIN users u ON ip.user_id = u.user_id
+                WHERE ip.interaction_type = 'reaction_given'
+                  AND ip.created_at >= $1 AND ip.created_at < $2
+                GROUP BY ip.user_id, u.username
+                ORDER BY value DESC
+                LIMIT $3
+            """, start_date, end_date, limit)
+
+            # 10. O Mídia (Arquivos / Anexos Enviados)
+            media_king_rows = await conn.fetch("""
+                SELECT m.user_id, COALESCE(u.username, '') as username, COUNT(*) as value
+                FROM messages m
+                LEFT JOIN users u ON m.user_id = u.user_id
+                WHERE m.guild_id = $1 
+                  AND m.has_attachments = TRUE
+                  AND m.created_at >= $2 AND m.created_at < $3
+                GROUP BY m.user_id, u.username
+                ORDER BY value DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            # 11. O Onipresente (Dias Distintos Ativos no Ano)
+            omnipresent_rows = await conn.fetch("""
+                WITH combined_activity AS (
+                    SELECT user_id, (created_at AT TIME ZONE 'America/Sao_Paulo')::date as act_date
+                    FROM messages
+                    WHERE guild_id = $1 AND created_at >= $2 AND created_at < $3
+                    UNION ALL
+                    SELECT user_id, (joined_at AT TIME ZONE 'America/Sao_Paulo')::date as act_date
+                    FROM voice_activity
+                    WHERE guild_id = $1 AND joined_at >= $2 AND joined_at < $3
+                )
+                SELECT ca.user_id, COALESCE(u.username, '') as username, COUNT(DISTINCT ca.act_date) as value
+                FROM combined_activity ca
+                LEFT JOIN users u ON ca.user_id = u.user_id
+                GROUP BY ca.user_id, u.username
+                ORDER BY value DESC
+                LIMIT $4
+            """, guild_id, start_date, end_date, limit)
+
+            return {
+                "highestScore": [dict(r) for r in highest_score_rows],
+                "mostMessages": [dict(r) for r in most_messages_rows],
+                "mostVoice": [dict(r) for r in most_voice_rows],
+                "nightOwl": [dict(r) for r in night_owl_rows],
+                "longestStreaming": [dict(r) for r in longest_streaming_rows],
+                "topGamers": [dict(r) for r in top_gamers_rows],
+                "gameOfTheYear": [dict(r) for r in game_of_year_rows],
+                "mostReactionsReceived": [dict(r) for r in reactions_rcv_rows],
+                "mostReactionsGiven": [dict(r) for r in reactions_gvn_rows],
+                "mediaKing": [dict(r) for r in media_king_rows],
+                "omnipresent": [dict(r) for r in omnipresent_rows],
+            }

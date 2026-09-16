@@ -4,12 +4,365 @@ import discord
 from discord import app_commands
 from database import Database
 from utils.embed_builder import StatsEmbedBuilder
-from typing import Optional, Any
+from io import BytesIO
+from typing import Optional, Any, Dict, List
 import logging
 from config import now_brt
-
+from utils.highlights_scanner import HighlightsScanner
+from utils.image_generator import HighlightsBuilder
 
 logger = logging.getLogger(__name__)
+
+HIGHLIGHTS_CATEGORIES: List[Dict[str, Any]] = [
+    {
+        "id": "cover",
+        "label": "🏆 Capa da Retrospectiva",
+        "description": "Visão geral e abertura dos Destaques do Ano",
+    },
+    {
+        "id": "highestScore",
+        "label": "⚡ MVP do Servidor",
+        "description": "Maior ganho de XP e níveis no ano",
+        "title": "MVP DO SERVIDOR",
+        "subtitle": "Os membros mais ativos e com maior pontuação de XP acumulada",
+        "icon": "⚡",
+        "color": "#ffd700",
+        "unit": "XP",
+        "is_time": False,
+    },
+    {
+        "id": "mostMessages",
+        "label": "💬 O Tagarela",
+        "description": "Mais mensagens de texto enviadas",
+        "title": "O TAGARELA",
+        "subtitle": "Quem mais movimentou os canais de texto do servidor",
+        "icon": "💬",
+        "color": "#38bdf8",
+        "unit": "mensagens",
+        "is_time": False,
+    },
+    {
+        "id": "mostVoice",
+        "label": "🎙️ Rei da Call",
+        "description": "Mais horas acumuladas em canais de voz",
+        "title": "REI DA CALL",
+        "subtitle": "Mais tempo presente e conversando em canais de voz",
+        "icon": "🎙️",
+        "color": "#10b981",
+        "unit": "",
+        "is_time": True,
+    },
+    {
+        "id": "nightOwl",
+        "label": "🦉 O Corujão",
+        "description": "Mais tempo em call na madrugada (00h às 06h BRT)",
+        "title": "O CORUJÃO",
+        "subtitle": "Guardiões da madrugada: mais tempo em call entre 00h e 06h (BRT)",
+        "icon": "🦉",
+        "color": "#818cf8",
+        "unit": "",
+        "is_time": True,
+    },
+    {
+        "id": "longestStreaming",
+        "label": "📹 Streamer da Comunidade",
+        "description": "Mais tempo transmitindo tela / live no Discord",
+        "title": "STREAMER DO SERVIDOR",
+        "subtitle": "Quem mais compartilhou gameplay e telas ao vivo em chamadas",
+        "icon": "📹",
+        "color": "#f43f5e",
+        "unit": "",
+        "is_time": True,
+    },
+    {
+        "id": "topGamers",
+        "label": "🎮 Top Gamers",
+        "description": "Mais horas registradas jogando no Discord",
+        "title": "TOP GAMERS",
+        "subtitle": "Os membros que mais acumularam horas de jogatina no ano",
+        "icon": "🎮",
+        "color": "#a855f7",
+        "unit": "",
+        "is_time": True,
+    },
+    {
+        "id": "gameOfTheYear",
+        "label": "🕹️ Jogo do Ano",
+        "description": "O jogo mais jogado por toda a comunidade",
+        "title": "JOGO DO ANO",
+        "subtitle": "O título que mais uniu os membros em horas acumuladas de gameplay",
+        "icon": "🕹️",
+        "color": "#f59e0b",
+        "unit": "",
+        "is_time": True,
+    },
+    {
+        "id": "media",
+        "label": "📸 Clipe / Print do Ano",
+        "description": "O momento mais reagido e votado em prints e clipes",
+    },
+    {
+        "id": "mostReactionsReceived",
+        "label": "💖 Ímã da Galera",
+        "description": "Mais reações recebidas em mensagens",
+        "title": "ÍMÃ DA GALERA",
+        "subtitle": "Mensagens mais curtidas e aclamadas pela comunidade",
+        "icon": "💖",
+        "color": "#fb7185",
+        "unit": "reações",
+        "is_time": False,
+    },
+    {
+        "id": "mostReactionsGiven",
+        "label": "⚡ O Reativo",
+        "description": "Quem mais interagiu e reagiu com emojis",
+        "title": "O REATIVO",
+        "subtitle": "O membro mais expressivo: distribuiu mais reações no ano",
+        "icon": "⚡",
+        "color": "#fbbf24",
+        "unit": "reações dadas",
+        "is_time": False,
+    },
+    {
+        "id": "mediaKing",
+        "label": "📁 O Mídia",
+        "description": "Mais fotos, memes e anexos enviados",
+        "title": "O MÍDIA",
+        "subtitle": "Quem mais compartilhou memes, fotos e arquivos no chat",
+        "icon": "📁",
+        "color": "#ec4899",
+        "unit": "anexos",
+        "is_time": False,
+    },
+    {
+        "id": "omnipresent",
+        "label": "🌐 O Onipresente",
+        "description": "Mais dias distintos com atividade no servidor",
+        "title": "O ONIPRESENTE",
+        "subtitle": "Membros com maior frequência diária no servidor durante o ano",
+        "icon": "🌐",
+        "color": "#06b6d4",
+        "unit": "dias ativos",
+        "is_time": False,
+    }
+]
+
+
+class HighlightsSelect(discord.ui.Select):
+    """Dropdown interativo para saltar diretamente para qualquer slide dos Destaques."""
+
+    def __init__(self, current_index: int = 0):
+        options = []
+        for idx, cat in enumerate(HIGHLIGHTS_CATEGORIES):
+            options.append(
+                discord.SelectOption(
+                    label=cat["label"][:100],
+                    value=str(idx),
+                    description=cat["description"][:100],
+                    default=(idx == current_index)
+                )
+            )
+        super().__init__(
+            placeholder="📑 Selecione uma categoria dos Destaques...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=0
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view: HighlightsCarouselView = self.view  # type: ignore
+        selected_index = int(self.values[0])
+        await view.navigate_to(interaction, selected_index)
+
+
+class HighlightsCarouselView(discord.ui.View):
+    """Carrossel interativo com botões e dropdown para navegação dos Destaques do Ano."""
+
+    def __init__(
+        self,
+        guild: Optional[discord.Guild],
+        year: int,
+        highlights_data: Dict[str, Any],
+        top_clip: Optional[Dict[str, Any]] = None,
+        author_id: Optional[int] = None,
+        timeout: float = 300.0
+    ):
+        super().__init__(timeout=timeout)
+        self.guild = guild
+        self.year = year
+        self.highlights_data = highlights_data
+        self.top_clip = top_clip
+        self.author_id = author_id
+        self.current_index = 0
+        self.total_slides = len(HIGHLIGHTS_CATEGORIES)
+        self.cached_images: Dict[int, bytes] = {}
+
+        self._build_components()
+
+    def _build_components(self):
+        self.clear_items()
+        # Row 0: Select dropdown
+        self.add_item(HighlightsSelect(current_index=self.current_index))
+
+        # Row 1: Navigation Buttons
+        first_btn = discord.ui.Button(
+            label="⏮️",
+            style=discord.ButtonStyle.secondary,
+            disabled=(self.current_index == 0),
+            custom_id="btn_first",
+            row=1
+        )
+        first_btn.callback = self._on_first_clicked
+        self.add_item(first_btn)
+
+        prev_btn = discord.ui.Button(
+            label="◀️ Anterior",
+            style=discord.ButtonStyle.primary,
+            disabled=(self.current_index == 0),
+            custom_id="btn_prev",
+            row=1
+        )
+        prev_btn.callback = self._on_prev_clicked
+        self.add_item(prev_btn)
+
+        page_btn = discord.ui.Button(
+            label=f"{self.current_index + 1} / {self.total_slides}",
+            style=discord.ButtonStyle.secondary,
+            disabled=True,
+            custom_id="btn_page",
+            row=1
+        )
+        self.add_item(page_btn)
+
+        next_btn = discord.ui.Button(
+            label="Próximo ▶️",
+            style=discord.ButtonStyle.primary,
+            disabled=(self.current_index == self.total_slides - 1),
+            custom_id="btn_next",
+            row=1
+        )
+        next_btn.callback = self._on_next_clicked
+        self.add_item(next_btn)
+
+        last_btn = discord.ui.Button(
+            label="⏭️",
+            style=discord.ButtonStyle.secondary,
+            disabled=(self.current_index == self.total_slides - 1),
+            custom_id="btn_last",
+            row=1
+        )
+        last_btn.callback = self._on_last_clicked
+        self.add_item(last_btn)
+
+        # Se for o slide de clipe e houver jump_url válido, adiciona botão de link
+        cur_cat = HIGHLIGHTS_CATEGORIES[self.current_index]
+        if cur_cat["id"] == "media" and self.top_clip and self.top_clip.get("jump_url"):
+            link_btn = discord.ui.Button(
+                label="🔗 Ver Mensagem Original",
+                url=self.top_clip["jump_url"],
+                style=discord.ButtonStyle.link,
+                row=2
+            )
+            self.add_item(link_btn)
+
+    async def _render_current_slide(self) -> BytesIO:
+        """Renderiza ou recupera do cache a imagem do slide atual."""
+        if self.current_index in self.cached_images:
+            buf = BytesIO(self.cached_images[self.current_index])
+            buf.seek(0)
+            return buf
+
+        cat = HIGHLIGHTS_CATEGORIES[self.current_index]
+        cat_id = cat["id"]
+
+        if cat_id == "cover":
+            img_buf = await HighlightsBuilder.generate_cover_slide(
+                guild=self.guild,
+                year=self.year,
+                total_categories=self.total_slides
+            )
+        elif cat_id == "media":
+            img_buf = await HighlightsBuilder.generate_media_slide(
+                guild=self.guild,
+                year=self.year,
+                clip_data=self.top_clip
+            )
+        else:
+            winners = self.highlights_data.get(cat_id, [])
+            img_buf = await HighlightsBuilder.generate_category_slide(
+                guild=self.guild,
+                year=self.year,
+                category_title=cat.get("title", cat["label"]),
+                category_subtitle=cat.get("subtitle", cat["description"]),
+                category_icon=cat.get("icon", "🏆"),
+                theme_color=cat.get("color", "#00f0ff"),
+                winners=winners,
+                unit_label=cat.get("unit", ""),
+                is_time=cat.get("is_time", False)
+            )
+
+        img_bytes = img_buf.getvalue()
+        self.cached_images[self.current_index] = img_bytes
+        buf = BytesIO(img_bytes)
+        buf.seek(0)
+        return buf
+
+    async def navigate_to(self, interaction: discord.Interaction, new_index: int):
+        """Atualiza o slide exibido no carrossel."""
+        await interaction.response.defer()
+        self.current_index = max(0, min(new_index, self.total_slides - 1))
+        self._build_components()
+
+        img_buffer = await self._render_current_slide()
+        file = discord.File(fp=img_buffer, filename=f"destaques_{self.year}_{self.current_index}.png")
+        await interaction.edit_original_response(attachments=[file], view=self)
+
+    async def _on_first_clicked(self, interaction: discord.Interaction):
+        await self.navigate_to(interaction, 0)
+
+    async def _on_prev_clicked(self, interaction: discord.Interaction):
+        await self.navigate_to(interaction, self.current_index - 1)
+
+    async def _on_next_clicked(self, interaction: discord.Interaction):
+        await self.navigate_to(interaction, self.current_index + 1)
+
+    async def _on_last_clicked(self, interaction: discord.Interaction):
+        await self.navigate_to(interaction, self.total_slides - 1)
+
+
+async def handle_highlights_carousel(
+    db: Database,
+    interaction: discord.Interaction,
+    year: Optional[int] = None
+):
+    """Gera e inicializa o carrossel interativo de Destaques do Ano."""
+    await interaction.response.defer()
+    target_year = year or now_brt().year
+
+    try:
+        # Busca estatísticas do banco de dados com fuso de Brasília
+        stats_data = await db.get_guild_annual_highlights(interaction.guild.id, target_year, limit=5)
+
+        # Escaneia os canais de prints/clipes para o momento mais votado
+        top_clips = await HighlightsScanner.find_top_clips_and_prints(interaction.guild, target_year, limit=1)
+        top_clip = top_clips[0] if top_clips else None
+
+        view = HighlightsCarouselView(
+            guild=interaction.guild,
+            year=target_year,
+            highlights_data=stats_data,
+            top_clip=top_clip,
+            author_id=interaction.user.id
+        )
+
+        initial_buf = await view._render_current_slide()
+        file = discord.File(fp=initial_buf, filename=f"destaques_{target_year}_0.png")
+
+        await interaction.followup.send(file=file, view=view)
+    except Exception as e:
+        logger.error(f"Erro ao inicializar carrossel de destaques para {target_year}: {e}", exc_info=True)
+        await interaction.followup.send("❌ Ocorreu um erro ao gerar os Destaques do Ano. Tente novamente.", ephemeral=True)
 
 
 async def handle_rank_card(db: Database, interaction: discord.Interaction, membro: Optional[discord.Member] = None):
@@ -429,6 +782,12 @@ class StatsCommands(app_commands.Group):
                 "❌ Erro ao buscar leaderboard. Tente novamente mais tarde.",
                 ephemeral=True
             )
+
+    @app_commands.command(name="destaques", description="Abre o carrossel interativo dos Destaques do Ano do servidor (BMIA Wrapped)")
+    @app_commands.describe(ano="Ano da retrospectiva (opcional, padrão: ano atual)")
+    async def destaques(self, interaction: discord.Interaction, ano: Optional[int] = None):
+        """Exibe o carrossel de Destaques do Ano."""
+        await handle_highlights_carousel(self.db, interaction, ano)
     
     @user_stats.error
     async def user_stats_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):

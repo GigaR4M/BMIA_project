@@ -157,12 +157,42 @@ async def check_monthly_podium(
                                 await target_channel.send(
                                     f"**{yearly_title}**\nParabéns às lendas do servidor em {prev_year}! 🏆👑",
                                     file=file,
+                                    view=None
                                 )
                                 await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier)
                                 logger.info("✅ Pódio anual enviado para %s", guild.name)
                             else:
                                 await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier)
                                 logger.info("Sem dados suficientes para pódio anual em %s", guild.name)
+
+                        # Envia Retrospectiva Anual com Carrossel Interativo
+                        if not await db.check_periodic_leaderboard_sent(guild.id, "YEARLY_HIGHLIGHTS", yearly_identifier):
+                            try:
+                                from commands.stats_commands import HighlightsCarouselView
+                                from utils.highlights_scanner import HighlightsScanner
+
+                                stats_data = await db.get_guild_annual_highlights(guild.id, prev_year, limit=5)
+                                top_clips = await HighlightsScanner.find_top_clips_and_prints(guild, prev_year, limit=1)
+                                top_clip = top_clips[0] if top_clips else None
+
+                                view = HighlightsCarouselView(
+                                    guild=guild,
+                                    year=prev_year,
+                                    highlights_data=stats_data,
+                                    top_clip=top_clip
+                                )
+                                initial_buf = await view._render_current_slide()
+                                file = discord.File(fp=initial_buf, filename=f"destaques_{prev_year}_0.png")
+
+                                await target_channel.send(
+                                    f"✨ **DESTAQUES DO ANO • RETROSPECTIVA {prev_year}** ✨\nConfira os maiores momentos, recordes e conquistas da nossa comunidade!",
+                                    file=file,
+                                    view=view
+                                )
+                                await db.log_periodic_leaderboard_sent(guild.id, "YEARLY_HIGHLIGHTS", yearly_identifier)
+                                logger.info("✅ Retrospectiva Anual (Carrossel) enviada para %s", guild.name)
+                            except Exception as h_err:
+                                logger.error("Erro ao enviar carrossel anual para %s: %s", guild.name, h_err)
 
         except Exception as exc:
             logger.error("❌ Erro no check_monthly_podium: %s", exc)
