@@ -129,21 +129,55 @@ class TestHighlightsBuilder:
         assert len(buf.getvalue()) > 0
 
 
-class TestHighlightsCarousel:
+class TestHighlightsGallery:
     @pytest.mark.asyncio
-    async def test_view_initialization(self, mock_db):
-        from commands.stats_commands import HighlightsCarouselView, HIGHLIGHTS_CATEGORIES
+    async def test_generate_all_slides_files(self):
+        from utils.image_generator import HighlightsBuilder
+        from commands.stats_commands import HIGHLIGHTS_CATEGORIES
 
         guild = MagicMock(spec=discord.Guild)
         guild.name = "Barões da Pinad"
+        guild.get_member.return_value = None
 
-        view = HighlightsCarouselView(
-            guild=guild,
-            year=2026,
-            highlights_data={},
-            top_clip=None
-        )
+        with patch.object(HighlightsBuilder, "generate_cover_slide", new=AsyncMock(return_value=BytesIO(b"fake_cover"))), \
+             patch.object(HighlightsBuilder, "generate_category_slide", new=AsyncMock(return_value=BytesIO(b"fake_cat"))), \
+             patch.object(HighlightsBuilder, "generate_media_slide", new=AsyncMock(return_value=BytesIO(b"fake_media"))):
 
-        assert view.total_slides == len(HIGHLIGHTS_CATEGORIES)
-        assert view.current_index == 0
-        assert len(view.children) >= 5
+            files = await HighlightsBuilder.generate_all_slides_files(
+                guild=guild,
+                year=2026,
+                highlights_data={},
+                top_clip=None,
+                categories=HIGHLIGHTS_CATEGORIES
+            )
+
+            assert len(files) == len(HIGHLIGHTS_CATEGORIES)
+            assert all(isinstance(f, discord.File) for f in files)
+
+    @pytest.mark.asyncio
+    async def test_handle_highlights_carousel_sends_batches(self, mock_db):
+        from commands.stats_commands import handle_highlights_carousel
+
+        interaction = MagicMock(spec=discord.Interaction)
+        interaction.guild = MagicMock()
+        interaction.guild.id = 12345
+        interaction.response = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup = MagicMock()
+        interaction.followup.send = AsyncMock()
+
+        fake_files = [MagicMock(spec=discord.File) for _ in range(13)]
+
+        with patch("utils.image_generator.HighlightsBuilder.generate_all_slides_files", new=AsyncMock(return_value=fake_files)), \
+             patch("utils.highlights_scanner.HighlightsScanner.find_top_clips_and_prints", new=AsyncMock(return_value=[])):
+
+            await handle_highlights_carousel(mock_db, interaction, 2026)
+
+            interaction.response.defer.assert_awaited_once()
+            assert interaction.followup.send.await_count == 2
+            # First batch (7 slides)
+            call1_kwargs = interaction.followup.send.await_args_list[0].kwargs
+            assert len(call1_kwargs["files"]) == 7
+            # Second batch (6 slides)
+            call2_kwargs = interaction.followup.send.await_args_list[1].kwargs
+            assert len(call2_kwargs["files"]) == 6
