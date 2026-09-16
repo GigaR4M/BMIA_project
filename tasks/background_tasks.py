@@ -65,90 +65,110 @@ async def check_monthly_podium(
     db,
     allowed_channels: list[int],
 ) -> None:
-    """Verifica se é dia 1 e envia o pódio mensal ou anual."""
+    """Verifica e envia periodicamente o pódio mensal e anual para cada servidor."""
     await client.wait_until_ready()
     from utils.image_generator import PodiumBuilder
+
+    month_names = {
+        1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL",
+        5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
+        9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO",
+    }
 
     while not client.is_closed():
         try:
             if db:
                 now = now_brt()
 
-                if now.day == 1:
-                    if now.month == 1:
-                        period_type = "YEARLY"
-                        year = now.year - 1
-                        period_identifier = str(year)
-                        start_date = now.replace(year=year, month=1, day=1,
-                                                  hour=0, minute=0, second=0, microsecond=0)
-                        end_date = now.replace(month=1, day=1,
-                                                hour=0, minute=0, second=0, microsecond=0)
-                        title = f"🏆 PODIUM DE {year} 🏆"
-                    else:
-                        period_type = "MONTHLY"
-                        last_month_end = now.replace(day=1) - timedelta(days=1)
-                        month_num = last_month_end.month
-                        year_num = last_month_end.year
-                        period_identifier = f"{year_num}-{month_num:02d}"
-                        start_date = last_month_end.replace(
-                            day=1, hour=0, minute=0, second=0, microsecond=0
-                        )
-                        end_date = now.replace(
-                            day=1, hour=0, minute=0, second=0, microsecond=0
-                        )
-                        month_names = {
-                            1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL",
-                            5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
-                            9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO",
-                        }
-                        title = f"🏆 PODIUM DE {month_names.get(month_num, '')}/{year_num} 🏆"
+                # 1. PÓDIO MENSAL (do mês anterior concluído)
+                last_month_end = now.replace(day=1) - timedelta(days=1)
+                m_num = last_month_end.month
+                y_num = last_month_end.year
+                monthly_identifier = f"{y_num}-{m_num:02d}"
+                monthly_start = last_month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                monthly_end = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                monthly_title = f"🏆 PÓDIO DE {month_names.get(m_num, '')}/{y_num} 🏆"
+                monthly_label = f"{month_names.get(m_num, '')} {y_num}"
 
-                    for guild in client.guilds:
-                        if await db.check_periodic_leaderboard_sent(
-                            guild.id, period_type, period_identifier
-                        ):
-                            continue
+                # 2. PÓDIO ANUAL (do ano anterior concluído)
+                prev_year = now.year - 1
+                yearly_identifier = str(prev_year)
+                yearly_start = now.replace(year=prev_year, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+                yearly_end = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+                yearly_title = f"👑 HALL DA FAMA • PÓDIO ANUAL DE {prev_year} 👑"
+                yearly_label = f"HALL DA FAMA {prev_year}"
 
-                        logger.info("Gerando pódio %s para %s...", period_type, guild.name)
-                        top_users = await db.get_top_users_date_range(
-                            guild.id, start_date, end_date, limit=10
-                        )
+                for guild in client.guilds:
+                    # Encontra canal de destino do servidor
+                    guild_config = await db.get_guild_config(guild.id)
+                    g_allowed = (guild_config.get("allowed_channels") if guild_config else None) or allowed_channels
+
+                    target_channel = None
+                    if g_allowed:
+                        for ch_id in g_allowed:
+                            ch = guild.get_channel(ch_id)
+                            if ch and hasattr(ch, "permissions_for") and ch.permissions_for(guild.me).send_messages:
+                                target_channel = ch
+                                break
+
+                    if not target_channel and guild.system_channel:
+                        if guild.system_channel.permissions_for(guild.me).send_messages:
+                            target_channel = guild.system_channel
+
+                    if not target_channel:
+                        for ch in guild.text_channels:
+                            if ch.permissions_for(guild.me).send_messages:
+                                target_channel = ch
+                                break
+
+                    if not target_channel:
+                        logger.warning("⚠️ Nenhum canal com permissão de envio para pódio em %s", guild.name)
+                        continue
+
+                    # Verifica e envia Pódio Mensal
+                    if not await db.check_periodic_leaderboard_sent(guild.id, "MONTHLY", monthly_identifier):
+                        logger.info("Gerando pódio mensal (%s) para %s...", monthly_identifier, guild.name)
+                        top_users = await db.get_top_users_date_range(guild.id, monthly_start, monthly_end, limit=10)
 
                         if top_users:
                             builder = PodiumBuilder()
-                            image_bio = await builder.generate_podium(guild, top_users)
+                            image_bio = await builder.generate_podium(guild, top_users, period_text=monthly_label)
+                            file = discord.File(fp=image_bio, filename="podium_mensal.png")
+                            await target_channel.send(
+                                f"**{monthly_title}**\nParabéns aos membros mais ativos e dedicados do mês! 🎉⚡",
+                                file=file,
+                            )
+                            await db.log_periodic_leaderboard_sent(guild.id, "MONTHLY", monthly_identifier)
+                            logger.info("✅ Pódio mensal enviado para %s", guild.name)
+                        else:
+                            await db.log_periodic_leaderboard_sent(guild.id, "MONTHLY", monthly_identifier)
+                            logger.info("Sem dados suficientes para pódio mensal em %s", guild.name)
 
-                            target_channel = None
-                            for ch_id in allowed_channels:
-                                ch = guild.get_channel(ch_id)
-                                if ch:
-                                    target_channel = ch
-                                    break
+                    # Verifica e envia Pódio Anual (se virou o ano)
+                    if now.month == 1:
+                        if not await db.check_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier):
+                            logger.info("Gerando pódio anual (%s) para %s...", yearly_identifier, guild.name)
+                            top_yearly = await db.get_top_users_date_range(guild.id, yearly_start, yearly_end, limit=10)
 
-                            if target_channel:
-                                file = discord.File(fp=image_bio, filename="podium.png")
+                            if top_yearly:
+                                builder = PodiumBuilder()
+                                image_bio = await builder.generate_podium(guild, top_yearly, period_text=yearly_label)
+                                file = discord.File(fp=image_bio, filename="podium_anual.png")
                                 await target_channel.send(
-                                    f"**{title}**\nParabéns aos mais ativos do período! 🎉",
+                                    f"**{yearly_title}**\nParabéns às lendas do servidor em {prev_year}! 🏆👑",
                                     file=file,
                                 )
-                                await db.log_periodic_leaderboard_sent(
-                                    guild.id, period_type, period_identifier
-                                )
-                                logger.info("✅ Pódio enviado para %s", guild.name)
+                                await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier)
+                                logger.info("✅ Pódio anual enviado para %s", guild.name)
                             else:
-                                logger.warning(
-                                    "⚠️ Sem canal permitido para pódio em %s", guild.name
-                                )
-                        else:
-                            await db.log_periodic_leaderboard_sent(
-                                guild.id, period_type, period_identifier
-                            )
-                            logger.info("Sem dados para pódio em %s", guild.name)
+                                await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier)
+                                logger.info("Sem dados suficientes para pódio anual em %s", guild.name)
 
         except Exception as exc:
             logger.error("❌ Erro no check_monthly_podium: %s", exc)
             traceback.print_exc()
         await asyncio.sleep(3600)
+
 
 
 # ── Resumo Diário (Telegram) ───────────────────────────────────────────────────
