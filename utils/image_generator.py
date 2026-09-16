@@ -3153,6 +3153,8 @@ class HighlightsBuilder:
         channel_name = clip_data.get("channel_name", "prints-e-clips")
         reactions_cnt = clip_data.get("reaction_count", 0)
         reply_cnt = clip_data.get("reply_count", 0)
+        date_str = clip_data.get("created_at", "")
+        media_url = clip_data.get("media_url")
         engagement_str = f"🔥 {reactions_cnt} reações"
         if reply_cnt > 0:
             engagement_str += f" • 💬 {reply_cnt} respostas"
