@@ -74,10 +74,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             await interaction.response.send_message("Nenhum canal configurado.", ephemeral=True)
             return
 
-        mentions = []
-        for ch_id in self.ctx.allowed_channels:
-            ch = interaction.guild.get_channel(ch_id) if interaction.guild else None
-            mentions.append(ch.mention if ch else f"`{ch_id}`")
+        mentions = [f"<#{ch_id}>" for ch_id in self.ctx.allowed_channels]
 
         embed = discord.Embed(
             title="📋 Canais com Pontos",
@@ -152,11 +149,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
         def ch_list(ids: list) -> str:
             if not ids:
                 return "*(padrão do código)*"
-            result = []
-            for cid in ids:
-                ch = interaction.guild.get_channel(cid)
-                result.append(ch.mention if ch else f"`{cid}`")
-            return ", ".join(result)
+            return ", ".join(f"<#{cid}>" for cid in ids)
 
         embed = discord.Embed(
             title=f"⚙️ Configuração — {interaction.guild.name}",

@@ -404,7 +404,7 @@ class TournamentCommands(app_commands.Group):
             team_size = 2 if is_2v2 else (3 if is_3v3 else 1)
 
             # Localiza todos os integrantes da equipe a partir de um capitão/jogador selecionado
-            def find_team_members(target_member: Optional[discord.Member]) -> List[discord.Member]:
+            async def find_team_members(target_member: Optional[discord.Member]) -> List[discord.Member]:
                 if not target_member:
                     return []
                 if team_size == 1 or not participants:
@@ -422,14 +422,20 @@ class TournamentCommands(app_commands.Group):
 
                 team_members = []
                 for p in found_chunk:
-                    m = interaction.guild.get_member(p.get("user_id"))
+                    p_id = p.get("user_id")
+                    m = interaction.guild.get_member(p_id)
+                    if not m:
+                        try:
+                            m = await interaction.guild.fetch_member(p_id)
+                        except Exception:
+                            m = None
                     if m:
                         team_members.append(m)
                 return team_members if team_members else [target_member]
 
-            winner_team = find_team_members(vencedor)
-            runner_up_team = find_team_members(segundo_lugar) if segundo_lugar else []
-            third_place_team = find_team_members(terceiro_lugar) if terceiro_lugar else []
+            winner_team = await find_team_members(vencedor)
+            runner_up_team = await find_team_members(segundo_lugar) if segundo_lugar else []
+            third_place_team = await find_team_members(terceiro_lugar) if terceiro_lugar else []
 
             # Garante que todos os membros existem no banco
             for member in winner_team + runner_up_team + third_place_team:

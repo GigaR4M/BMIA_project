@@ -622,6 +622,54 @@ class Database:
                         ) ep_agg ON TRUE
                         WHERE se.guild_id = p_guild_id
                         ORDER BY se.start_time DESC
+                    CREATE OR REPLACE FUNCTION get_leaderboard(
+                        p_guild_id BIGINT, 
+                        p_limit INT DEFAULT 50, 
+                        p_days INT DEFAULT NULL, 
+                        p_start_date TIMESTAMPTZ DEFAULT NULL
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        discriminator TEXT,
+                        avatar_url TEXT,
+                        total_points BIGINT,
+                        all_time_points BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        WITH period_pts AS (
+                            SELECT 
+                                p.user_id,
+                                COALESCE(SUM(p.points), 0)::BIGINT AS pts
+                            FROM interaction_points p
+                            WHERE (p.guild_id = p_guild_id OR p.guild_id IS NULL)
+                              AND (p_start_date IS NULL OR p.created_at >= p_start_date)
+                              AND (p_days IS NULL OR p_start_date IS NOT NULL OR p.created_at >= (NOW() - (p_days || ' days')::INTERVAL))
+                            GROUP BY p.user_id
+                        ),
+                        all_time_pts AS (
+                            SELECT 
+                                p.user_id,
+                                COALESCE(SUM(p.points), 0)::BIGINT AS total_pts
+                            FROM interaction_points p
+                            WHERE (p.guild_id = p_guild_id OR p.guild_id IS NULL)
+                            GROUP BY p.user_id
+                        )
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Usuário Desconhecido')::TEXT,
+                            COALESCE(u.discriminator, '0000')::TEXT,
+                            u.avatar_url::TEXT,
+                            pp.pts AS total_points,
+                            COALESCE(atp.total_pts, pp.pts) AS all_time_points,
+                            RANK() OVER (ORDER BY pp.pts DESC)::BIGINT AS rank
+                        FROM period_pts pp
+                        JOIN users u ON pp.user_id = u.user_id
+                        LEFT JOIN all_time_pts atp ON pp.user_id = atp.user_id
+                        WHERE u.is_bot = FALSE
+                        ORDER BY pp.pts DESC
                         LIMIT p_limit;
                     END;
                     $$;
@@ -689,6 +737,21 @@ class Database:
                 SET was_moderated = $1
                 WHERE message_id = $2
             """, was_moderated, message_id)
+
+    async def get_last_channel_message(self, channel_id: int, exclude_message_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Retorna a última mensagem válida registrada em um canal (excluindo a atual)."""
+        async with self.pool.acquire() as conn:
+            query = """
+                SELECT message_id, user_id, channel_id, guild_id, created_at, was_moderated
+                FROM messages
+                WHERE channel_id = $1
+                  AND was_moderated = FALSE
+                  AND ($2::BIGINT IS NULL OR message_id != $2)
+                ORDER BY created_at DESC
+                LIMIT 1
+            """
+            row = await conn.fetchrow(query, channel_id, exclude_message_id)
+            return dict(row) if row else None
     
     async def insert_voice_join(self, user_id: int, channel_id: int, guild_id: int):
         """Registra entrada em canal de voz."""

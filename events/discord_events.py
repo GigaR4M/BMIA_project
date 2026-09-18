@@ -7,6 +7,7 @@ O módulo expõe `register_events(client, ctx)` que registra todos os handlers.
 
 import re
 import logging
+from datetime import datetime, timezone
 
 import discord
 
@@ -230,6 +231,41 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                     avatar_url=avatar_url,
                     channel=message.channel,
                 )
+
+            # Verificação de Chat Revival (Reativação de canal inativo por >= 7 dias)
+            if len(message.content.strip()) >= 10 and message.guild and ctx.db:
+                try:
+                    last_msg = await ctx.db.get_last_channel_message(message.channel.id, exclude_message_id=message.id)
+                    if last_msg and last_msg.get("created_at"):
+                        last_created = last_msg["created_at"]
+                        now_dt = datetime.now(timezone.utc) if last_created.tzinfo else datetime.now()
+                        delta = now_dt - last_created
+                        if delta.total_seconds() >= 7 * 86400:  # 7 dias de inatividade
+                            # Anti-abuso: autor não pode ser o mesmo da mensagem anterior
+                            if last_msg.get("user_id") != message.author.id:
+                                avatar_url = str(message.author.display_avatar.url) if hasattr(message.author, 'display_avatar') else None
+                                await ctx.points_manager.add_points(
+                                    message.author.id,
+                                    15,
+                                    "chat_revival",
+                                    message.guild.id,
+                                    message.author.name,
+                                    message.author.discriminator,
+                                    avatar_url=avatar_url,
+                                    channel=message.channel,
+                                )
+                                logger.info(
+                                    "🔥 Chat Revival: %s reanimou o canal %s após %.1f dias (+15 XP)",
+                                    message.author.name,
+                                    message.channel.name,
+                                    delta.total_seconds() / 86400
+                                )
+                                try:
+                                    await message.add_reaction("🔥")
+                                except Exception:
+                                    pass
+                except Exception as e:
+                    logger.warning("Erro ao verificar Chat Revival no canal %s: %s", message.channel.id, e)
 
 
         # Buffer de moderação

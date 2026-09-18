@@ -53,10 +53,22 @@ class InfoCommands(app_commands.Group):
         )
 
         embed.add_field(
-            name="🎖️ Progressão de Níveis",
+            name="🔥 Reanimação de Chat (Chat Revival)",
+            value=(
+                "• **Reviver canal inativo** (sem mensagens há ≥1 semana): **+15 XP bônus**!\n"
+                "• *Válido apenas em canais que dão pontos para mensagens com ≥10 caracteres.*\n"
+                "• *Não acumula caso a última mensagem anterior tenha sido sua (anti-abuso).*\n"
+                "• *Mensagens removidas pela moderação por IA não pontuam.*"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="🎖️ Progressão de Níveis & Ranking",
             value=(
                 "• A cada nível alcançado, você recebe um anúncio de **Level Up**!\n"
-                "• Consulte `/rank` ou `/stats leaderboard` para acompanhar seu progresso."
+                "• Use `/rank` (ou `/perfil`) para ver seu Rank Card visual e Nível vitalício.\n"
+                "• Use `/stats leaderboard` para ver o ranking competitivo do ano."
             ),
             inline=False
         )
