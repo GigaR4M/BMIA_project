@@ -816,7 +816,14 @@ class Database:
                 # If total_points_snapshot is provided, update it. Otherwise keep existing.
                 # Increment messages/voice.
                 
-                insert_points = total_points_snapshot if total_points_snapshot is not None else 0 
+                if total_points_snapshot is None:
+                    total_points_snapshot = await conn.fetchval("""
+                        SELECT COALESCE(SUM(points), 0)
+                        FROM interaction_points
+                        WHERE user_id = $1 AND guild_id = $2
+                    """, user_id, guild_id) or 0
+                
+                insert_points = total_points_snapshot
                 
                 await conn.execute(f"""
                     INSERT INTO daily_user_stats (
@@ -833,10 +840,10 @@ class Database:
                     DO UPDATE SET
                         messages_count = daily_user_stats.messages_count + EXCLUDED.messages_count,
                         voice_seconds = daily_user_stats.voice_seconds + EXCLUDED.voice_seconds,
-                        total_points = CASE WHEN $6 THEN EXCLUDED.total_points ELSE daily_user_stats.total_points END,
+                        total_points = CASE WHEN EXCLUDED.total_points > 0 THEN EXCLUDED.total_points ELSE daily_user_stats.total_points END,
                         updated_at = NOW()
                 """, user_id, guild_id, messages_increment, voice_seconds_increment, 
-                   insert_points, total_points_snapshot is not None)
+                   insert_points)
 
             except Exception as e:
                 logger.error(f"❌ Erro ao atualizar daily_user_stats: {e}")
