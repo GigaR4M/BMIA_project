@@ -358,6 +358,52 @@ class Database:
 
 
             
+            # Tabela de origem de entrada e convites (member_join_sources)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS member_join_sources (
+                    guild_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    inviter_id BIGINT,
+                    invite_code VARCHAR(32),
+                    joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    PRIMARY KEY (guild_id, user_id)
+                )
+            """)
+
+            # Tabela de infrações e histórico de moderação (user_infractions)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_infractions (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    moderator_id BIGINT NOT NULL,
+                    action_type VARCHAR(32) NOT NULL,
+                    reason TEXT,
+                    duration_seconds INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+
+            # Tabela de denúncias de usuários (user_reports)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_reports (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    target_user_id BIGINT NOT NULL,
+                    reporter_user_id BIGINT NOT NULL,
+                    category VARCHAR(64) NOT NULL,
+                    reason TEXT NOT NULL,
+                    message_content TEXT,
+                    message_id BIGINT,
+                    channel_id BIGINT,
+                    attachment_urls TEXT[],
+                    status VARCHAR(20) DEFAULT 'pending',
+                    handled_by BIGINT,
+                    handled_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+
             # Índices para melhor performance
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id)")
@@ -368,6 +414,9 @@ class Database:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_stats_guild_date ON daily_stats(guild_id, date)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_tournaments_guild ON tournaments(guild_id)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_tournaments_status ON tournaments(status)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_infractions_user_guild ON user_infractions(guild_id, user_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_target_guild ON user_reports(guild_id, target_user_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_status_guild ON user_reports(guild_id, status)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_tournament_participants_user ON tournament_participants(user_id)")
             
             # Índices para novas tabelas
@@ -1177,6 +1226,16 @@ class Database:
                 ON CONFLICT (guild_id) 
                 DO UPDATE SET ai_moderation_enabled = $2, updated_at = NOW()
             """, guild_id, enabled)
+
+    async def set_announcement_channel(self, guild_id: int, channel_id: Optional[int]):
+        """Define o canal de moderação/anúncios do servidor."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO guild_settings (guild_id, announcement_channel_id, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET announcement_channel_id = $2, updated_at = NOW()
+            """, guild_id, channel_id)
 
     async def is_ai_moderation_enabled(self, guild_id: int) -> bool:
         """Verifica se a moderação por IA está ativa para um servidor."""
@@ -3047,3 +3106,199 @@ class Database:
                 highlights["rei_das_demos"] = []
 
         return highlights
+    
+    # ==================== SISTEMA DE REPUTAÇÃO E MODERAÇÃO ====================
+
+    async def record_member_join_source(self, guild_id: int, user_id: int, 
+                                        inviter_id: Optional[int] = None, 
+                                        invite_code: Optional[str] = None):
+        """Registra a forma de adesão (convite e autor) de um membro."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO member_join_sources (guild_id, user_id, inviter_id, invite_code, joined_at)
+                VALUES ($1, $2, $3, $4, NOW())
+                ON CONFLICT (guild_id, user_id)
+                DO UPDATE SET 
+                    inviter_id = COALESCE(EXCLUDED.inviter_id, member_join_sources.inviter_id),
+                    invite_code = COALESCE(EXCLUDED.invite_code, member_join_sources.invite_code)
+            """, guild_id, user_id, inviter_id, invite_code)
+
+    async def get_member_join_source(self, guild_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+        """Retorna o convite e quem convidou o usuário."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT s.guild_id, s.user_id, s.inviter_id, s.invite_code, s.joined_at,
+                       u.username as inviter_username
+                FROM member_join_sources s
+                LEFT JOIN users u ON u.user_id = s.inviter_id
+                WHERE s.guild_id = $1 AND s.user_id = $2
+            """, guild_id, user_id)
+            return dict(row) if row else None
+
+    async def add_user_infraction(self, guild_id: int, user_id: int, moderator_id: int, 
+                                  action_type: str, reason: Optional[str] = None, 
+                                  duration_seconds: Optional[int] = None) -> int:
+        """Registra uma infração/punição no histórico do usuário."""
+        async with self.pool.acquire() as conn:
+            infraction_id = await conn.fetchval("""
+                INSERT INTO user_infractions (guild_id, user_id, moderator_id, action_type, reason, duration_seconds, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                RETURNING id
+            """, guild_id, user_id, moderator_id, action_type, reason, duration_seconds)
+            return infraction_id
+
+    async def get_user_infractions(self, guild_id: int, user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retorna o histórico de infrações de um usuário."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT i.id, i.guild_id, i.user_id, i.moderator_id, i.action_type, 
+                       i.reason, i.duration_seconds, i.created_at,
+                       m.username as moderator_username
+                FROM user_infractions i
+                LEFT JOIN users m ON m.user_id = i.moderator_id
+                WHERE i.guild_id = $1 AND i.user_id = $2
+                ORDER BY i.created_at DESC
+                LIMIT $3
+            """, guild_id, user_id, limit)
+            return [dict(r) for r in rows]
+
+    async def create_user_report(self, guild_id: int, target_user_id: int, reporter_user_id: int,
+                                 category: str, reason: str, message_content: Optional[str] = None,
+                                 message_id: Optional[int] = None, channel_id: Optional[int] = None,
+                                 attachment_urls: Optional[List[str]] = None) -> int:
+        """Cria uma nova denúncia de usuário."""
+        async with self.pool.acquire() as conn:
+            report_id = await conn.fetchval("""
+                INSERT INTO user_reports (
+                    guild_id, target_user_id, reporter_user_id, category, reason,
+                    message_content, message_id, channel_id, attachment_urls,
+                    status, created_at
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NOW())
+                RETURNING id
+            """, guild_id, target_user_id, reporter_user_id, category, reason,
+               message_content, message_id, channel_id, attachment_urls or [])
+            return report_id
+
+    async def get_user_reports(self, guild_id: int, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Retorna denúncias do servidor filtradas por status."""
+        async with self.pool.acquire() as conn:
+            if status:
+                rows = await conn.fetch("""
+                    SELECT r.*, 
+                           t.username as target_username, t.avatar_url as target_avatar_url,
+                           rep.username as reporter_username,
+                           h.username as handler_username
+                    FROM user_reports r
+                    LEFT JOIN users t ON t.user_id = r.target_user_id
+                    LEFT JOIN users rep ON rep.user_id = r.reporter_user_id
+                    LEFT JOIN users h ON h.user_id = r.handled_by
+                    WHERE r.guild_id = $1 AND r.status = $2
+                    ORDER BY r.created_at DESC
+                    LIMIT $3
+                """, guild_id, status, limit)
+            else:
+                rows = await conn.fetch("""
+                    SELECT r.*, 
+                           t.username as target_username, t.avatar_url as target_avatar_url,
+                           rep.username as reporter_username,
+                           h.username as handler_username
+                    FROM user_reports r
+                    LEFT JOIN users t ON t.user_id = r.target_user_id
+                    LEFT JOIN users rep ON rep.user_id = r.reporter_user_id
+                    LEFT JOIN users h ON h.user_id = r.handled_by
+                    WHERE r.guild_id = $1
+                    ORDER BY r.created_at DESC
+                    LIMIT $2
+                """, guild_id, limit)
+            return [dict(r) for r in rows]
+
+    async def get_reports_for_user(self, guild_id: int, target_user_id: int) -> List[Dict[str, Any]]:
+        """Retorna todas as denúncias recebidas por um usuário específico."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT r.*, rep.username as reporter_username
+                FROM user_reports r
+                LEFT JOIN users rep ON rep.user_id = r.reporter_user_id
+                WHERE r.guild_id = $1 AND r.target_user_id = $2
+                ORDER BY r.created_at DESC
+            """, guild_id, target_user_id)
+            return [dict(r) for r in rows]
+
+    async def update_report_status(self, report_id: int, status: str, handled_by: int) -> bool:
+        """Atualiza o status de uma denúncia (approved/rejected)."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("""
+                UPDATE user_reports
+                SET status = $2, handled_by = $3, handled_at = NOW()
+                WHERE id = $1
+            """, report_id, status, handled_by)
+            return "UPDATE 1" in result
+
+    async def get_user_full_dossier(self, guild_id: int, user_id: int) -> Dict[str, Any]:
+        """Consolida todas as informações para o Dossiê de Segurança do Membro."""
+        async with self.pool.acquire() as conn:
+            # 1. Informações básicas do usuário
+            user_row = await conn.fetchrow("""
+                SELECT u.user_id, u.username, u.discriminator, u.avatar_url, u.created_at as registered_at
+                FROM users u WHERE u.user_id = $1
+            """, user_id)
+            
+            # 2. Informações de entrada e convite
+            join_row = await conn.fetchrow("""
+                SELECT s.inviter_id, s.invite_code, s.joined_at, u.username as inviter_username
+                FROM member_join_sources s
+                LEFT JOIN users u ON u.user_id = s.inviter_id
+                WHERE s.guild_id = $1 AND s.user_id = $2
+            """, guild_id, user_id)
+            
+            # 3. Infrações consolidadas por tipo
+            infractions_summary = await conn.fetch("""
+                SELECT action_type, COUNT(*) as count, COALESCE(SUM(duration_seconds), 0) as total_duration
+                FROM user_infractions
+                WHERE guild_id = $1 AND user_id = $2
+                GROUP BY action_type
+            """, guild_id, user_id)
+            
+            # 4. Lista recente de infrações
+            recent_infractions = await conn.fetch("""
+                SELECT i.*, m.username as moderator_username
+                FROM user_infractions i
+                LEFT JOIN users m ON m.user_id = i.moderator_id
+                WHERE i.guild_id = $1 AND i.user_id = $2
+                ORDER BY i.created_at DESC
+                LIMIT 15
+            """, guild_id, user_id)
+            
+            # 5. Denúncias recebidas (reports)
+            reports = await conn.fetch("""
+                SELECT r.*, rep.username as reporter_username
+                FROM user_reports r
+                LEFT JOIN users rep ON rep.user_id = r.reporter_user_id
+                WHERE r.guild_id = $1 AND r.target_user_id = $2
+                ORDER BY r.created_at DESC
+                LIMIT 15
+            """, guild_id, user_id)
+            
+            # 6. Mensagens moderadas pela IA
+            moderated_messages_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM messages 
+                WHERE guild_id = $1 AND user_id = $2 AND was_moderated = TRUE
+            """, guild_id, user_id) or 0
+            
+            # 7. Total de XP / Pontos atuais
+            total_points = await conn.fetchval("""
+                SELECT COALESCE(SUM(points), 0) FROM interaction_points
+                WHERE guild_id = $1 AND user_id = $2
+            """, guild_id, user_id) or 0
+
+            return {
+                "user": dict(user_row) if user_row else None,
+                "join_source": dict(join_row) if join_row else None,
+                "infractions_summary": {r["action_type"]: {"count": r["count"], "total_duration": r["total_duration"]} for r in infractions_summary},
+                "recent_infractions": [dict(r) for r in recent_infractions],
+                "reports": [dict(r) for r in reports],
+                "moderated_messages_count": moderated_messages_count,
+                "total_points": total_points
+            }
+

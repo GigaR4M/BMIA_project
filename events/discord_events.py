@@ -74,10 +74,53 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
     @client.event
     async def on_member_join(member: discord.Member) -> None:
         await ctx.telegram.log_member_join(member)
+        
+        # Rastreia origem do convite
+        if hasattr(ctx, 'invite_tracker') and ctx.invite_tracker and ctx.db:
+            try:
+                invite_code, inviter_id = await ctx.invite_tracker.find_used_invite(member)
+                await ctx.db.record_member_join_source(
+                    guild_id=member.guild.id,
+                    user_id=member.id,
+                    inviter_id=inviter_id,
+                    invite_code=invite_code
+                )
+                logger.info(f"📥 Membro {member.name} entrou usando convite '{invite_code}' criado por {inviter_id}")
+            except Exception as e:
+                logger.warning(f"Erro ao rastrear convite de {member.name}: {e}")
 
     @client.event
     async def on_member_remove(member: discord.Member) -> None:
         await ctx.telegram.log_member_leave(member)
+
+    @client.event
+    async def on_member_update(before: discord.Member, after: discord.Member) -> None:
+        # Detecta quando um membro entra de castigo (timeout)
+        if not before.is_timed_out() and after.is_timed_out():
+            if ctx.db and after.timed_out_until:
+                try:
+                    duration_sec = int((after.timed_out_until - datetime.now(timezone.utc)).total_seconds())
+                    await ctx.db.add_user_infraction(
+                        guild_id=after.guild.id,
+                        user_id=after.id,
+                        moderator_id=client.user.id if client.user else 0,
+                        action_type="timeout",
+                        reason="Castigo / Timeout aplicado no Discord",
+                        duration_seconds=max(0, duration_sec)
+                    )
+                    logger.info(f"⛔ Castigo registrado para {after.name} ({duration_sec}s)")
+                except Exception as e:
+                    logger.error(f"Erro ao registrar timeout para {after.name}: {e}")
+
+    @client.event
+    async def on_invite_create(invite: discord.Invite) -> None:
+        if hasattr(ctx, 'invite_tracker') and ctx.invite_tracker and invite.guild:
+            await ctx.invite_tracker.update_guild_invites(invite.guild)
+
+    @client.event
+    async def on_invite_delete(invite: discord.Invite) -> None:
+        if hasattr(ctx, 'invite_tracker') and ctx.invite_tracker and invite.guild:
+            await ctx.invite_tracker.update_guild_invites(invite.guild)
 
     # ── Mensagens ──────────────────────────────────────────────────────────────
     @client.event

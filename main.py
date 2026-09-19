@@ -44,6 +44,8 @@ from commands.info_commands import InfoCommands
 from commands.context_commands import ContextCommands
 from commands.config_commands import ConfigCommands
 from commands.tournament_commands import TournamentCommands, TournamentRegistrationView
+from commands.reputation_commands import ReputationCommands, report_user_command, report_message_context
+from utils.invite_tracker import InviteTracker
 from utils.role_manager import RoleManager
 from utils.giveaway_manager import GiveawayManager
 from utils.activity_tracker import ActivityTracker
@@ -129,6 +131,9 @@ async def on_ready() -> None:
         else:
             logger.warning("StatsAnalyzer não disponível.")
 
+        ctx.invite_tracker = InviteTracker(client)
+        await ctx.invite_tracker.initialize()
+
         # Carrega configuração de canais/cargos do banco (se existir)
         for guild in client.guilds:
             guild_config = await ctx.db.get_guild_config(guild.id)
@@ -148,11 +153,17 @@ async def on_ready() -> None:
         if not ctx.dynamic_roles_config:
             ctx.dynamic_roles_config = dict(DEFAULT_DYNAMIC_ROLES_CONFIG)
 
+        # Associa ctx ao client para handlers e views acessarem
+        client.ctx = ctx
+
         # Registra slash commands
         client.tree.add_command(StatsCommands(ctx.db, ctx.leaderboard_updater, ctx.points_manager))
         client.tree.add_command(RoleCommands(ctx.db, ctx.role_manager))
         client.tree.add_command(GiveawayCommands(ctx.db, ctx.giveaway_manager))
         client.tree.add_command(ModerationCommands(ctx.db))
+        client.tree.add_command(ReputationCommands(ctx.db))
+        client.tree.add_command(report_user_command)
+        client.tree.add_command(report_message_context)
         client.tree.add_command(GamesCommands(ctx.db))
         client.tree.add_command(InfoCommands())
         client.tree.add_command(ConfigCommands(ctx.db, ctx))

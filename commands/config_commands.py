@@ -132,6 +132,23 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             f"Moderação por IA {status} para **{interaction.guild.name}**.", ephemeral=True
         )
 
+    # ── Canal de Moderação / Anúncios ──────────────────────────────────────────
+    @app_commands.command(name="canal-moderacao", description="Define o canal onde serão enviados alertas de moderação e denúncias.")
+    @app_commands.describe(canal="Canal de texto para receber alertas da Staff")
+    async def set_moderation_channel(
+        self, interaction: discord.Interaction, canal: discord.TextChannel
+    ) -> None:
+        if not self._is_admin(interaction):
+            await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
+            return
+
+        await self.db.set_announcement_channel(interaction.guild.id, canal.id)
+        await interaction.response.send_message(
+            f"✅ Canal de alertas de moderação e denúncias definido para {canal.mention}.",
+            ephemeral=True
+        )
+        logger.info("Canal de moderação definido como %s em %s", canal.name, interaction.guild.name)
+
     # ── Ver configuração atual ─────────────────────────────────────────────────
     @app_commands.command(name="ver", description="Mostra a configuração atual do bot neste servidor.")
     async def show_config(self, interaction: discord.Interaction) -> None:
@@ -144,6 +161,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
         ai_mod = guild_config.get("ai_moderation_enabled", True)
         allowed = guild_config.get("allowed_channels", [])
         ignored = guild_config.get("ignored_voice_channels", [])
+        ann_channel = guild_config.get("announcement_channel_id")
         dyn_roles = guild_config.get("dynamic_roles_config", {})
 
         def ch_list(ids: list) -> str:
@@ -156,6 +174,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             color=discord.Color.blurple(),
         )
         embed.add_field(name="🛡️ Moderação por IA", value="✅ Ativada" if ai_mod else "⏸️ Desativada", inline=False)
+        embed.add_field(name="🚨 Canal de Moderação / Alertas", value=f"<#{ann_channel}>" if ann_channel else "*(não configurado)*", inline=False)
         embed.add_field(name="💬 Canais com Pontos", value=ch_list(allowed), inline=False)
         embed.add_field(name="🔇 Canais de Voz Ignorados", value=ch_list(ignored), inline=False)
         embed.add_field(
