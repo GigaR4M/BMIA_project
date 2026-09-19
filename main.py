@@ -44,7 +44,7 @@ from commands.info_commands import InfoCommands
 from commands.context_commands import ContextCommands
 from commands.config_commands import ConfigCommands
 from commands.tournament_commands import TournamentCommands, TournamentRegistrationView
-from commands.reputation_commands import ReputationCommands, report_user_command, report_message_context
+from commands.reputation_commands import ReputationCommands, report_user_command, report_message_context, report_user_context
 from utils.invite_tracker import InviteTracker
 from utils.role_manager import RoleManager
 from utils.giveaway_manager import GiveawayManager
@@ -164,6 +164,7 @@ async def on_ready() -> None:
         client.tree.add_command(ReputationCommands(ctx.db))
         client.tree.add_command(report_user_command)
         client.tree.add_command(report_message_context)
+        client.tree.add_command(report_user_context)
         client.tree.add_command(GamesCommands(ctx.db))
         client.tree.add_command(InfoCommands())
         client.tree.add_command(ConfigCommands(ctx.db, ctx))

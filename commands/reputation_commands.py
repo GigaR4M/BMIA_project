@@ -309,7 +309,7 @@ async def report_user_command(interaction: discord.Interaction, membro: discord.
     await interaction.response.send_modal(modal)
 
 
-# ==================== CONTEXT MENU (CLIQUE DIREITO) ====================
+# ==================== CONTEXT MENUS (CLIQUE DIREITO) ====================
 
 @app_commands.context_menu(name="Reportar Mensagem")
 async def report_message_context(interaction: discord.Interaction, message: discord.Message):
@@ -320,4 +320,19 @@ async def report_message_context(interaction: discord.Interaction, message: disc
 
     db: Database = interaction.client.ctx.db if hasattr(interaction.client, 'ctx') else None
     modal = ReportModal(db, message.author, message=message)
+    await interaction.response.send_modal(modal)
+
+
+@app_commands.context_menu(name="Reportar Usuário")
+async def report_user_context(interaction: discord.Interaction, user: discord.Member):
+    """Permite denunciar diretamente um usuário pelo menu de contexto (clique direito no perfil)."""
+    if user.id == interaction.user.id:
+        await interaction.response.send_message("❌ Você não pode denunciar a si mesmo.", ephemeral=True)
+        return
+    if user.bot:
+        await interaction.response.send_message("❌ Você não pode denunciar bots.", ephemeral=True)
+        return
+
+    db: Database = interaction.client.ctx.db if hasattr(interaction.client, 'ctx') else None
+    modal = ReportModal(db, user)
     await interaction.response.send_modal(modal)
