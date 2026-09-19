@@ -414,6 +414,7 @@ class BotContext:
         "chat_handler",
         "memory_manager",
         "stats_analyzer",
+        "invite_tracker",
         "telegram",
         "buffer_mensagens",
         "allowed_channels",
@@ -435,6 +436,7 @@ class BotContext:
         self.chat_handler = None
         self.memory_manager = None
         self.stats_analyzer = None
+        self.invite_tracker = None
         self.telegram = None
         self.buffer_mensagens: list = []
         self.allowed_channels: list[int] = list(DEFAULT_ALLOWED_CHANNELS)
