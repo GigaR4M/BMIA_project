@@ -21,6 +21,7 @@ from config import (
     DISCORD_TOKEN,
     GEMINI_API_KEY,
     DATABASE_URL,
+    RAWG_API_KEY,
     GEMINI_CHAT_API_KEY,
     GEMINI_CHAT_MODEL,
     DEFAULT_ALLOWED_CHANNELS,
@@ -40,6 +41,7 @@ from commands.role_commands import RoleCommands
 from commands.giveaway_commands import GiveawayCommands
 from commands.moderation_commands import ModerationCommands
 from commands.games_commands import GamesCommands
+from commands.rawg_commands import RawgCommands, setup_rawg_slash_command
 from commands.info_commands import InfoCommands
 from commands.context_commands import ContextCommands
 from commands.config_commands import ConfigCommands
@@ -56,6 +58,7 @@ from utils.event_monitor import EventMonitor
 from utils.leaderboard_updater import LeaderboardUpdater
 from utils.chat_handler import ChatHandler
 from utils.telegram_notifier import TelegramNotifier
+from utils.rawg_client import RawgClient
 
 try:
     from utils.memory_manager import MemoryManager
@@ -133,6 +136,7 @@ async def on_ready() -> None:
 
         ctx.invite_tracker = InviteTracker(client)
         await ctx.invite_tracker.initialize()
+        ctx.rawg_client = RawgClient(api_key=RAWG_API_KEY)
 
         # Carrega configuração de canais/cargos do banco (se existir)
         for guild in client.guilds:
@@ -166,6 +170,7 @@ async def on_ready() -> None:
         client.tree.add_command(report_message_context)
         client.tree.add_command(report_user_context)
         client.tree.add_command(GamesCommands(ctx.db))
+        setup_rawg_slash_command(client.tree, ctx.rawg_client)
         client.tree.add_command(InfoCommands())
         client.tree.add_command(ConfigCommands(ctx.db, ctx))
         client.tree.add_command(TournamentCommands(ctx.db, ctx.points_manager))
