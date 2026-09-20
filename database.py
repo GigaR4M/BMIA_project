@@ -3240,7 +3240,7 @@ class Database:
         async with self.pool.acquire() as conn:
             # 1. Informações básicas do usuário
             user_row = await conn.fetchrow("""
-                SELECT u.user_id, u.username, u.discriminator, u.avatar_url, u.created_at as registered_at
+                SELECT u.user_id, u.username, u.discriminator, u.avatar_url, u.first_seen as registered_at
                 FROM users u WHERE u.user_id = $1
             """, user_id)
             
