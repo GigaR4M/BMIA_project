@@ -32,6 +32,9 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
         year = now_brt().year
 
     try:
+        from utils.highlights_scanner import HighlightsScanner
+        from utils.image_generator import HighlightsBuilder
+
         top_clip = None
         if hasattr(db, "get_top_media_highlight") and interaction.guild:
             try:

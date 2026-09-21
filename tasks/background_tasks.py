@@ -162,6 +162,9 @@ async def check_monthly_podium(
                             # Envia também a galeria de Destaques do Ano
                             try:
                                 from utils.highlights_scanner import HighlightsScanner
+                                from utils.image_generator import HighlightsBuilder
+                                from commands.stats_commands import HIGHLIGHTS_CATEGORIES
+
                                 top_clip = None
                                 if hasattr(db, "get_top_media_highlight"):
                                     try:
