@@ -59,6 +59,7 @@ from utils.leaderboard_updater import LeaderboardUpdater
 from utils.chat_handler import ChatHandler
 from utils.telegram_notifier import TelegramNotifier
 from utils.rawg_client import RawgClient
+from utils.media_manager import MediaManager
 
 try:
     from utils.memory_manager import MemoryManager
@@ -119,6 +120,7 @@ async def on_ready() -> None:
         ctx.spam_detector = SpamDetector()
         ctx.event_monitor = EventMonitor(ctx.db)
         ctx.leaderboard_updater = LeaderboardUpdater(client, ctx.db)
+        ctx.media_manager = MediaManager(ctx.db)
         ctx.chat_handler = ChatHandler(
             api_key=GEMINI_CHAT_API_KEY or GEMINI_API_KEY,
             model_name=GEMINI_CHAT_MODEL,

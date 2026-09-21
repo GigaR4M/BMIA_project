@@ -321,6 +321,10 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
         if ctx.stats_collector:
             await ctx.stats_collector.on_message(message)
 
+        # Gerenciamento de Mídias e Retrospectiva
+        if ctx.media_manager:
+            await ctx.media_manager.on_message(message)
+
     # ── Reações ────────────────────────────────────────────────────────────────
     @client.event
     async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
@@ -372,6 +376,19 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
             except Exception as exc:
                 logger.error("❌ Erro ao processar reação: %s", exc)
 
+        if ctx.media_manager:
+            await ctx.media_manager.on_raw_reaction_add(payload, client)
+
+    @client.event
+    async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent) -> None:
+        if ctx.media_manager:
+            await ctx.media_manager.on_raw_reaction_remove(payload, client)
+
+    @client.event
+    async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
+        if ctx.media_manager:
+            await ctx.media_manager.on_raw_message_delete(payload)
+
     # ── Presença / Atividades ──────────────────────────────────────────────────
     @client.event
     async def on_presence_update(
@@ -415,6 +432,7 @@ class BotContext:
         "memory_manager",
         "stats_analyzer",
         "invite_tracker",
+        "media_manager",
         "telegram",
         "buffer_mensagens",
         "allowed_channels",
@@ -438,6 +456,7 @@ class BotContext:
         self.memory_manager = None
         self.stats_analyzer = None
         self.invite_tracker = None
+        self.media_manager = None
         self.telegram = None
         self.rawg_client = None
         self.buffer_mensagens: list = []

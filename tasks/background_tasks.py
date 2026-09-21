@@ -162,10 +162,16 @@ async def check_monthly_podium(
                             # Envia também a galeria de Destaques do Ano
                             try:
                                 from utils.highlights_scanner import HighlightsScanner
-                                from utils.image_generator import HighlightsBuilder
-                                from commands.stats_commands import HIGHLIGHTS_CATEGORIES
+                                top_clip = None
+                                if hasattr(db, "get_top_media_highlight"):
+                                    try:
+                                        top_clip = await db.get_top_media_highlight(guild.id, prev_year)
+                                    except Exception as exc:
+                                        logger.warning("Erro ao buscar top_media_highlight anual: %s", exc)
 
-                                top_clip = await HighlightsScanner.scan_guild_top_clip(guild, prev_year, timeout=3.0)
+                                if not top_clip:
+                                    top_clip = await HighlightsScanner.scan_guild_top_clip(guild, prev_year, timeout=30.0)
+
                                 h_data = await db.get_annual_highlights_data(guild.id, prev_year)
                                 h_files = await HighlightsBuilder.generate_all_slides_files(
                                     guild=guild,

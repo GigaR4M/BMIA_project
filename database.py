@@ -430,6 +430,29 @@ class Database:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_started ON user_activities(started_at)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_interaction_points_user ON interaction_points(user_id)")
 
+            # Tabela de mídias e destaques do ano (media_highlights)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS media_highlights (
+                    message_id BIGINT PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    channel_id BIGINT NOT NULL,
+                    channel_name TEXT,
+                    user_id BIGINT NOT NULL,
+                    username TEXT NOT NULL,
+                    avatar_url TEXT,
+                    media_url TEXT NOT NULL,
+                    content TEXT,
+                    reaction_count INTEGER DEFAULT 0,
+                    reactions_json JSONB DEFAULT '{}'::jsonb,
+                    reply_count INTEGER DEFAULT 0,
+                    popularity_score INTEGER DEFAULT 0,
+                    jump_url TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_media_highlights_guild_created ON media_highlights (guild_id, created_at, popularity_score DESC)")
+
             
             # ==================== ADVANCED CONTEXT SYSTEM SCHEMAS ====================
 
@@ -3301,4 +3324,137 @@ class Database:
                 "moderated_messages_count": moderated_messages_count,
                 "total_points": total_points
             }
+
+    # ── Mídias e Destaques do Ano (media_highlights) ───────────────────────────
+
+    async def upsert_media_highlight(
+        self,
+        message_id: int,
+        guild_id: int,
+        channel_id: int,
+        channel_name: str,
+        user_id: int,
+        username: str,
+        avatar_url: Optional[str],
+        media_url: str,
+        content: str = "",
+        reaction_count: int = 0,
+        reactions_json: Optional[Dict[str, int]] = None,
+        reply_count: int = 0,
+        jump_url: Optional[str] = None,
+        created_at: Optional[datetime] = None
+    ) -> bool:
+        """Insere ou atualiza um registro de mídia no banco."""
+        if reactions_json is None:
+            reactions_json = {}
+        
+        popularity_score = reaction_count + (reply_count * 2)
+        if created_at is None:
+            created_at = datetime.now(timezone.utc)
+
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO media_highlights (
+                    message_id, guild_id, channel_id, channel_name, user_id,
+                    username, avatar_url, media_url, content, reaction_count,
+                    reactions_json, reply_count, popularity_score, jump_url,
+                    created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15, NOW())
+                ON CONFLICT (message_id) DO UPDATE SET
+                    channel_name = EXCLUDED.channel_name,
+                    username = EXCLUDED.username,
+                    avatar_url = COALESCE(EXCLUDED.avatar_url, media_highlights.avatar_url),
+                    media_url = EXCLUDED.media_url,
+                    content = EXCLUDED.content,
+                    reaction_count = EXCLUDED.reaction_count,
+                    reactions_json = EXCLUDED.reactions_json,
+                    reply_count = GREATEST(media_highlights.reply_count, EXCLUDED.reply_count),
+                    popularity_score = EXCLUDED.reaction_count + (GREATEST(media_highlights.reply_count, EXCLUDED.reply_count) * 2),
+                    jump_url = COALESCE(EXCLUDED.jump_url, media_highlights.jump_url),
+                    updated_at = NOW()
+            """, message_id, guild_id, channel_id, channel_name, user_id,
+                 username, avatar_url, media_url, content, reaction_count,
+                 json.dumps(reactions_json), reply_count, popularity_score, jump_url, created_at)
+            return True
+
+    async def update_media_highlight_reactions(
+        self,
+        message_id: int,
+        reaction_count: int,
+        reactions_json: Dict[str, int]
+    ) -> bool:
+        """Atualiza a contagem de reações de uma mensagem de mídia e recalcula popularity_score."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("""
+                UPDATE media_highlights
+                SET reaction_count = $2,
+                    reactions_json = $3::jsonb,
+                    popularity_score = $2 + (reply_count * 2),
+                    updated_at = NOW()
+                WHERE message_id = $1
+            """, message_id, reaction_count, json.dumps(reactions_json))
+            return result != "UPDATE 0"
+
+    async def increment_media_highlight_reply(self, parent_message_id: int) -> bool:
+        """Incrementa o contador de respostas a uma mensagem de mídia (+2 pts)."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("""
+                UPDATE media_highlights
+                SET reply_count = reply_count + 1,
+                    popularity_score = reaction_count + ((reply_count + 1) * 2),
+                    updated_at = NOW()
+                WHERE message_id = $1
+            """, parent_message_id)
+            return result != "UPDATE 0"
+
+    async def delete_media_highlight(self, message_id: int) -> bool:
+        """Remove a mídia do banco caso a mensagem seja deletada."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM media_highlights WHERE message_id = $1", message_id)
+            return result != "DELETE 0"
+
+    async def get_media_highlight(self, message_id: int) -> Optional[Dict[str, Any]]:
+        """Busca os dados de uma mídia específica pelo ID da mensagem."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM media_highlights WHERE message_id = $1", message_id)
+            if not row:
+                return None
+            data = dict(row)
+            if isinstance(data.get("reactions_json"), str):
+                try:
+                    data["reactions_json"] = json.loads(data["reactions_json"])
+                except Exception:
+                    data["reactions_json"] = {}
+            return data
+
+    async def get_top_media_highlight(self, guild_id: int, year: int) -> Optional[Dict[str, Any]]:
+        """Busca o clipe/print com maior score de engajamento do ano no servidor."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT * FROM media_highlights
+                WHERE guild_id = $1 
+                  AND EXTRACT(YEAR FROM created_at) = $2
+                  AND popularity_score > 0
+                ORDER BY popularity_score DESC, reaction_count DESC, created_at ASC
+                LIMIT 1
+            """, guild_id, year)
+            if not row:
+                return None
+            data = dict(row)
+            if isinstance(data.get("reactions_json"), str):
+                try:
+                    data["reactions_json"] = json.loads(data["reactions_json"])
+                except Exception:
+                    data["reactions_json"] = {}
+            
+            reactions_dict = data.get("reactions_json") or {}
+            if isinstance(reactions_dict, dict) and reactions_dict:
+                data["reaction_summary"] = " ".join(f"{emoji} {cnt}" for emoji, cnt in list(reactions_dict.items())[:5])
+            else:
+                data["reaction_summary"] = f"🔥 {data.get('reaction_count', 0)}"
+
+            if "created_at" in data and isinstance(data["created_at"], datetime):
+                data["created_at"] = data["created_at"].strftime("%d/%m/%Y")
+
+            return data
 

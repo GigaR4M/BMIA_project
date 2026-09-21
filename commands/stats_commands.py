@@ -32,10 +32,34 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
         year = now_brt().year
 
     try:
-        from utils.highlights_scanner import HighlightsScanner
-        from utils.image_generator import HighlightsBuilder
+        top_clip = None
+        if hasattr(db, "get_top_media_highlight") and interaction.guild:
+            try:
+                top_clip = await db.get_top_media_highlight(interaction.guild.id, year)
+            except Exception as exc:
+                logger.warning("Erro ao buscar top_media_highlight do banco: %s", exc)
 
-        top_clip = await HighlightsScanner.scan_guild_top_clip(interaction.guild, year, timeout=3.0)
+        if not top_clip and interaction.guild:
+            top_clip = await HighlightsScanner.scan_guild_top_clip(interaction.guild, year, timeout=30.0)
+            if top_clip and hasattr(db, "upsert_media_highlight"):
+                try:
+                    await db.upsert_media_highlight(
+                        message_id=top_clip["message_id"],
+                        guild_id=interaction.guild.id,
+                        channel_id=0,
+                        channel_name=top_clip.get("channel_name", "prints-e-clips"),
+                        user_id=top_clip.get("user_id", 0),
+                        username=top_clip.get("username", "Autor"),
+                        avatar_url=top_clip.get("avatar_url"),
+                        media_url=top_clip.get("media_url", ""),
+                        content=top_clip.get("content", ""),
+                        reaction_count=top_clip.get("reaction_count", 0),
+                        reply_count=top_clip.get("reply_count", 0),
+                        jump_url=top_clip.get("jump_url")
+                    )
+                except Exception as e:
+                    logger.debug("Falha ao persistir top_clip do scanner: %s", e)
+
         highlights_data = await db.get_annual_highlights_data(interaction.guild.id, year)
 
         files = await HighlightsBuilder.generate_all_slides_files(
