@@ -22,7 +22,7 @@ from config import (
     GEMINI_API_KEY,
     DATABASE_URL,
     RAWG_API_KEY,
-    TENOR_API_KEY,
+    GIPHY_API_KEY,
     GEMINI_CHAT_API_KEY,
     GEMINI_CHAT_MODEL,
     DEFAULT_ALLOWED_CHANNELS,
@@ -62,7 +62,7 @@ from utils.chat_handler import ChatHandler
 from utils.telegram_notifier import TelegramNotifier
 from utils.rawg_client import RawgClient
 from utils.media_manager import MediaManager
-from utils.tenor_client import TenorClient
+from utils.giphy_client import GiphyClient
 
 try:
     from utils.memory_manager import MemoryManager
@@ -142,7 +142,7 @@ async def on_ready() -> None:
         ctx.invite_tracker = InviteTracker(client)
         await ctx.invite_tracker.initialize()
         ctx.rawg_client = RawgClient(api_key=RAWG_API_KEY)
-        ctx.tenor_client = TenorClient(api_key=TENOR_API_KEY)
+        ctx.giphy_client = GiphyClient(api_key=GIPHY_API_KEY)
 
         # Carrega configuração de canais/cargos do banco (se existir)
         for guild in client.guilds:
@@ -177,7 +177,7 @@ async def on_ready() -> None:
         client.tree.add_command(report_user_context)
         client.tree.add_command(GamesCommands(ctx.db))
         setup_rawg_slash_command(client.tree, ctx.rawg_client)
-        setup_gif_slash_command(client.tree, ctx.tenor_client)
+        setup_gif_slash_command(client.tree, ctx.giphy_client)
         client.tree.add_command(InfoCommands())
         client.tree.add_command(ConfigCommands(ctx.db, ctx))
         client.tree.add_command(TournamentCommands(ctx.db, ctx.points_manager))

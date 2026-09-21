@@ -1,17 +1,17 @@
-# tests/test_gif.py - Testes unitários para TenorClient, Slash Command /gif e AIToolkit.buscar_gif
+# tests/test_gif.py - Testes unitários para GiphyClient, Slash Command /gif e AIToolkit.buscar_gif
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
-from utils.tenor_client import TenorClient
+from utils.giphy_client import GiphyClient
 from utils.ai_tools import AIToolkit
 from commands.gif_commands import setup_gif_slash_command
 import discord
 
 
 @pytest.fixture
-def tenor_client():
-    return TenorClient(api_key="test_tenor_key")
+def gif_client():
+    return GiphyClient(api_key="test_giphy_key")
 
 
 @pytest.fixture
@@ -19,37 +19,37 @@ def mock_db():
     return MagicMock()
 
 
-class TestTenorClient:
+class TestGiphyClient:
     def test_is_configured(self):
-        client_with_key = TenorClient(api_key="valid_key")
+        client_with_key = GiphyClient(api_key="valid_key")
         assert client_with_key.is_configured is True
 
-        client_empty = TenorClient(api_key="")
+        client_empty = GiphyClient(api_key="")
         assert client_empty.is_configured is False
 
     @pytest.mark.asyncio
-    async def test_search_gifs_empty_query(self, tenor_client):
-        res = await tenor_client.search_gifs("")
+    async def test_search_gifs_empty_query(self, gif_client):
+        res = await gif_client.search_gifs("")
         assert res == []
-        res_spaces = await tenor_client.search_gifs("   ")
+        res_spaces = await gif_client.search_gifs("   ")
         assert res_spaces == []
 
     @pytest.mark.asyncio
     async def test_search_gifs_not_configured(self):
-        client = TenorClient(api_key="")
+        client = GiphyClient(api_key="")
         res = await client.search_gifs("dance")
         assert res == []
 
     @pytest.mark.asyncio
-    async def test_search_gifs_success_and_caching(self, tenor_client):
+    async def test_search_gifs_success_and_caching(self, gif_client):
         mock_payload = {
-            "results": [
+            "data": [
                 {
-                    "url": "https://tenor.com/view/dance-cat-gif-123",
-                    "content_description": "Cat dancing meme",
-                    "media_formats": {
-                        "gif": {"url": "https://media.tenor.com/cat.gif"},
-                        "tinygif": {"url": "https://media.tenor.com/tinycat.gif"},
+                    "url": "https://giphy.com/gifs/cat-dance-123",
+                    "title": "Cat Dancing Meme",
+                    "images": {
+                        "original": {"url": "https://media.giphy.com/media/cat.gif"},
+                        "downsized_medium": {"url": "https://media.giphy.com/media/cat_med.gif"},
                     },
                 }
             ]
@@ -66,61 +66,61 @@ class TestTenorClient:
         mock_session_ctx.__aenter__.return_value = mock_session
 
         with patch("aiohttp.ClientSession", return_value=mock_session_ctx):
-            results = await tenor_client.search_gifs("dance cat", limit=1)
+            results = await gif_client.search_gifs("dance cat", limit=1)
 
             assert len(results) == 1
-            assert results[0]["url"] == "https://tenor.com/view/dance-cat-gif-123"
-            assert results[0]["gif_url"] == "https://media.tenor.com/cat.gif"
-            assert results[0]["description"] == "Cat dancing meme"
+            assert results[0]["url"] == "https://giphy.com/gifs/cat-dance-123"
+            assert results[0]["gif_url"] == "https://media.giphy.com/media/cat.gif"
+            assert results[0]["description"] == "Cat Dancing Meme"
 
             # Test cache hit (should not call aiohttp again)
-            cached_results = await tenor_client.search_gifs("dance cat", limit=1)
+            cached_results = await gif_client.search_gifs("dance cat", limit=1)
             assert cached_results == results
             assert mock_session.get.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_search_gif_url(self, tenor_client):
+    async def test_search_gif_url(self, gif_client):
         with patch.object(
-            tenor_client,
+            gif_client,
             "search_gifs",
             new=AsyncMock(
                 return_value=[
                     {
-                        "url": "https://tenor.com/view/win-gif-456",
-                        "gif_url": "https://media.tenor.com/win.gif",
+                        "url": "https://giphy.com/gifs/win-456",
+                        "gif_url": "https://media.giphy.com/media/win.gif",
                     }
                 ]
             ),
         ):
-            url = await tenor_client.search_gif_url("vitoria")
-            assert url == "https://tenor.com/view/win-gif-456"
+            url = await gif_client.search_gif_url("vitoria")
+            assert url == "https://giphy.com/gifs/win-456"
 
     @pytest.mark.asyncio
-    async def test_search_gif_url_not_found(self, tenor_client):
-        with patch.object(tenor_client, "search_gifs", new=AsyncMock(return_value=[])):
-            url = await tenor_client.search_gif_url("inexistente_xyz_123")
+    async def test_search_gif_url_not_found(self, gif_client):
+        with patch.object(gif_client, "search_gifs", new=AsyncMock(return_value=[])):
+            url = await gif_client.search_gif_url("inexistente_xyz_123")
             assert url is None
 
 
 class TestAIToolkitGif:
     @pytest.mark.asyncio
-    async def test_buscar_gif_success(self, mock_db, tenor_client):
+    async def test_buscar_gif_success(self, mock_db, gif_client):
         with patch.object(
-            tenor_client,
+            gif_client,
             "search_gif_url",
-            new=AsyncMock(return_value="https://tenor.com/view/cheering-gif-789"),
+            new=AsyncMock(return_value="https://giphy.com/gifs/cheering-789"),
         ):
-            toolkit = AIToolkit(db=mock_db, guild_id=123, tenor_client=tenor_client)
+            toolkit = AIToolkit(db=mock_db, guild_id=123, gif_client=gif_client)
             res = await toolkit.buscar_gif("comemorando")
 
-            assert res["gif_url"] == "https://tenor.com/view/cheering-gif-789"
+            assert res["gif_url"] == "https://giphy.com/gifs/cheering-789"
             assert res["tema"] == "comemorando"
             assert "instrucao" in res
 
     @pytest.mark.asyncio
-    async def test_buscar_gif_not_found(self, mock_db, tenor_client):
-        with patch.object(tenor_client, "search_gif_url", new=AsyncMock(return_value=None)):
-            toolkit = AIToolkit(db=mock_db, guild_id=123, tenor_client=tenor_client)
+    async def test_buscar_gif_not_found(self, mock_db, gif_client):
+        with patch.object(gif_client, "search_gif_url", new=AsyncMock(return_value=None)):
+            toolkit = AIToolkit(db=mock_db, guild_id=123, gif_client=gif_client)
             res = await toolkit.buscar_gif("termo_estranho")
 
             assert "Nenhum GIF encontrado" in res["mensagem"]
@@ -133,7 +133,7 @@ class TestAIToolkitGif:
 
 class TestGifSlashCommand:
     @pytest.mark.asyncio
-    async def test_setup_and_execute_slash_command(self, tenor_client):
+    async def test_setup_and_execute_slash_command(self, gif_client):
         tree = MagicMock()
         registered_command = None
 
@@ -146,7 +146,7 @@ class TestGifSlashCommand:
 
         tree.command = mock_command
 
-        setup_gif_slash_command(tree, tenor_client)
+        setup_gif_slash_command(tree, gif_client)
         assert registered_command is not None
 
         # Test valid search
@@ -155,14 +155,14 @@ class TestGifSlashCommand:
         interaction.followup.send = AsyncMock()
 
         with patch.object(
-            tenor_client,
+            gif_client,
             "search_gif_url",
-            new=AsyncMock(return_value="https://tenor.com/view/dance-123"),
+            new=AsyncMock(return_value="https://giphy.com/gifs/dance-123"),
         ):
             await registered_command(interaction, busca="dance")
             interaction.response.defer.assert_awaited_once_with(thinking=False)
             interaction.followup.send.assert_awaited_once_with(
-                content="https://tenor.com/view/dance-123"
+                content="https://giphy.com/gifs/dance-123"
             )
 
         # Test empty search

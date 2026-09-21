@@ -162,7 +162,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             toolkit = AIToolkit(
                                 ctx.db,
                                 message.guild.id,
-                                tenor_client=ctx.tenor_client,
+                                gif_client=ctx.giphy_client or ctx.tenor_client,
                             )
 
                         if ctx.memory_manager and message.guild:
@@ -437,6 +437,7 @@ class BotContext:
         "stats_analyzer",
         "invite_tracker",
         "media_manager",
+        "giphy_client",
         "tenor_client",
         "telegram",
         "buffer_mensagens",
@@ -462,6 +463,7 @@ class BotContext:
         self.stats_analyzer = None
         self.invite_tracker = None
         self.media_manager = None
+        self.giphy_client = None
         self.tenor_client = None
         self.telegram = None
         self.rawg_client = None

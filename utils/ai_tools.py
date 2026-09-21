@@ -9,10 +9,10 @@ logger = logging.getLogger(__name__)
 class AIToolkit:
     """Conjunto de ferramentas do agente BMIA para consultar dados do servidor."""
 
-    def __init__(self, db, guild_id: int, tenor_client=None):
+    def __init__(self, db, guild_id: int, gif_client=None, tenor_client=None):
         self.db = db
         self.guild_id = guild_id
-        self.tenor_client = tenor_client
+        self.gif_client = gif_client or tenor_client
 
     async def get_top_games(self, days: int = 30, limit: int = 5) -> List[Dict[str, Any]]:
         """Retorna os jogos e atividades mais jogados no servidor Discord.
@@ -223,16 +223,16 @@ class AIToolkit:
             return [{"erro": "Falha ao consultar Hall da Fama de torneios."}]
 
     async def buscar_gif(self, tema: str) -> Dict[str, Any]:
-        """Busca um GIF animado no Tenor para reagir a uma conversa, piada, vitória, derrota, comemoração ou momento engraçado.
+        """Busca um GIF animado no GIPHY para reagir a uma conversa, piada, vitória, derrota, comemoração ou momento engraçado.
 
         Args:
             tema: Termo de busca em português ou inglês para encontrar o GIF (ex: 'risada meme', 'comemorando', 'facepalm', 'anime dançando', 'gato chocado').
         """
         try:
-            client = self.tenor_client
+            client = self.gif_client
             if client is None:
-                from utils.tenor_client import TenorClient
-                client = TenorClient()
+                from utils.giphy_client import GiphyClient
+                client = GiphyClient()
             gif_url = await client.search_gif_url(tema)
             if not gif_url:
                 return {"mensagem": f"Nenhum GIF encontrado para o tema '{tema}'."}
@@ -243,7 +243,7 @@ class AIToolkit:
             }
         except Exception as e:
             logger.error(f"Erro ao executar tool buscar_gif: {e}")
-            return {"erro": "Falha ao buscar GIF no Tenor."}
+            return {"erro": "Falha ao buscar GIF no GIPHY."}
 
     def get_tool_callables(self) -> List[Any]:
         """Retorna a lista de métodos que podem ser passados diretamente para o Gemini como tools."""

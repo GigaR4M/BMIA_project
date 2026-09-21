@@ -31,8 +31,8 @@ DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 # RAWG Video Games Database API
 RAWG_API_KEY: str = os.getenv("RAWG_API_KEY", "")
 
-# Tenor GIF API
-TENOR_API_KEY: str = os.getenv("TENOR_API_KEY", "") or GEMINI_API_KEY
+# GIPHY GIF API
+GIPHY_API_KEY: str = os.getenv("GIPHY_API_KEY", "")
 
 # Canais e cargos padrão (fallback enquanto guild_settings não estiver populado no banco)
 # Formato: IDs separados por vírgula

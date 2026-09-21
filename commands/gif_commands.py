@@ -3,15 +3,15 @@
 import logging
 import discord
 from discord import app_commands
-from utils.tenor_client import TenorClient
+from utils.giphy_client import GiphyClient
 
 logger = logging.getLogger(__name__)
 
 
-def setup_gif_slash_command(tree: app_commands.CommandTree, tenor_client: TenorClient):
+def setup_gif_slash_command(tree: app_commands.CommandTree, gif_client: GiphyClient):
     """Registra o comando slash /gif na CommandTree do bot."""
 
-    @tree.command(name="gif", description="Pesquisa e envia um GIF animado do Tenor no canal")
+    @tree.command(name="gif", description="Pesquisa e envia um GIF animado do GIPHY no canal")
     @app_commands.describe(busca="Termo ou emoção para pesquisar o GIF (ex: risada, comemoração, anime, lol)")
     async def gif_slash(interaction: discord.Interaction, busca: str):
         if not busca or not busca.strip():
@@ -21,7 +21,7 @@ def setup_gif_slash_command(tree: app_commands.CommandTree, tenor_client: TenorC
         await interaction.response.defer(thinking=False)
 
         try:
-            gif_url = await tenor_client.search_gif_url(busca)
+            gif_url = await gif_client.search_gif_url(busca)
             if not gif_url:
                 await interaction.followup.send(f"❌ Nenhum GIF encontrado para `{busca}`.", ephemeral=True)
                 return
