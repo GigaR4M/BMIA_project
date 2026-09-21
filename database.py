@@ -3205,7 +3205,7 @@ class Database:
                     JOIN users u ON u.user_id = m.user_id
                     WHERE m.guild_id = $1
                       AND EXTRACT(YEAR FROM m.created_at) = $2
-                      AND (m.attachments IS NOT NULL AND array_length(m.attachments, 1) > 0)
+                      AND m.has_attachments = TRUE
                       AND u.is_bot = FALSE
                     GROUP BY m.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
@@ -3330,8 +3330,6 @@ class Database:
             except Exception as e:
                 logger.warning("Erro consulta rei_das_demos: %s", e)
                 highlights["rei_das_demos"] = []
-
-        return highlights
 
         return highlights
     
