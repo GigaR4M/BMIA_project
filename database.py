@@ -694,6 +694,10 @@ class Database:
                         ) ep_agg ON TRUE
                         WHERE se.guild_id = p_guild_id
                         ORDER BY se.start_time DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
                     CREATE OR REPLACE FUNCTION get_leaderboard(
                         p_guild_id BIGINT, 
                         p_limit INT DEFAULT 50, 
