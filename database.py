@@ -3010,127 +3010,328 @@ class Database:
     async def get_annual_highlights_data(self, guild_id: int, year: int) -> Dict[str, Any]:
         """
         Coleta os rankings dos Destaques do Ano para um servidor e ano específicos
-        utilizando as funções SQL oficiais (RPCs) do banco de dados que alimentam o dashboard.
+        com consultas SQL diretas e estritamente isoladas por guild_id e ano.
         """
         highlights = {}
         async with self.pool.acquire() as conn:
-            # 1. MVP (Maior Total de XP no Ano)
+            # 1. MVP (Maior Total de XP no Ano para esta Guild)
             try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_highest_score($1, $2)", guild_id, 5)
+                rows = await conn.fetch("""
+                    SELECT 
+                        ip.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COALESCE(SUM(ip.points), 0)::BIGINT AS value
+                    FROM interaction_points ip
+                    JOIN users u ON u.user_id = ip.user_id
+                    WHERE ip.guild_id = $1
+                      AND EXTRACT(YEAR FROM ip.created_at) = $2
+                      AND u.is_bot = FALSE
+                    GROUP BY ip.user_id, u.username, u.avatar_url
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
                 highlights["mvp"] = [dict(r) for r in rows]
             except Exception as e:
-                logger.warning("Erro get_highlight_highest_score: %s", e)
+                logger.warning("Erro consulta mvp: %s", e)
                 highlights["mvp"] = []
 
-            # 2. Tagarela (Mais Mensagens de Texto nos canais permitidos)
+            # 2. Tagarela (Mais Mensagens de Texto no Ano)
             try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_most_messages($1, $2)", guild_id, 5)
+                rows = await conn.fetch("""
+                    SELECT 
+                        m.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COUNT(*)::BIGINT AS value
+                    FROM messages m
+                    JOIN users u ON u.user_id = m.user_id
+                    WHERE m.guild_id = $1
+                      AND EXTRACT(YEAR FROM m.created_at) = $2
+                      AND u.is_bot = FALSE
+                    GROUP BY m.user_id, u.username, u.avatar_url
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
                 highlights["tagarela"] = [dict(r) for r in rows]
             except Exception as e:
-                logger.warning("Erro get_highlight_most_messages: %s", e)
+                logger.warning("Erro consulta tagarela: %s", e)
                 highlights["tagarela"] = []
 
-            # 3. Rei da Call (Mais Tempo em Voz excluindo canais AFK/ignorados)
+            # 3. Rei da Call (Mais Tempo em Voz)
             try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_most_voice_time($1, $2)", guild_id, 5)
+                rows = await conn.fetch("""
+                    SELECT 
+                        va.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COALESCE(SUM(va.duration_seconds), 0)::BIGINT AS value_seconds
+                    FROM voice_activity va
+                    JOIN users u ON u.user_id = va.user_id
+                    WHERE va.guild_id = $1
+                      AND EXTRACT(YEAR FROM va.joined_at) = $2
+                      AND u.is_bot = FALSE
+                    GROUP BY va.user_id, u.username, u.avatar_url
+                    ORDER BY value_seconds DESC
+                    LIMIT 5
+                """, guild_id, year)
                 highlights["rei_da_call"] = [dict(r) for r in rows]
             except Exception as e:
-                logger.warning("Erro get_highlight_most_voice_time: %s", e)
+                logger.warning("Erro consulta rei_da_call: %s", e)
                 highlights["rei_da_call"] = []
 
             # 4. O Corujão (Voz na Madrugada entre 01h e 05h BRT)
             try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_night_owl($1, $2)", guild_id, 5)
+                rows = await conn.fetch("""
+                    SELECT 
+                        va.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COALESCE(SUM(va.duration_seconds), 0)::BIGINT AS value_seconds
+                    FROM voice_activity va
+                    JOIN users u ON u.user_id = va.user_id
+                    WHERE va.guild_id = $1
+                      AND EXTRACT(YEAR FROM va.joined_at) = $2
+                      AND EXTRACT(HOUR FROM va.joined_at AT TIME ZONE 'America/Sao_Paulo') >= 1
+                      AND EXTRACT(HOUR FROM va.joined_at AT TIME ZONE 'America/Sao_Paulo') < 5
+                      AND u.is_bot = FALSE
+                    GROUP BY va.user_id, u.username, u.avatar_url
+                    ORDER BY value_seconds DESC
+                    LIMIT 5
+                """, guild_id, year)
                 highlights["corujao"] = [dict(r) for r in rows]
             except Exception as e:
-                logger.warning("Erro get_highlight_night_owl: %s", e)
+                logger.warning("Erro consulta corujao: %s", e)
                 highlights["corujao"] = []
 
-            # 5. Streamer do Servidor (Tempo em Live / Compartilhamento de Tela)
+            # 5. Streamer do Servidor (Tempo em Live)
             try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_longest_streaming($1, $2)", guild_id, 5)
+                rows = await conn.fetch("""
+                    SELECT 
+                        ua.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS value_seconds
+                    FROM user_activities ua
+                    JOIN users u ON u.user_id = ua.user_id
+                    WHERE ua.guild_id = $1
+                      AND ua.activity_type = 'streaming'
+                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                      AND u.is_bot = FALSE
+                    GROUP BY ua.user_id, u.username, u.avatar_url
+                    ORDER BY value_seconds DESC
+                    LIMIT 5
+                """, guild_id, year)
                 highlights["streamer"] = [dict(r) for r in rows]
             except Exception as e:
-                logger.warning("Erro get_highlight_longest_streaming: %s", e)
+                logger.warning("Erro consulta streamer: %s", e)
                 highlights["streamer"] = []
 
             # 6. Top Gamers (Tempo Jogado no Ano)
             try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_top_gamers($1, $2)", guild_id, 5)
+                rows = await conn.fetch("""
+                    SELECT 
+                        ua.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS value_seconds
+                    FROM user_activities ua
+                    JOIN users u ON u.user_id = ua.user_id
+                    WHERE ua.guild_id = $1
+                      AND ua.activity_type = 'playing'
+                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                      AND u.is_bot = FALSE
+                    GROUP BY ua.user_id, u.username, u.avatar_url
+                    ORDER BY value_seconds DESC
+                    LIMIT 5
+                """, guild_id, year)
                 highlights["top_gamers"] = [dict(r) for r in rows]
             except Exception as e:
-                logger.warning("Erro get_highlight_top_gamers: %s", e)
+                logger.warning("Erro consulta top_gamers: %s", e)
                 highlights["top_gamers"] = []
 
             # 7. Jogo do Ano (Jogos Mais Jogados pela Comunidade)
             try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_game_of_the_year($1, $2)", guild_id, 5)
+                rows = await conn.fetch("""
+                    SELECT 
+                        ua.activity_name,
+                        COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS value_seconds
+                    FROM user_activities ua
+                    WHERE ua.guild_id = $1
+                      AND ua.activity_type = 'playing'
+                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                    GROUP BY ua.activity_name
+                    ORDER BY value_seconds DESC
+                    LIMIT 5
+                """, guild_id, year)
                 highlights["jogo_do_ano"] = [dict(r) for r in rows]
             except Exception as e:
-                logger.warning("Erro get_highlight_game_of_the_year: %s", e)
+                logger.warning("Erro consulta jogo_do_ano: %s", e)
                 highlights["jogo_do_ano"] = []
 
-            # 8. O Mídia (Mais Arquivos e Imagens Enviados)
+            # 8. Gamer Variado (Mais Jogos Distintos no Ano)
             try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_media_king($1, $2)", guild_id, 5)
-                highlights["o_midia"] = [dict(r) for r in rows]
-            except Exception as e:
-                logger.warning("Erro get_highlight_media_king: %s", e)
-                highlights["o_midia"] = []
-
-            # 9. O Onipresente (Mais Dias Ativos no Ano)
-            try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_omnipresent($1, $2)", guild_id, 5)
-                highlights["o_onipresente"] = [dict(r) for r in rows]
-            except Exception as e:
-                logger.warning("Erro get_highlight_omnipresent: %s", e)
-                highlights["o_onipresente"] = []
-
-            # 10. Ímã da Galera (Reações / Interações Recebidas)
-            try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_most_reactions_received($1, $2)", guild_id, 5)
-                highlights["ima_da_galera"] = [dict(r) for r in rows]
-            except Exception as e:
-                logger.warning("Erro get_highlight_most_reactions_received: %s", e)
-                highlights["ima_da_galera"] = []
-
-            # 11. Boca Suja (Mensagens Moderadas / Ofensivas)
-            try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_most_offensive($1, $2)", guild_id, 5)
-                highlights["boca_suja"] = [dict(r) for r in rows]
-            except Exception as e:
-                logger.warning("Erro get_highlight_most_offensive: %s", e)
-                highlights["boca_suja"] = []
-
-            # 12. O Maratonista (Maior Sessão Contínua de Voz)
-            try:
-                rows = await conn.fetch("SELECT * FROM get_highlight_longest_session($1, $2)", guild_id, 5)
-                highlights["maratonista"] = [dict(r) for r in rows]
-            except Exception as e:
-                logger.warning("Erro get_highlight_longest_session: %s", e)
-                highlights["maratonista"] = []
-
-            # 13. Rei das Demos (Jogos Demo / Partidas Analisadas)
-            try:
-                start_date = datetime(year, 1, 1)
-                end_date = datetime(year + 1, 1, 1)
                 rows = await conn.fetch("""
-                    SELECT u.user_id, u.username, u.avatar_url, COUNT(DISTINCT activity_name) as count
+                    SELECT 
+                        ua.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COUNT(DISTINCT ua.activity_name)::BIGINT AS value
                     FROM user_activities ua
                     JOIN users u ON u.user_id = ua.user_id
-                    WHERE ua.guild_id = $1 
+                    WHERE ua.guild_id = $1
                       AND ua.activity_type = 'playing'
-                      AND ua.started_at >= $2 AND ua.started_at < $3
+                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                      AND ua.duration_seconds > 60
+                      AND u.is_bot = FALSE
+                    GROUP BY ua.user_id, u.username, u.avatar_url
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
+                highlights["gamer_variado"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("Erro consulta gamer_variado: %s", e)
+                highlights["gamer_variado"] = []
+
+            # 9. O Mídia (Mais Anexos/Prints Enviados)
+            try:
+                rows = await conn.fetch("""
+                    SELECT 
+                        m.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COUNT(*)::BIGINT AS value
+                    FROM messages m
+                    JOIN users u ON u.user_id = m.user_id
+                    WHERE m.guild_id = $1
+                      AND EXTRACT(YEAR FROM m.created_at) = $2
+                      AND (m.attachments IS NOT NULL AND array_length(m.attachments, 1) > 0)
+                      AND u.is_bot = FALSE
+                    GROUP BY m.user_id, u.username, u.avatar_url
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
+                highlights["o_midia"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("Erro consulta o_midia: %s", e)
+                highlights["o_midia"] = []
+
+            # 10. O Onipresente (Mais Dias Ativos)
+            try:
+                rows = await conn.fetch("""
+                    SELECT 
+                        m.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COUNT(DISTINCT (m.created_at AT TIME ZONE 'America/Sao_Paulo')::DATE)::BIGINT AS value
+                    FROM messages m
+                    JOIN users u ON u.user_id = m.user_id
+                    WHERE m.guild_id = $1
+                      AND EXTRACT(YEAR FROM m.created_at) = $2
+                      AND u.is_bot = FALSE
+                    GROUP BY m.user_id, u.username, u.avatar_url
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
+                highlights["o_onipresente"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("Erro consulta o_onipresente: %s", e)
+                highlights["o_onipresente"] = []
+
+            # 11. Ímã da Galera (Reações Recebidas)
+            try:
+                rows = await conn.fetch("""
+                    SELECT 
+                        ip.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COUNT(*)::BIGINT AS value
+                    FROM interaction_points ip
+                    JOIN users u ON u.user_id = ip.user_id
+                    WHERE ip.guild_id = $1
+                      AND EXTRACT(YEAR FROM ip.created_at) = $2
+                      AND ip.interaction_type = 'reaction_received'
+                      AND u.is_bot = FALSE
+                    GROUP BY ip.user_id, u.username, u.avatar_url
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
+                highlights["ima_da_galera"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("Erro consulta ima_da_galera: %s", e)
+                highlights["ima_da_galera"] = []
+
+            # 12. Boca Suja (Mensagens Moderadas)
+            try:
+                rows = await conn.fetch("""
+                    SELECT 
+                        m.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COUNT(*)::BIGINT AS value
+                    FROM messages m
+                    JOIN users u ON u.user_id = m.user_id
+                    WHERE m.guild_id = $1
+                      AND EXTRACT(YEAR FROM m.created_at) = $2
+                      AND m.was_moderated = TRUE
+                      AND u.is_bot = FALSE
+                    GROUP BY m.user_id, u.username, u.avatar_url
+                    ORDER BY value DESC
+                    LIMIT 5
+                """, guild_id, year)
+                highlights["boca_suja"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("Erro consulta boca_suja: %s", e)
+                highlights["boca_suja"] = []
+
+            # 13. O Maratonista (Maior Sessão Contínua de Voz)
+            try:
+                rows = await conn.fetch("""
+                    SELECT 
+                        va.user_id,
+                        u.username,
+                        u.avatar_url,
+                        MAX(va.duration_seconds)::BIGINT AS value_seconds
+                    FROM voice_activity va
+                    JOIN users u ON u.user_id = va.user_id
+                    WHERE va.guild_id = $1
+                      AND EXTRACT(YEAR FROM va.joined_at) = $2
+                      AND u.is_bot = FALSE
+                    GROUP BY va.user_id, u.username, u.avatar_url
+                    ORDER BY value_seconds DESC
+                    LIMIT 5
+                """, guild_id, year)
+                highlights["maratonista"] = [dict(r) for r in rows]
+            except Exception as e:
+                logger.warning("Erro consulta maratonista: %s", e)
+                highlights["maratonista"] = []
+
+            # 14. Rei das Demos (Jogos Demo)
+            try:
+                rows = await conn.fetch("""
+                    SELECT 
+                        ua.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COUNT(DISTINCT ua.activity_name)::BIGINT AS count
+                    FROM user_activities ua
+                    JOIN users u ON u.user_id = ua.user_id
+                    WHERE ua.guild_id = $1
+                      AND ua.activity_type = 'playing'
+                      AND EXTRACT(YEAR FROM ua.started_at) = $2
                       AND ua.duration_seconds > 60
                       AND ua.activity_name ILIKE '%demo%'
-                    GROUP BY u.user_id, u.username, u.avatar_url
+                      AND u.is_bot = FALSE
+                    GROUP BY ua.user_id, u.username, u.avatar_url
                     ORDER BY count DESC
                     LIMIT 5
-                """, guild_id, start_date, end_date)
+                """, guild_id, year)
                 highlights["rei_das_demos"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta rei_das_demos: %s", e)
                 highlights["rei_das_demos"] = []
+
+        return highlights
 
         return highlights
     

@@ -19,7 +19,7 @@ HIGHLIGHTS_CATEGORIES = [
     {"id": "streamer", "label": "Streamer", "title": "STREAMER DO SERVIDOR", "subtitle": "Maior Tempo em Transmissão / Ao Vivo", "icon": "📺", "color": "#ec4899", "is_time": True},
     {"id": "top_gamers", "label": "Top Gamers", "title": "TOP GAMERS", "subtitle": "Maior Tempo Jogado no Ano", "icon": "🎮", "color": "#22c55e", "is_time": True},
     {"id": "jogo_do_ano", "label": "Jogo do Ano", "title": "JOGO DO ANO", "subtitle": "Jogos Mais Populares da Comunidade", "icon": "🕹️", "color": "#eab308", "is_time": True},
-    {"id": "media", "label": "Clipe do Ano", "title": "CLIPE / PRINT DO ANO", "subtitle": "Momento Mais Popular da Comunidade", "icon": "📸", "color": "#f43f5e"},
+    {"id": "gamer_variado", "label": "Gamer Variado", "title": "GAMER VARIADO", "subtitle": "Mais Jogos Distintos Jogados no Ano", "icon": "🎲", "color": "#f43f5e", "unit": "jogos"},
     {"id": "outros_destaques", "label": "Outros Destaques", "title": "OUTROS DESTAQUES DO ANO", "subtitle": "Recordes e Menções Honrosas", "icon": "🌟", "color": "#8b5cf6"},
 ]
 
@@ -32,36 +32,7 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
         year = now_brt().year
 
     try:
-        from utils.highlights_scanner import HighlightsScanner
         from utils.image_generator import HighlightsBuilder
-
-        top_clip = None
-        if hasattr(db, "get_top_media_highlight") and interaction.guild:
-            try:
-                top_clip = await db.get_top_media_highlight(interaction.guild.id, year)
-            except Exception as exc:
-                logger.warning("Erro ao buscar top_media_highlight do banco: %s", exc)
-
-        if not top_clip and interaction.guild:
-            top_clip = await HighlightsScanner.scan_guild_top_clip(interaction.guild, year, timeout=30.0)
-            if top_clip and hasattr(db, "upsert_media_highlight"):
-                try:
-                    await db.upsert_media_highlight(
-                        message_id=top_clip["message_id"],
-                        guild_id=interaction.guild.id,
-                        channel_id=0,
-                        channel_name=top_clip.get("channel_name", "prints-e-clips"),
-                        user_id=top_clip.get("user_id", 0),
-                        username=top_clip.get("username", "Autor"),
-                        avatar_url=top_clip.get("avatar_url"),
-                        media_url=top_clip.get("media_url", ""),
-                        content=top_clip.get("content", ""),
-                        reaction_count=top_clip.get("reaction_count", 0),
-                        reply_count=top_clip.get("reply_count", 0),
-                        jump_url=top_clip.get("jump_url")
-                    )
-                except Exception as e:
-                    logger.debug("Falha ao persistir top_clip do scanner: %s", e)
 
         highlights_data = await db.get_annual_highlights_data(interaction.guild.id, year)
 
@@ -69,7 +40,7 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
             guild=interaction.guild,
             year=year,
             highlights_data=highlights_data,
-            top_clip=top_clip,
+            top_clip=None,
             categories=HIGHLIGHTS_CATEGORIES
         )
 

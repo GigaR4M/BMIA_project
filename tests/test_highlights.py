@@ -18,7 +18,7 @@ def test_highlights_categories_count_and_structure():
     assert "streamer" in cat_ids
     assert "top_gamers" in cat_ids
     assert "jogo_do_ano" in cat_ids
-    assert "media" in cat_ids
+    assert "gamer_variado" in cat_ids
     assert "outros_destaques" in cat_ids
 
 
