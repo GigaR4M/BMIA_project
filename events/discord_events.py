@@ -13,6 +13,7 @@ import discord
 
 from config import DEFAULT_ALLOWED_CHANNELS
 from utils.ai_tools import AIToolkit
+from utils.giphy_client import to_direct_gif_url
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,37 @@ def resolve_mentions_in_text(text: str, guild: discord.Guild | None) -> str:
     return re.sub(r"<@!?(\d+)>", replace, text)
 
 
-def hide_gif_links_in_markdown(text: str) -> str:
-    """Oculta URLs soltas de GIF transformando-as em links com caractere invisível [​](url)."""
+def extract_and_clean_gif(text: str, fallback_gif_url: str | None = None) -> tuple[str | None, str]:
+    """
+    Remove URLs e marcações de GIF do texto para que nenhum link apareça,
+    retornando (direct_gif_url, clean_text).
+    """
     if not text:
-        return text
-    pattern = r'(?<!\]\()(https?://(?:media\d*\.giphy\.com/media/[^\s\)]+|giphy\.com/gifs/[^\s\)]+|media\.tenor\.com/[^\s\)]+|tenor\.com/view/[^\s\)]+))'
-    return re.sub(pattern, lambda m: f"[\u200b]({m.group(1)})", text)
+        return (to_direct_gif_url(fallback_gif_url) if fallback_gif_url else None), text
+
+    gif_url = None
+
+    # Procura formato markdown [qualquer_coisa](url) ou [](url)
+    md_pattern = r'\[[^\]]*\]\((https?://(?:media\d*\.giphy\.com/media/[^\s\)]+|giphy\.com/gifs/[^\s\)]+|media\.tenor\.com/[^\s\)]+|tenor\.com/view/[^\s\)]+))\)'
+    match_md = re.search(md_pattern, text)
+    if match_md:
+        gif_url = match_md.group(1)
+        text = re.sub(md_pattern, '', text).strip()
+
+    # Procura URL solta
+    raw_pattern = r'(https?://(?:media\d*\.giphy\.com/media/[^\s\)]+|giphy\.com/gifs/[^\s\)]+|media\.tenor\.com/[^\s\)]+|tenor\.com/view/[^\s\)]+))'
+    match_raw = re.search(raw_pattern, text)
+    if match_raw:
+        if not gif_url:
+            gif_url = match_raw.group(1)
+        text = re.sub(raw_pattern, '', text).strip()
+
+    # Remove qualquer colchete vazio residual como []() ou [​]()
+    text = re.sub(r'\[[\s\u200b]*\]\([^\)]*\)', '', text).strip()
+
+    final_url = gif_url or fallback_gif_url
+    direct_url = to_direct_gif_url(final_url) if final_url else None
+    return direct_url, text
 
 
 def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type: ignore[name-defined]
@@ -217,8 +243,11 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             toolkit=toolkit,
                         )
 
-                        # Oculta links de GIF soltos para exibir apenas a animação limpa
-                        response_text = hide_gif_links_in_markdown(response_text)
+                        # Extrai o GIF e limpa totalmente qualquer link do corpo do texto
+                        fallback_gif = getattr(toolkit, "last_gif_url", None) if toolkit else None
+                        gif_url, clean_response_text = extract_and_clean_gif(
+                            response_text, fallback_gif_url=fallback_gif
+                        )
 
                         if ctx.memory_manager and message.guild:
                             client.loop.create_task(
@@ -226,19 +255,30 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                                     message.guild.id,
                                     message.author.id,
                                     resolved_content,
-                                    response_text,
+                                    clean_response_text or response_text,
                                 )
                             )
 
-                        if len(response_text) > 2000:
+                        embed = None
+                        if gif_url:
+                            embed = discord.Embed(color=0x2b2d31)
+                            embed.set_image(url=gif_url)
+
+                        if len(clean_response_text) > 2000:
                             chunks = [
-                                response_text[i:i + 2000]
-                                for i in range(0, len(response_text), 2000)
+                                clean_response_text[i:i + 2000]
+                                for i in range(0, len(clean_response_text), 2000)
                             ]
-                            for chunk in chunks:
-                                await message.reply(chunk)
+                            for idx, chunk in enumerate(chunks):
+                                if idx == len(chunks) - 1 and embed:
+                                    await message.reply(chunk, embed=embed)
+                                else:
+                                    await message.reply(chunk)
                         else:
-                            await message.reply(response_text)
+                            if embed:
+                                await message.reply(clean_response_text or "​", embed=embed)
+                            else:
+                                await message.reply(clean_response_text)
 
                     except Exception as exc:
                         logger.error("Erro no ChatHandler: %s", exc)

@@ -8,6 +8,20 @@ from config import GIPHY_API_KEY
 logger = logging.getLogger(__name__)
 
 
+def to_direct_gif_url(url: str) -> str:
+    """Converte URL de página do GIPHY/Tenor para URL direta de imagem/GIF se necessário."""
+    if not url:
+        return url
+    if "media.giphy.com" in url or url.endswith(".gif"):
+        return url
+    import re
+    match = re.search(r'giphy\.com/gifs/(?:[a-zA-Z0-9_-]+-)?([a-zA-Z0-9]+)', url)
+    if match:
+        gif_id = match.group(1)
+        return f"https://media.giphy.com/media/{gif_id}/giphy.gif"
+    return url
+
+
 class GiphyClient:
     """Cliente para busca de GIFs animados via GIPHY API v1."""
 
@@ -76,9 +90,8 @@ class GiphyClient:
             return []
 
     async def search_gif_url(self, query: str) -> Optional[str]:
-        """Busca e retorna a melhor URL de GIF diretamente para envio no chat."""
+        """Busca e retorna a melhor URL direta de GIF para envio no chat."""
         results = await self.search_gifs(query, limit=1)
         if results:
-            # Prefere a URL de página do GIPHY ou link direto .gif para renderização no Discord
-            return results[0].get("url") or results[0].get("gif_url")
+            return results[0].get("gif_url") or results[0].get("url")
         return None

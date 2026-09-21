@@ -3,7 +3,7 @@
 import logging
 import discord
 from discord import app_commands
-from utils.giphy_client import GiphyClient
+from utils.giphy_client import GiphyClient, to_direct_gif_url
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,11 @@ def setup_gif_slash_command(tree: app_commands.CommandTree, gif_client: GiphyCli
                 await interaction.followup.send(f"❌ Nenhum GIF encontrado para `{busca}`.", ephemeral=True)
                 return
 
-            await interaction.followup.send(content=gif_url)
+            direct_url = to_direct_gif_url(gif_url)
+            embed = discord.Embed(color=0x2b2d31)
+            embed.set_image(url=direct_url)
+            embed.set_footer(text=f"🔍 {busca}")
+            await interaction.followup.send(embed=embed)
         except Exception as e:
             logger.error("Erro ao executar comando /gif: %s", e, exc_info=True)
             await interaction.followup.send("❌ Ocorreu um erro ao buscar o GIF.", ephemeral=True)

@@ -13,6 +13,7 @@ class AIToolkit:
         self.db = db
         self.guild_id = guild_id
         self.gif_client = gif_client or tenor_client
+        self.last_gif_url: Optional[str] = None
 
     async def get_top_games(self, days: int = 30, limit: int = 5) -> List[Dict[str, Any]]:
         """Retorna os jogos e atividades mais jogados no servidor Discord.
@@ -236,12 +237,13 @@ class AIToolkit:
             gif_url = await client.search_gif_url(tema)
             if not gif_url:
                 return {"mensagem": f"Nenhum GIF encontrado para o tema '{tema}'."}
+            self.last_gif_url = gif_url
             return {
                 "gif_url": gif_url,
                 "tema": tema,
                 "instrucao": (
-                    "NUNCA escreva a URL em texto visível puro. "
-                    f"Para ocultar o texto do link e exibir apenas a animação do GIF no Discord, adicione no final da mensagem exatamente: [​]({gif_url})"
+                    "O GIF foi selecionado e será anexado visualmente à sua resposta pelo sistema. "
+                    "Responda ao usuário com simpatia e bom humor. NÃO escreva links, URLs ou colchetes markdown []() na sua resposta de texto."
                 )
             }
         except Exception as e:

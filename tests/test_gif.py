@@ -93,7 +93,7 @@ class TestGiphyClient:
             ),
         ):
             url = await gif_client.search_gif_url("vitoria")
-            assert url == "https://giphy.com/gifs/win-456"
+            assert url == "https://media.giphy.com/media/win.gif"
 
     @pytest.mark.asyncio
     async def test_search_gif_url_not_found(self, gif_client):
@@ -161,9 +161,10 @@ class TestGifSlashCommand:
         ):
             await registered_command(interaction, busca="dance")
             interaction.response.defer.assert_awaited_once_with(thinking=False)
-            interaction.followup.send.assert_awaited_once_with(
-                content="https://giphy.com/gifs/dance-123"
-            )
+            interaction.followup.send.assert_awaited_once()
+            embed_sent = interaction.followup.send.call_args[1].get("embed")
+            assert embed_sent is not None
+            assert "media.giphy.com" in embed_sent.image.url or "123" in embed_sent.image.url
 
         # Test empty search
         interaction_empty = AsyncMock()
@@ -173,15 +174,30 @@ class TestGifSlashCommand:
         assert "❌ Digite um termo" in interaction_empty.response.send_message.call_args[0][0]
 
 
-class TestHideGifLinks:
-    def test_hide_gif_links(self):
-        from events.discord_events import hide_gif_links_in_markdown
+class TestExtractAndCleanGif:
+    def test_extract_from_empty_brackets(self):
+        from events.discord_events import extract_and_clean_gif
 
-        raw = "Aqui está seu abraço:\nhttps://giphy.com/gifs/abraço-123\nEspero que goste!"
-        hidden = hide_gif_links_in_markdown(raw)
-        assert "[\u200b](https://giphy.com/gifs/abraço-123)" in hidden
-        assert "https://giphy.com/gifs/abraço-123\n" not in hidden
+        raw = "Poxa, chefe, valeu demais!\n\n[](https://giphy.com/gifs/friends-joey-tribbiani-matt-leblanc-TxsMQV4p1sE8G4QZ2r)"
+        gif_url, clean_text = extract_and_clean_gif(raw)
+        assert gif_url == "https://media.giphy.com/media/TxsMQV4p1sE8G4QZ2r/giphy.gif"
+        assert "https://" not in clean_text
+        assert "[]" not in clean_text
+        assert clean_text == "Poxa, chefe, valeu demais!"
 
-        # Already masked should not be double masked
-        already_masked = "Aqui: [\u200b](https://media.giphy.com/media/123/giphy.gif)"
-        assert hide_gif_links_in_markdown(already_masked) == already_masked
+    def test_extract_from_raw_url(self):
+        from events.discord_events import extract_and_clean_gif
+
+        raw = "Aqui está:\nhttps://media0.giphy.com/media/xyz123/giphy.gif\nEspero que goste!"
+        gif_url, clean_text = extract_and_clean_gif(raw)
+        assert gif_url == "https://media0.giphy.com/media/xyz123/giphy.gif"
+        assert "https://" not in clean_text
+        assert "Aqui está:\n\nEspero que goste!" in clean_text or "Aqui está:" in clean_text
+
+    def test_fallback_gif_url(self):
+        from events.discord_events import extract_and_clean_gif
+
+        raw = "Aqui está seu GIF sem links na mensagem!"
+        gif_url, clean_text = extract_and_clean_gif(raw, fallback_gif_url="https://giphy.com/gifs/funny-abc999")
+        assert gif_url == "https://media.giphy.com/media/abc999/giphy.gif"
+        assert clean_text == raw
