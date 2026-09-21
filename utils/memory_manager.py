@@ -181,20 +181,33 @@ class MemoryManager:
     async def _generate_embedding(self, text: str) -> Optional[List[float]]:
         if not text:
             return None
-        try:
-            # We use embed_content from genai wrapped in asyncio.to_thread to prevent blocking the event loop
-            result = await asyncio.to_thread(
-                genai.embed_content,
-                model=self.model_name,
-                content=text,
-                task_type="retrieval_document"
-            )
-            if isinstance(result, dict):
-                return result.get('embedding')
-            return getattr(result, 'embedding', None)
-        except Exception as e:
-            logger.error(f"Embedding error: {e}")
-            return None
+        
+        candidate_models = [self.model_name, "models/embedding-001", "models/text-embedding-004", "text-embedding-004"]
+        seen = set()
+        models_to_try = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
+
+        for model in models_to_try:
+            try:
+                result = await asyncio.to_thread(
+                    genai.embed_content,
+                    model=model,
+                    content=text,
+                    task_type="retrieval_document"
+                )
+                if isinstance(result, dict):
+                    emb = result.get('embedding')
+                else:
+                    emb = getattr(result, 'embedding', None)
+                
+                if emb:
+                    # Update active model on success
+                    self.model_name = model
+                    return emb
+            except Exception as e:
+                logger.warning(f"Embedding error with model '{model}': {e}")
+
+        logger.error("Failed to generate embedding with all candidate models.")
+        return None
 
     def _parse_json_response(self, text: str) -> Dict:
         """Helper to safely parse JSON from LLM response which might contain backticks."""
