@@ -30,6 +30,14 @@ def resolve_mentions_in_text(text: str, guild: discord.Guild | None) -> str:
     return re.sub(r"<@!?(\d+)>", replace, text)
 
 
+def hide_gif_links_in_markdown(text: str) -> str:
+    """Oculta URLs soltas de GIF transformando-as em links com caractere invisível [​](url)."""
+    if not text:
+        return text
+    pattern = r'(?<!\]\()(https?://(?:media\d*\.giphy\.com/media/[^\s\)]+|giphy\.com/gifs/[^\s\)]+|media\.tenor\.com/[^\s\)]+|tenor\.com/view/[^\s\)]+))'
+    return re.sub(pattern, lambda m: f"[\u200b]({m.group(1)})", text)
+
+
 def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type: ignore[name-defined]
     """
     Registra todos os event handlers no client.
@@ -208,6 +216,9 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             system_instruction=system_instruction,
                             toolkit=toolkit,
                         )
+
+                        # Oculta links de GIF soltos para exibir apenas a animação limpa
+                        response_text = hide_gif_links_in_markdown(response_text)
 
                         if ctx.memory_manager and message.guild:
                             client.loop.create_task(

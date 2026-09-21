@@ -208,6 +208,9 @@ class MemoryManager:
                     emb = getattr(result, 'embedding', None)
                 
                 if emb:
+                    # Trunca para 768 dimensões se o modelo retornar dimensão maior (ex: 3072 do gemini-embedding-001)
+                    if len(emb) > 768:
+                        emb = emb[:768]
                     # Update active model on success
                     self.model_name = model
                     return emb

@@ -239,7 +239,10 @@ class AIToolkit:
             return {
                 "gif_url": gif_url,
                 "tema": tema,
-                "instrucao": "Inclua este link exato do GIF no final ou corpo da sua resposta para o Discord renderizar a animação."
+                "instrucao": (
+                    "NUNCA escreva a URL em texto visível puro. "
+                    f"Para ocultar o texto do link e exibir apenas a animação do GIF no Discord, adicione no final da mensagem exatamente: [​]({gif_url})"
+                )
             }
         except Exception as e:
             logger.error(f"Erro ao executar tool buscar_gif: {e}")

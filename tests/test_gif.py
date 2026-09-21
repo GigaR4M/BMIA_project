@@ -171,3 +171,17 @@ class TestGifSlashCommand:
         await registered_command(interaction_empty, busca="   ")
         interaction_empty.response.send_message.assert_awaited_once()
         assert "❌ Digite um termo" in interaction_empty.response.send_message.call_args[0][0]
+
+
+class TestHideGifLinks:
+    def test_hide_gif_links(self):
+        from events.discord_events import hide_gif_links_in_markdown
+
+        raw = "Aqui está seu abraço:\nhttps://giphy.com/gifs/abraço-123\nEspero que goste!"
+        hidden = hide_gif_links_in_markdown(raw)
+        assert "[\u200b](https://giphy.com/gifs/abraço-123)" in hidden
+        assert "https://giphy.com/gifs/abraço-123\n" not in hidden
+
+        # Already masked should not be double masked
+        already_masked = "Aqui: [\u200b](https://media.giphy.com/media/123/giphy.gif)"
+        assert hide_gif_links_in_markdown(already_masked) == already_masked
