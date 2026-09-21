@@ -83,13 +83,14 @@ class TestAIToolkit:
 
     def test_get_tool_callables(self, toolkit):
         callables = toolkit.get_tool_callables()
-        assert len(callables) == 7
+        assert len(callables) == 8
         names = [c.__name__ for c in callables]
         assert "get_top_games" in names
         assert "get_game_leaderboard" in names
         assert "get_voice_leaderboard" in names
         assert "get_tournament_history" in names
         assert "get_tournament_hall_of_fame" in names
+        assert "buscar_gif" in names
 
 
 class TestChatHandlerWithTools:

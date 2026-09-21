@@ -159,7 +159,11 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                         system_instruction = "Você é o BMIA, um bot assistente."
                         toolkit = None
                         if message.guild and ctx.db:
-                            toolkit = AIToolkit(ctx.db, message.guild.id)
+                            toolkit = AIToolkit(
+                                ctx.db,
+                                message.guild.id,
+                                tenor_client=ctx.tenor_client,
+                            )
 
                         if ctx.memory_manager and message.guild:
                             context_block = await ctx.memory_manager.get_relevant_context(
@@ -433,6 +437,7 @@ class BotContext:
         "stats_analyzer",
         "invite_tracker",
         "media_manager",
+        "tenor_client",
         "telegram",
         "buffer_mensagens",
         "allowed_channels",
@@ -457,6 +462,7 @@ class BotContext:
         self.stats_analyzer = None
         self.invite_tracker = None
         self.media_manager = None
+        self.tenor_client = None
         self.telegram = None
         self.rawg_client = None
         self.buffer_mensagens: list = []
