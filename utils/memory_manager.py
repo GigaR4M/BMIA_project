@@ -182,7 +182,15 @@ class MemoryManager:
         if not text:
             return None
         
-        candidate_models = [self.model_name, "models/embedding-001", "models/text-embedding-004", "text-embedding-004"]
+        candidate_models = [
+            self.model_name,
+            "models/gemini-embedding-001",
+            "gemini-embedding-001",
+            "models/text-embedding-004",
+            "text-embedding-004",
+            "models/embedding-001",
+            "embedding-001",
+        ]
         seen = set()
         models_to_try = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
 
@@ -204,9 +212,9 @@ class MemoryManager:
                     self.model_name = model
                     return emb
             except Exception as e:
-                logger.warning(f"Embedding error with model '{model}': {e}")
+                logger.debug(f"Embedding attempt with model '{model}' failed: {e}")
 
-        logger.error("Failed to generate embedding with all candidate models.")
+        logger.warning("Não foi possível gerar embedding vetorial para a memória (armazenando sem vetor).")
         return None
 
     def _parse_json_response(self, text: str) -> Dict:
