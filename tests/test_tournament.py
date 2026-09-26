@@ -31,6 +31,11 @@ def mock_db():
     ])
     db.add_tournament_participant = AsyncMock(return_value={"success": True, "count": 1, "max": 16})
     db.remove_tournament_participant = AsyncMock(return_value={"success": True, "count": 0, "max": 16})
+    db.admin_add_participant = AsyncMock(return_value={"success": True, "count": 1, "max": 16})
+    db.admin_remove_participant = AsyncMock(return_value={"success": True, "count": 0, "max": 16})
+    db.admin_substitute_participant = AsyncMock(return_value={"success": True, "old_user_id": 999, "new_user_id": 888})
+    db.fill_dummy_participants = AsyncMock(return_value={"success": True, "added_count": 8, "total_count": 16, "max_participants": 16, "added_names": ["Bot_1", "Bot_2"]})
+    db.record_match_result = AsyncMock(return_value={"success": True})
     db.get_tournament_participants = AsyncMock(return_value=[
         {"user_id": 999, "username": "Gideon", "status": "registered"}
     ])
@@ -91,7 +96,9 @@ class TestTournamentCommands:
             max_participants=16,
             prize="500 pontos",
             created_by=999,
-            tournament_type="bracket"
+            tournament_type="single_elimination",
+            rules=None,
+            best_of=1
         )
         mock_db.update_tournament_message.assert_awaited_once_with(1, 555, 777)
 
@@ -453,4 +460,203 @@ class TestRoundRobinSystem:
         buf = await builder.generate_table(guild, tournament, standings)
         assert buf is not None
         assert buf.getvalue().startswith(b"\x89PNG")
+
+
+class TestTournamentAdminAndModals:
+    @pytest.mark.asyncio
+    async def test_adm_add_participant(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        membro = MagicMock()
+        membro.id = 777
+        membro.name = "NovoJogador"
+        membro.discriminator = "0001"
+        membro.bot = False
+        membro.mention = "<@777>"
+        membro.display_avatar.url = "http://avatar.url"
+
+        await cmd.adm_add_participant.callback(cmd, interaction, id=1, membro=membro, forcar=True)
+
+        mock_db.admin_add_participant.assert_awaited_once_with(1, 777, force=True)
+        interaction.followup.send.assert_awaited_once()
+        assert "adicionado manualmente" in interaction.followup.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_adm_remove_participant(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        membro = MagicMock()
+        membro.id = 777
+        membro.mention = "<@777>"
+
+        await cmd.adm_remove_participant.callback(cmd, interaction, id=1, membro=membro)
+
+        mock_db.admin_remove_participant.assert_awaited_once_with(1, 777)
+        interaction.followup.send.assert_awaited_once()
+        assert "removido do Torneio" in interaction.followup.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_adm_substitute_participant(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        m1 = MagicMock()
+        m1.id = 111
+        m1.mention = "<@111>"
+
+        m2 = MagicMock()
+        m2.id = 222
+        m2.name = "Substituto"
+        m2.discriminator = "0"
+        m2.bot = False
+        m2.mention = "<@222>"
+        m2.display_avatar.url = "http://avatar.url"
+
+        await cmd.adm_substitute_participant.callback(cmd, interaction, id=1, membro_antigo=m1, novo_membro=m2)
+
+        mock_db.admin_substitute_participant.assert_awaited_once_with(1, 111, 222)
+        interaction.followup.send.assert_awaited_once()
+        assert "Substituição concluída" in interaction.followup.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_test_fill_cmd(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        await cmd.test_fill_cmd.callback(cmd, interaction, id=1, quantidade=8)
+
+        mock_db.fill_dummy_participants.assert_awaited_once_with(1, count=8)
+        interaction.followup.send.assert_awaited_once()
+        assert "participantes de teste adicionados" in interaction.followup.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_tournament_create_modal(self, mock_db):
+        from commands.tournament_commands import TournamentCreateModal
+        modal = TournamentCreateModal(db=mock_db)
+        modal.nome._value = "Torneio Teste"
+        modal.jogo._value = "Uno"
+        modal.vagas._value = "8"
+        modal.best_of._value = "3"
+        modal.regras._value = "Sem cartas acumuladas"
+
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.guild.create_scheduled_event = AsyncMock(return_value=MagicMock(id=5555))
+        interaction.user.id = 999
+        interaction.user.display_name = "Organizador"
+        interaction.channel.id = 101
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock(return_value=MagicMock(id=9999))
+
+        await modal.on_submit(interaction)
+
+        mock_db.create_tournament.assert_awaited_once_with(
+            guild_id=123456789,
+            name="Torneio Teste",
+            game_name="Uno",
+            format="1v1",
+            max_participants=8,
+            prize="Sem cartas acumuladas",
+            created_by=999,
+            tournament_type="bracket",
+            rules="Sem cartas acumuladas",
+            best_of=3
+        )
+
+    @pytest.mark.asyncio
+    async def test_match_score_modal(self, mock_db):
+        from commands.tournament_commands import MatchScoreModal
+        modal = MatchScoreModal(db=mock_db, tournament_id=1, match_number=3, team_a_label="Alpha", team_b_label="Beta")
+        modal.score_a._value = "2"
+        modal.score_b._value = "1"
+
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        await modal.on_submit(interaction)
+
+        mock_db.record_match_result.assert_awaited_once_with(
+            tournament_id=1,
+            match_number=3,
+            score_a=2,
+            score_b=1
+        )
+
+
+class TestExpandedBracketGenerators:
+    @pytest.mark.asyncio
+    async def test_double_elimination_generator(self):
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        participants = [{"user_id": i} for i in range(1, 5)]
+        await db.init_double_elimination_matches(1, "1v1", participants)
+        # 4 times = 1 DELETE + 5 matches (WB Semis 1 & 2, WB Final, LB Semis, Grand Final)
+        assert mock_conn.execute.await_count == 6
+
+    @pytest.mark.asyncio
+    async def test_swiss_matches_generator(self):
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        participants = [{"user_id": i} for i in range(1, 9)]
+        await db.init_swiss_matches(1, "1v1", participants)
+        # 8 players = 1 DELETE + 4 Swiss Round 1 matches
+        assert mock_conn.execute.await_count == 5
+
+    @pytest.mark.asyncio
+    async def test_group_stages_generator(self):
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        participants = [{"user_id": i} for i in range(1, 9)]
+        await db.init_group_stages_matches(1, "1v1", participants)
+        # 8 players = 4 in Group A (6 matches) + 4 in Group B (6 matches) + 2 Semis + 1 Final = 15 matches + 1 DELETE
+        assert mock_conn.execute.await_count == 16
+
+    @pytest.mark.asyncio
+    async def test_ffa_generator(self):
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        # 16 players in FFA (Fall Guys / Disney Speedstorm) -> 2 Heats + 1 Final Lobby = 3 matches + 1 DELETE
+        participants = [{"user_id": i} for i in range(1, 17)]
+        await db.init_ffa_matches(1, "1v1", participants)
+        assert mock_conn.execute.await_count == 4
+
 

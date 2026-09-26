@@ -351,8 +351,13 @@ class Database:
                 await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS is_shuffled BOOLEAN DEFAULT FALSE")
                 await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS final_score TEXT")
                 await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS tournament_type TEXT DEFAULT 'bracket'")
+                await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS discord_event_id BIGINT")
+                await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS rules TEXT")
+                await conn.execute("ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS best_of INTEGER DEFAULT 1")
                 await conn.execute("ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS round_number INTEGER DEFAULT 1")
                 await conn.execute("ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS is_draw BOOLEAN DEFAULT FALSE")
+                await conn.execute("ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS bracket_group TEXT DEFAULT 'winners'")
+                await conn.execute("ALTER TABLE tournament_matches ADD COLUMN IF NOT EXISTS scores_json JSONB")
             except Exception as e:
                 logger.debug(f"Colunas de torneio já existentes ou migração ignorada: {e}")
 
@@ -2334,18 +2339,23 @@ class Database:
         channel_id: Optional[int] = None,
         message_id: Optional[int] = None,
         created_by: Optional[int] = None,
-        tournament_type: str = "bracket"
+        tournament_type: str = "bracket",
+        discord_event_id: Optional[int] = None,
+        rules: Optional[str] = None,
+        best_of: int = 1
     ) -> int:
         """Cria um novo torneio e retorna o ID."""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
                 INSERT INTO tournaments (
                     guild_id, name, game_name, format, max_participants,
-                    prize, start_time, channel_id, message_id, created_by, status, tournament_type
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11)
+                    prize, start_time, channel_id, message_id, created_by, status,
+                    tournament_type, discord_event_id, rules, best_of
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11, $12, $13, $14)
                 RETURNING id
             """, guild_id, name, game_name, format, max_participants,
-               prize, start_time, channel_id, message_id, created_by, tournament_type)
+               prize, start_time, channel_id, message_id, created_by,
+               tournament_type, discord_event_id, rules, best_of)
             return row["id"]
 
     async def update_tournament_message(self, tournament_id: int, channel_id: int, message_id: int):
@@ -2507,12 +2517,162 @@ class Database:
             # Retorna lista atualizada
             updated = await self.get_tournament_participants(tournament_id)
             fmt_str = tournament.get("format") or "1v1"
-            t_type = tournament.get("tournament_type") or "bracket"
+            t_type = (tournament.get("tournament_type") or "bracket").lower()
+            
             if t_type == "round_robin":
                 await self.init_round_robin_matches(tournament_id, fmt_str, updated)
+            elif t_type == "double_elimination":
+                await self.init_double_elimination_matches(tournament_id, fmt_str, updated)
+            elif t_type == "swiss":
+                await self.init_swiss_matches(tournament_id, fmt_str, updated)
+            elif t_type == "group_stages":
+                await self.init_group_stages_matches(tournament_id, fmt_str, updated)
+            elif t_type in ("ffa_race", "ffa", "race"):
+                await self.init_ffa_matches(tournament_id, fmt_str, updated)
             else:
                 await self.init_tournament_bracket_matches(tournament_id, fmt_str, updated)
             return {"success": True, "participants": updated}
+
+    async def admin_add_participant(self, tournament_id: int, user_id: int, force: bool = True) -> Dict[str, Any]:
+        """Adiciona manualmente um participante ao torneio (pela moderação/ADM)."""
+        async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            if not tournament:
+                return {"success": False, "reason": "Torneio não encontrado."}
+
+            already_registered = await conn.fetchval("""
+                SELECT 1 FROM tournament_participants WHERE tournament_id = $1 AND user_id = $2
+            """, tournament_id, user_id)
+            if already_registered:
+                return {"success": False, "reason": "O usuário já está inscrito no torneio."}
+
+            current_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM tournament_participants WHERE tournament_id = $1
+            """, tournament_id)
+
+            if current_count >= tournament["max_participants"] and not force:
+                return {"success": False, "reason": "Torneio lotado! Habilite 'forçar' para ultrapassar o limite."}
+
+            await conn.execute("""
+                INSERT INTO tournament_participants (tournament_id, user_id, status, registered_at)
+                VALUES ($1, $2, 'registered', NOW())
+                ON CONFLICT (tournament_id, user_id) DO NOTHING
+            """, tournament_id, user_id)
+
+            new_count = current_count + 1
+            return {"success": True, "count": new_count, "max": tournament["max_participants"]}
+
+    async def admin_remove_participant(self, tournament_id: int, user_id: int) -> Dict[str, Any]:
+        """Remove manualmente um participante do torneio (pela moderação/ADM)."""
+        return await self.remove_tournament_participant(tournament_id, user_id)
+
+    async def admin_substitute_participant(self, tournament_id: int, old_user_id: int, new_user_id: int) -> Dict[str, Any]:
+        """Substitui um participante por outro, mantendo seu seed e posições nas partidas."""
+        async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            if not tournament:
+                return {"success": False, "reason": "Torneio não encontrado."}
+
+            old_p = await conn.fetchrow("""
+                SELECT * FROM tournament_participants WHERE tournament_id = $1 AND user_id = $2
+            """, tournament_id, old_user_id)
+            if not old_p:
+                return {"success": False, "reason": "Participante original não encontrado neste torneio."}
+
+            exists_new = await conn.fetchval("""
+                SELECT 1 FROM tournament_participants WHERE tournament_id = $1 AND user_id = $2
+            """, tournament_id, new_user_id)
+            if exists_new:
+                return {"success": False, "reason": "O substituto já está participando deste torneio."}
+
+            # Atualiza a tabela de participantes
+            await conn.execute("""
+                UPDATE tournament_participants
+                SET user_id = $3
+                WHERE tournament_id = $1 AND user_id = $2
+            """, tournament_id, old_user_id, new_user_id)
+
+            # Atualiza confrontos futuros em que o participante antigo estava escalado
+            matches = await conn.fetch("SELECT id, team_a_ids, team_b_ids FROM tournament_matches WHERE tournament_id = $1", tournament_id)
+            for m in matches:
+                m_id = m["id"]
+                ta = list(m["team_a_ids"] or [])
+                tb = list(m["team_b_ids"] or [])
+                changed = False
+                if old_user_id in ta:
+                    ta = [new_user_id if u == old_user_id else u for u in ta]
+                    changed = True
+                if old_user_id in tb:
+                    tb = [new_user_id if u == old_user_id else u for u in tb]
+                    changed = True
+                if changed:
+                    await conn.execute("""
+                        UPDATE tournament_matches
+                        SET team_a_ids = $2, team_b_ids = $3
+                        WHERE id = $1
+                    """, m_id, ta, tb)
+
+            return {"success": True, "old_user_id": old_user_id, "new_user_id": new_user_id}
+
+    async def fill_dummy_participants(self, tournament_id: int, count: Optional[int] = None) -> Dict[str, Any]:
+        """Preenche vagas vazias do torneio com participantes fictícios (Dummies) para testes."""
+        async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            if not tournament:
+                return {"success": False, "reason": "Torneio não encontrado."}
+
+            current_participants = await self.get_tournament_participants(tournament_id)
+            current_count = len(current_participants)
+            max_p = tournament["max_participants"]
+
+            to_add = (max_p - current_count) if count is None else min(count, max_p - current_count)
+            if to_add <= 0:
+                return {"success": False, "reason": f"O torneio já está cheio ({current_count}/{max_p})."}
+
+            existing_ids = {p["user_id"] for p in current_participants}
+            added_names = []
+
+            dummy_names = [
+                "Bot_Alpha", "Bot_Bravo", "Bot_Charlie", "Bot_Delta",
+                "Bot_Echo", "Bot_Foxtrot", "Bot_Golf", "Bot_Hotel",
+                "Bot_India", "Bot_Juliet", "Bot_Kilo", "Bot_Lima",
+                "Bot_Mike", "Bot_November", "Bot_Oscar", "Bot_Papa"
+            ]
+
+            dummy_idx = 1
+            added_count = 0
+            while added_count < to_add:
+                fake_id = - (1000 + dummy_idx)
+                dummy_idx += 1
+                if fake_id in existing_ids:
+                    continue
+
+                bot_name = dummy_names[added_count % len(dummy_names)] + f"_{added_count + 1}"
+                # Garante que o usuário existe na tabela users
+                await conn.execute("""
+                    INSERT INTO users (user_id, username, discriminator, is_bot, points)
+                    VALUES ($1, $2, '0000', TRUE, 0)
+                    ON CONFLICT (user_id) DO UPDATE SET username = $2
+                """, fake_id, bot_name)
+
+                await conn.execute("""
+                    INSERT INTO tournament_participants (tournament_id, user_id, status, registered_at)
+                    VALUES ($1, $2, 'registered', NOW())
+                    ON CONFLICT (tournament_id, user_id) DO NOTHING
+                """, tournament_id, fake_id)
+
+                existing_ids.add(fake_id)
+                added_names.append(bot_name)
+                added_count += 1
+
+            new_total = current_count + added_count
+            return {
+                "success": True,
+                "added_count": added_count,
+                "total_count": new_total,
+                "max_participants": max_p,
+                "added_names": added_names
+            }
 
     async def init_round_robin_matches(
         self,
@@ -2819,6 +2979,336 @@ class Database:
                         team_a_ids, team_b_ids, next_match_number, next_match_slot
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 """, tournament_id, m["round_name"], m.get("round_number", 1), m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"])
+
+        return await self.get_tournament_matches(tournament_id)
+
+    async def init_double_elimination_matches(
+        self,
+        tournament_id: int,
+        format_str: str,
+        participants: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Gera e inicializa os confrontos no formato Eliminação Dupla (Winners & Losers Brackets)."""
+        fmt_raw = str(format_str).lower().strip()
+        is_2v2 = any(k in fmt_raw for k in ["2v2", "2x2", "dupla", "duplas"])
+        is_3v3 = any(k in fmt_raw for k in ["3v3", "3x3", "trio", "trios"])
+        team_size = 2 if is_2v2 else (3 if is_3v3 else 1)
+
+        teams = []
+        for i in range(0, len(participants), team_size):
+            chunk = participants[i:i + team_size]
+            teams.append([p["user_id"] for p in chunk])
+
+        matches_to_insert = []
+        if len(teams) <= 4:
+            # 4 Equipes em Double Elimination
+            # WB Semis 1 (Jogo 1)
+            matches_to_insert.append({
+                "round_name": "WB Semifinal 1",
+                "round_number": 1,
+                "match_number": 1,
+                "team_a_ids": teams[0] if len(teams) > 0 else [],
+                "team_b_ids": teams[1] if len(teams) > 1 else [],
+                "next_match_number": 3,
+                "next_match_slot": "A",
+                "bracket_group": "winners"
+            })
+            # WB Semis 2 (Jogo 2)
+            matches_to_insert.append({
+                "round_name": "WB Semifinal 2",
+                "round_number": 1,
+                "match_number": 2,
+                "team_a_ids": teams[2] if len(teams) > 2 else [],
+                "team_b_ids": teams[3] if len(teams) > 3 else [],
+                "next_match_number": 3,
+                "next_match_slot": "B",
+                "bracket_group": "winners"
+            })
+            # WB Final (Jogo 3)
+            matches_to_insert.append({
+                "round_name": "WB Final",
+                "round_number": 2,
+                "match_number": 3,
+                "team_a_ids": [],
+                "team_b_ids": [],
+                "next_match_number": 5,
+                "next_match_slot": "A",
+                "bracket_group": "winners"
+            })
+            # LB Round 1 / Semis (Jogo 4)
+            matches_to_insert.append({
+                "round_name": "LB Semifinal",
+                "round_number": 2,
+                "match_number": 4,
+                "team_a_ids": [],
+                "team_b_ids": [],
+                "next_match_number": 5,
+                "next_match_slot": "B",
+                "bracket_group": "losers"
+            })
+            # Grande Final (Jogo 5)
+            matches_to_insert.append({
+                "round_name": "final",
+                "round_number": 3,
+                "match_number": 5,
+                "team_a_ids": [],
+                "team_b_ids": [],
+                "next_match_number": None,
+                "next_match_slot": None,
+                "bracket_group": "grand_final"
+            })
+        else:
+            # 8 Equipes em Double Elimination (Chave padrão de 8)
+            for m_idx in range(1, 5):
+                t1 = teams[(m_idx - 1) * 2] if len(teams) > (m_idx - 1) * 2 else []
+                t2 = teams[(m_idx - 1) * 2 + 1] if len(teams) > (m_idx - 1) * 2 + 1 else []
+                next_m = 5 if m_idx <= 2 else 6
+                next_s = "A" if m_idx % 2 != 0 else "B"
+                matches_to_insert.append({
+                    "round_name": f"WB Quartas {m_idx}",
+                    "round_number": 1,
+                    "match_number": m_idx,
+                    "team_a_ids": t1,
+                    "team_b_ids": t2,
+                    "next_match_number": next_m,
+                    "next_match_slot": next_s,
+                    "bracket_group": "winners"
+                })
+            # WB Semis (5 & 6)
+            matches_to_insert.append({"round_name": "WB Semifinal 1", "round_number": 2, "match_number": 5, "team_a_ids": [], "team_b_ids": [], "next_match_number": 7, "next_match_slot": "A", "bracket_group": "winners"})
+            matches_to_insert.append({"round_name": "WB Semifinal 2", "round_number": 2, "match_number": 6, "team_a_ids": [], "team_b_ids": [], "next_match_number": 7, "next_match_slot": "B", "bracket_group": "winners"})
+            # WB Final (7)
+            matches_to_insert.append({"round_name": "WB Final", "round_number": 3, "match_number": 7, "team_a_ids": [], "team_b_ids": [], "next_match_number": 13, "next_match_slot": "A", "bracket_group": "winners"})
+            # LB Round 1 (8 & 9)
+            matches_to_insert.append({"round_name": "LB Rodada 1 - Jogo 1", "round_number": 2, "match_number": 8, "team_a_ids": [], "team_b_ids": [], "next_match_number": 10, "next_match_slot": "A", "bracket_group": "losers"})
+            matches_to_insert.append({"round_name": "LB Rodada 1 - Jogo 2", "round_number": 2, "match_number": 9, "team_a_ids": [], "team_b_ids": [], "next_match_number": 11, "next_match_slot": "A", "bracket_group": "losers"})
+            # LB Semis (10 & 11)
+            matches_to_insert.append({"round_name": "LB Semifinal 1", "round_number": 3, "match_number": 10, "team_a_ids": [], "team_b_ids": [], "next_match_number": 12, "next_match_slot": "A", "bracket_group": "losers"})
+            matches_to_insert.append({"round_name": "LB Semifinal 2", "round_number": 3, "match_number": 11, "team_a_ids": [], "team_b_ids": [], "next_match_number": 12, "next_match_slot": "B", "bracket_group": "losers"})
+            # LB Final (12)
+            matches_to_insert.append({"round_name": "LB Final", "round_number": 4, "match_number": 12, "team_a_ids": [], "team_b_ids": [], "next_match_number": 13, "next_match_slot": "B", "bracket_group": "losers"})
+            # Grande Final (13)
+            matches_to_insert.append({"round_name": "final", "round_number": 5, "match_number": 13, "team_a_ids": [], "team_b_ids": [], "next_match_number": None, "next_match_slot": None, "bracket_group": "grand_final"})
+
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM tournament_matches WHERE tournament_id = $1", tournament_id)
+            for m in matches_to_insert:
+                await conn.execute("""
+                    INSERT INTO tournament_matches (
+                        tournament_id, round_name, round_number, match_number,
+                        team_a_ids, team_b_ids, next_match_number, next_match_slot, bracket_group
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """, tournament_id, m["round_name"], m.get("round_number", 1), m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"], m.get("bracket_group", "winners"))
+
+        return await self.get_tournament_matches(tournament_id)
+
+    async def init_swiss_matches(
+        self,
+        tournament_id: int,
+        format_str: str,
+        participants: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Gera a Rodada 1 e estrutura inicial para o Sistema Suíço."""
+        fmt_raw = str(format_str).lower().strip()
+        is_2v2 = any(k in fmt_raw for k in ["2v2", "2x2", "dupla", "duplas"])
+        team_size = 2 if is_2v2 else 1
+
+        teams = []
+        for i in range(0, len(participants), team_size):
+            chunk = participants[i:i + team_size]
+            teams.append([p["user_id"] for p in chunk])
+
+        half = len(teams) // 2
+        matches_to_insert = []
+        match_idx = 1
+        for i in range(half):
+            t1 = teams[i]
+            t2 = teams[i + half] if (i + half) < len(teams) else []
+            matches_to_insert.append({
+                "round_name": "Suíço - Rodada 1",
+                "round_number": 1,
+                "match_number": match_idx,
+                "team_a_ids": t1,
+                "team_b_ids": t2,
+                "next_match_number": None,
+                "next_match_slot": None,
+                "bracket_group": "swiss"
+            })
+            match_idx += 1
+
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM tournament_matches WHERE tournament_id = $1", tournament_id)
+            for m in matches_to_insert:
+                await conn.execute("""
+                    INSERT INTO tournament_matches (
+                        tournament_id, round_name, round_number, match_number,
+                        team_a_ids, team_b_ids, next_match_number, next_match_slot, bracket_group
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """, tournament_id, m["round_name"], m.get("round_number", 1), m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"], m.get("bracket_group", "swiss"))
+
+        return await self.get_tournament_matches(tournament_id)
+
+    async def init_group_stages_matches(
+        self,
+        tournament_id: int,
+        format_str: str,
+        participants: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Gera Fase de Grupos (Grupos A e B) + Playoffs (Semifinais e Final)."""
+        fmt_raw = str(format_str).lower().strip()
+        team_size = 2 if "2v2" in fmt_raw else 1
+
+        teams = []
+        for i in range(0, len(participants), team_size):
+            chunk = participants[i:i + team_size]
+            teams.append([p["user_id"] for p in chunk])
+
+        group_a = [t for idx, t in enumerate(teams) if idx % 2 == 0]
+        group_b = [t for idx, t in enumerate(teams) if idx % 2 != 0]
+
+        matches_to_insert = []
+        match_idx = 1
+
+        # Confrontos Grupo A
+        for i in range(len(group_a)):
+            for j in range(i + 1, len(group_a)):
+                matches_to_insert.append({
+                    "round_name": "Grupo A",
+                    "round_number": 1,
+                    "match_number": match_idx,
+                    "team_a_ids": group_a[i],
+                    "team_b_ids": group_a[j],
+                    "next_match_number": None,
+                    "next_match_slot": None,
+                    "bracket_group": "group_a"
+                })
+                match_idx += 1
+
+        # Confrontos Grupo B
+        for i in range(len(group_b)):
+            for j in range(i + 1, len(group_b)):
+                matches_to_insert.append({
+                    "round_name": "Grupo B",
+                    "round_number": 1,
+                    "match_number": match_idx,
+                    "team_a_ids": group_b[i],
+                    "team_b_ids": group_b[j],
+                    "next_match_number": None,
+                    "next_match_slot": None,
+                    "bracket_group": "group_b"
+                })
+                match_idx += 1
+
+        # Playoffs: Semifinais e Final
+        semi1_num = match_idx
+        semi2_num = match_idx + 1
+        final_num = match_idx + 2
+
+        matches_to_insert.append({
+            "round_name": "Playoffs - Semifinal 1 (A1 vs B2)",
+            "round_number": 2,
+            "match_number": semi1_num,
+            "team_a_ids": [],
+            "team_b_ids": [],
+            "next_match_number": final_num,
+            "next_match_slot": "A",
+            "bracket_group": "playoffs"
+        })
+        matches_to_insert.append({
+            "round_name": "Playoffs - Semifinal 2 (B1 vs A2)",
+            "round_number": 2,
+            "match_number": semi2_num,
+            "team_a_ids": [],
+            "team_b_ids": [],
+            "next_match_number": final_num,
+            "next_match_slot": "B",
+            "bracket_group": "playoffs"
+        })
+        matches_to_insert.append({
+            "round_name": "final",
+            "round_number": 3,
+            "match_number": final_num,
+            "team_a_ids": [],
+            "team_b_ids": [],
+            "next_match_number": None,
+            "next_match_slot": None,
+            "bracket_group": "playoffs"
+        })
+
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM tournament_matches WHERE tournament_id = $1", tournament_id)
+            for m in matches_to_insert:
+                await conn.execute("""
+                    INSERT INTO tournament_matches (
+                        tournament_id, round_name, round_number, match_number,
+                        team_a_ids, team_b_ids, next_match_number, next_match_slot, bracket_group
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """, tournament_id, m["round_name"], m.get("round_number", 1), m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"], m.get("bracket_group", "group_stages"))
+
+        return await self.get_tournament_matches(tournament_id)
+
+    async def init_ffa_matches(
+        self,
+        tournament_id: int,
+        format_str: str,
+        participants: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Gera baterias/lobbies para jogos Free-For-All e Corrida (Fall Guys, Speedstorm, Uno 4p)."""
+        all_ids = [p["user_id"] for p in participants]
+        heat_size = 4 if len(all_ids) <= 8 else 8
+        
+        matches_to_insert = []
+        match_idx = 1
+        
+        if len(all_ids) <= heat_size:
+            # Lobby único / Bateria Direta
+            matches_to_insert.append({
+                "round_name": "final",
+                "round_number": 1,
+                "match_number": 1,
+                "team_a_ids": all_ids,
+                "team_b_ids": [],
+                "next_match_number": None,
+                "next_match_slot": None,
+                "bracket_group": "ffa_lobby"
+            })
+        else:
+            # Dividir em Heats / Baterias classificatórias + Bateria Final
+            for i in range(0, len(all_ids), heat_size):
+                heat_participants = all_ids[i:i + heat_size]
+                matches_to_insert.append({
+                    "round_name": f"Bateria Classificatória #{match_idx}",
+                    "round_number": 1,
+                    "match_number": match_idx,
+                    "team_a_ids": heat_participants,
+                    "team_b_ids": [],
+                    "next_match_number": None,
+                    "next_match_slot": None,
+                    "bracket_group": "ffa_heat"
+                })
+                match_idx += 1
+            
+            # Final Lobby
+            matches_to_insert.append({
+                "round_name": "final",
+                "round_number": 2,
+                "match_number": match_idx,
+                "team_a_ids": [],
+                "team_b_ids": [],
+                "next_match_number": None,
+                "next_match_slot": None,
+                "bracket_group": "ffa_lobby"
+            })
+
+        async with self.pool.acquire() as conn:
+            await conn.execute("DELETE FROM tournament_matches WHERE tournament_id = $1", tournament_id)
+            for m in matches_to_insert:
+                await conn.execute("""
+                    INSERT INTO tournament_matches (
+                        tournament_id, round_name, round_number, match_number,
+                        team_a_ids, team_b_ids, next_match_number, next_match_slot, bracket_group
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                """, tournament_id, m["round_name"], m.get("round_number", 1), m["match_number"], m["team_a_ids"], m["team_b_ids"], m["next_match_number"], m["next_match_slot"], m.get("bracket_group", "ffa_lobby"))
 
         return await self.get_tournament_matches(tournament_id)
 

@@ -6,10 +6,204 @@ from database import Database
 from typing import Optional, Any, List
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from utils.image_generator import BracketBuilder, LeagueTableBuilder
 
 logger = logging.getLogger(__name__)
+
+
+async def _create_tournament_scheduled_event(
+    guild: discord.Guild,
+    tourney_id: int,
+    name: str,
+    game_name: str,
+    prize: Optional[str] = None,
+    rules: Optional[str] = None
+) -> Optional[int]:
+    """Cria um Discord Scheduled Event oficial para o torneio."""
+    try:
+        now_utc = datetime.now(timezone.utc)
+        start_time = now_utc + timedelta(hours=1)
+        end_time = start_time + timedelta(hours=3)
+
+        desc_parts = [f"🎮 Jogo: {game_name}"]
+        if prize:
+            desc_parts.append(f"🎁 Premiação: {prize}")
+        if rules:
+            desc_parts.append(f"📜 Regras: {rules}")
+        desc_parts.append(f"\nTorneio Oficial BMIA #{tourney_id} • Inscreva-se pelo chat!")
+
+        event = await guild.create_scheduled_event(
+            name=f"🏆 {name[:95]}",
+            description="\n".join(desc_parts)[:990],
+            start_time=start_time,
+            end_time=end_time,
+            entity_type=discord.EntityType.external,
+            location="Servidor BMIA • Arena de Torneios",
+            privacy_level=discord.PrivacyLevel.guild_only
+        )
+        return event.id
+    except Exception as e:
+        logger.debug(f"Não foi possível criar Scheduled Event no Discord: {e}")
+        return None
+
+
+class TournamentCreateModal(discord.ui.Modal, title="Criar Novo Torneio"):
+    """Modal com formulário visual para criação e configuração de torneios."""
+
+    nome = discord.ui.TextInput(
+        label="Nome do Torneio",
+        placeholder="ex: Copa BMIA Rocket League",
+        max_length=60,
+        required=True
+    )
+    jogo = discord.ui.TextInput(
+        label="Jogo",
+        placeholder="ex: Rocket League, Uno, Fall Guys, Disney Speedstorm",
+        max_length=50,
+        required=True
+    )
+    vagas = discord.ui.TextInput(
+        label="Vagas / Participantes (2 a 128)",
+        placeholder="ex: 8, 16, 32",
+        default="16",
+        max_length=4,
+        required=True
+    )
+    best_of = discord.ui.TextInput(
+        label="Formato de Série (MD1, MD3, MD5)",
+        placeholder="Digite 1, 3 ou 5",
+        default="1",
+        max_length=2,
+        required=False
+    )
+    regras = discord.ui.TextInput(
+        label="Regras & Premiação",
+        style=discord.TextStyle.paragraph,
+        placeholder="Insira a premiação, regras de WO, mapas ou observações adicionais...",
+        max_length=500,
+        required=False
+    )
+
+    def __init__(self, db: Database, points_manager: Any = None):
+        super().__init__()
+        self.db = db
+        self.points_manager = points_manager
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            try:
+                vagas_val = int(self.vagas.value.strip())
+            except ValueError:
+                vagas_val = 16
+            vagas_val = max(2, min(vagas_val, 128))
+
+            try:
+                bo_val = int(self.best_of.value.strip()) if self.best_of.value else 1
+            except ValueError:
+                bo_val = 1
+
+            tourney_id = await self.db.create_tournament(
+                guild_id=interaction.guild.id,
+                name=self.nome.value.strip(),
+                game_name=self.jogo.value.strip(),
+                format="1v1",
+                max_participants=vagas_val,
+                prize=self.regras.value.strip() if self.regras.value else None,
+                created_by=interaction.user.id,
+                tournament_type="bracket",
+                rules=self.regras.value.strip() if self.regras.value else None,
+                best_of=bo_val
+            )
+
+            # Cria Scheduled Event
+            event_id = await _create_tournament_scheduled_event(
+                guild=interaction.guild,
+                tourney_id=tourney_id,
+                name=self.nome.value.strip(),
+                game_name=self.jogo.value.strip(),
+                prize=self.regras.value.strip() if self.regras.value else None,
+                rules=self.regras.value.strip() if self.regras.value else None
+            )
+
+            embed = discord.Embed(
+                title=f"🏆 NOVO TORNEIO: {self.nome.value.strip()}",
+                description="Clique nos botões abaixo para participar do torneio!",
+                color=discord.Color.gold()
+            )
+            embed.add_field(name="🎮 Jogo", value=f"**{self.jogo.value.strip()}**", inline=True)
+            embed.add_field(name="⚔️ Formato", value="**1V1**", inline=True)
+            embed.add_field(name="📊 Tipo", value="**🏆 Mata-Mata (Chaveamento)**", inline=True)
+            embed.add_field(name="👥 Vagas / Inscritos", value=f"**0 / {vagas_val}**", inline=True)
+            if bo_val > 1:
+                embed.add_field(name="🎯 Série", value=f"**Melhor de {bo_val} (MD{bo_val})**", inline=True)
+            if self.regras.value:
+                embed.add_field(name="📜 Regras / Informações", value=self.regras.value.strip(), inline=False)
+            if event_id:
+                embed.add_field(name="📅 Evento Criado", value="Um evento agendado oficial foi criado no topo do servidor!", inline=False)
+
+            embed.set_footer(text=f"Torneio ID: #{tourney_id} • Organizado por {interaction.user.display_name}")
+            embed.timestamp = datetime.now()
+
+            view = TournamentRegistrationView(self.db, tourney_id)
+            message = await interaction.followup.send(embed=embed, view=view)
+            await self.db.update_tournament_message(tourney_id, interaction.channel.id, message.id)
+
+        except Exception as e:
+            logger.error(f"Erro ao criar torneio via modal: {e}")
+            await interaction.followup.send("❌ Ocorreu um erro ao criar o torneio.")
+
+
+class MatchScoreModal(discord.ui.Modal):
+    """Modal interativo para submissão e registro de placar de partida."""
+
+    def __init__(self, db: Database, tournament_id: int, match_number: int, team_a_label: str, team_b_label: str):
+        super().__init__(title=f"Lançar Placar — Jogo #{match_number}")
+        self.db = db
+        self.tournament_id = tournament_id
+        self.match_number = match_number
+
+        self.score_a = discord.ui.TextInput(
+            label=f"Placar: {team_a_label[:40]}",
+            placeholder="Ex: 2",
+            max_length=3,
+            required=True
+        )
+        self.score_b = discord.ui.TextInput(
+            label=f"Placar: {team_b_label[:40]}",
+            placeholder="Ex: 1",
+            max_length=3,
+            required=True
+        )
+        self.add_item(self.score_a)
+        self.add_item(self.score_b)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            sa = int(self.score_a.value.strip())
+            sb = int(self.score_b.value.strip())
+        except ValueError:
+            await interaction.followup.send("⚠️ Insira apenas números inteiros válidos nos campos de placar.", ephemeral=True)
+            return
+
+        res = await self.db.record_match_result(
+            tournament_id=self.tournament_id,
+            match_number=self.match_number,
+            score_a=sa,
+            score_b=sb
+        )
+        if not res.get("success"):
+            await interaction.followup.send(f"❌ {res.get('reason', 'Erro ao registrar resultado.')}", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=f"⚔️ Placar Registrado — Jogo #{self.match_number}",
+            description=f"O resultado `{sa} x {sb}` foi gravado com sucesso!",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed)
 
 
 class TournamentRegistrationView(discord.ui.View):
@@ -159,12 +353,14 @@ class TournamentCommands(app_commands.Group):
     @app_commands.command(name="criar", description="Cria um novo torneio com embed e botões de inscrição")
     @app_commands.describe(
         nome="Nome do torneio (ex: Copa Rocket League BMIA)",
-        jogo="Jogo do torneio (ex: Rocket League, Roblox, Valorant)",
+        jogo="Jogo do torneio (ex: Rocket League, Uno, Fall Guys, Disney Speedstorm)",
         formato="Formato de disputa (1v1, 2v2, 3v3, 5v5)",
         vagas="Quantidade total de vagas/participantes",
-        tipo="Tipo de torneio: Mata-Mata (Chaveamento) ou Pontos Corridos (Liga)",
+        tipo="Tipo de bracket (Mata-Mata, Eliminação Dupla, Liga, Suíço, Grupos, FFA)",
         premio="Premiação do torneio (ex: 5.000 pontos + Cargo Campeão)",
-        inicio="Data e hora de início (ex: Sábado às 20:00)"
+        inicio="Data e hora de início (ex: Sábado às 20:00)",
+        regras="Regras do campeonato ou formato de disputa",
+        best_of="Formato da série (ex: 1 para MD1, 3 para MD3, 5 para MD5)"
     )
     @app_commands.choices(
         formato=[
@@ -179,10 +375,15 @@ class TournamentCommands(app_commands.Group):
             app_commands.Choice(name="8 Participantes (Semis em 2v2 / Quartas em 1v1)", value=8),
             app_commands.Choice(name="16 Participantes (Quartas em 2v2 / Oitavas em 1v1)", value=16),
             app_commands.Choice(name="32 Participantes", value=32),
+            app_commands.Choice(name="64 Participantes", value=64),
         ],
         tipo=[
-            app_commands.Choice(name="Mata-Mata (Chaveamento Eliminatório)", value="bracket"),
-            app_commands.Choice(name="Pontos Corridos (Liga / Todos contra Todos)", value="round_robin"),
+            app_commands.Choice(name="Single Elimination (Mata-Mata Simples)", value="single_elimination"),
+            app_commands.Choice(name="Double Elimination (Eliminação Dupla)", value="double_elimination"),
+            app_commands.Choice(name="Round Robin (Pontos Corridos / Liga)", value="round_robin"),
+            app_commands.Choice(name="Swiss System (Sistema Suíço)", value="swiss"),
+            app_commands.Choice(name="Group Stages (Fase de Grupos + Playoffs)", value="group_stages"),
+            app_commands.Choice(name="FFA & Race (Lobbies / Baterias de Corrida)", value="ffa_race"),
         ]
     )
     @app_commands.checks.has_permissions(manage_events=True)
@@ -195,14 +396,17 @@ class TournamentCommands(app_commands.Group):
         vagas: app_commands.Choice[int],
         tipo: Optional[app_commands.Choice[str]] = None,
         premio: Optional[str] = None,
-        inicio: Optional[str] = None
+        inicio: Optional[str] = None,
+        regras: Optional[str] = None,
+        best_of: Optional[int] = 1
     ):
         await interaction.response.defer()
         try:
             vagas_val = vagas.value if isinstance(vagas, app_commands.Choice) else int(vagas)
             formato_val = formato.value if isinstance(formato, app_commands.Choice) else str(formato)
-            tipo_val = tipo.value if isinstance(tipo, app_commands.Choice) else (str(tipo) if tipo else "bracket")
+            tipo_val = tipo.value if isinstance(tipo, app_commands.Choice) else (str(tipo) if tipo else "single_elimination")
             vagas_val = max(2, min(vagas_val, 128))
+            bo_val = max(1, min(best_of or 1, 9))
 
             tourney_id = await self.db.create_tournament(
                 guild_id=interaction.guild.id,
@@ -212,10 +416,32 @@ class TournamentCommands(app_commands.Group):
                 max_participants=vagas_val,
                 prize=premio,
                 created_by=interaction.user.id,
-                tournament_type=tipo_val
+                tournament_type=tipo_val,
+                rules=regras,
+                best_of=bo_val
             )
 
-            tipo_label = "⚡ Pontos Corridos (Liga)" if tipo_val == "round_robin" else "🏆 Mata-Mata (Chaveamento)"
+            tipo_labels = {
+                "single_elimination": "🏆 Single Elimination (Mata-Mata Simples)",
+                "double_elimination": "🔁 Double Elimination (Eliminação Dupla)",
+                "round_robin": "⚡ Round Robin (Pontos Corridos / Liga)",
+                "swiss": "🇨🇭 Swiss System (Sistema Suíço)",
+                "group_stages": "🌐 Group Stages (Grupos + Playoffs)",
+                "ffa_race": "🏁 FFA & Race (Lobbies / Corrida)"
+            }
+            tipo_label = tipo_labels.get(tipo_val, "🏆 Mata-Mata")
+
+            # Cria Scheduled Event
+            event_id = None
+            if inicio:
+                event_id = await _create_tournament_scheduled_event(
+                    guild=interaction.guild,
+                    tourney_id=tourney_id,
+                    name=nome,
+                    game_name=jogo,
+                    prize=premio,
+                    rules=regras
+                )
 
             embed = discord.Embed(
                 title=f"🏆 NOVO TORNEIO: {nome}",
@@ -224,13 +450,19 @@ class TournamentCommands(app_commands.Group):
             )
             embed.add_field(name="🎮 Jogo", value=f"**{jogo}**", inline=True)
             embed.add_field(name="⚔️ Formato", value=f"**{formato_val.upper()}**", inline=True)
-            embed.add_field(name="📊 Tipo", value=f"**{tipo_label}**", inline=True)
+            embed.add_field(name="📊 Bracket", value=f"**{tipo_label}**", inline=True)
             embed.add_field(name="👥 Vagas / Inscritos", value=f"**0 / {vagas_val}**", inline=True)
 
+            if bo_val > 1:
+                embed.add_field(name="🎯 Série", value=f"**Melhor de {bo_val} (MD{bo_val})**", inline=True)
             if premio:
                 embed.add_field(name="🎁 Premiação", value=f"**{premio}**", inline=False)
+            if regras:
+                embed.add_field(name="📜 Regras", value=regras, inline=False)
             if inicio:
                 embed.add_field(name="⏰ Início", value=f"**{inicio}**", inline=False)
+            if event_id:
+                embed.add_field(name="📅 Evento Criado", value="Um evento agendado oficial foi publicado no topo do servidor!", inline=False)
 
             embed.set_footer(text=f"Torneio ID: #{tourney_id} • Organizado por {interaction.user.display_name}")
             embed.timestamp = datetime.now()
@@ -244,6 +476,129 @@ class TournamentCommands(app_commands.Group):
         except Exception as e:
             logger.error(f"Erro ao criar torneio: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao criar o torneio. Verifique os parâmetros e tente novamente.")
+
+    @app_commands.command(name="formulario", description="Abre o formulário interativo (Modal) para criar e configurar um torneio")
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def formulario_torneio(self, interaction: discord.Interaction):
+        modal = TournamentCreateModal(self.db, self.points_manager)
+        await interaction.response.send_modal(modal)
+
+    @app_commands.command(name="placar_modal", description="Abre formulário (Modal) para lançar placar de partida")
+    @app_commands.describe(id="ID do torneio", jogo="Número da partida")
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def placar_modal_cmd(self, interaction: discord.Interaction, id: int, jogo: int):
+        matches = await self.db.get_tournament_matches(id)
+        target = next((m for m in matches if m["match_number"] == jogo), None)
+        if not target:
+            await interaction.response.send_message(f"❌ Partida #{jogo} não encontrada.", ephemeral=True)
+            return
+
+        ta_ids = target.get("team_a_ids") or []
+        tb_ids = target.get("team_b_ids") or []
+        ta_str = "Time A"
+        tb_str = "Time B"
+        if ta_ids:
+            ta_m = interaction.guild.get_member(ta_ids[0])
+            ta_str = ta_m.display_name if ta_m else f"ID:{ta_ids[0]}"
+        if tb_ids:
+            tb_m = interaction.guild.get_member(tb_ids[0])
+            tb_str = tb_m.display_name if tb_m else f"ID:{tb_ids[0]}"
+
+        modal = MatchScoreModal(self.db, id, jogo, ta_str, tb_str)
+        await interaction.response.send_modal(modal)
+
+    @app_commands.command(name="participante_adicionar", description="[ADM] Inscreve manualmente um membro no torneio")
+    @app_commands.describe(id="ID do torneio", membro="Membro a ser inscrito", forcar="Ignorar limite de vagas")
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def adm_add_participant(self, interaction: discord.Interaction, id: int, membro: discord.Member, forcar: bool = False):
+        await interaction.response.defer()
+        try:
+            m_avatar = str(membro.display_avatar.url) if hasattr(membro, 'display_avatar') else None
+            await self.db.upsert_user(membro.id, membro.name, membro.discriminator, membro.bot, avatar_url=m_avatar)
+            res = await self.db.admin_add_participant(id, membro.id, force=forcar)
+            if not res.get("success"):
+                await interaction.followup.send(f"⚠️ {res.get('reason', 'Não foi possível adicionar o membro.')}")
+                return
+            await interaction.followup.send(f"✅ {membro.mention} foi adicionado manualmente ao Torneio #{id}! ({res['count']}/{res['max']} inscritos)")
+        except Exception as e:
+            logger.error(f"Erro ao adicionar participante no torneio {id}: {e}")
+            await interaction.followup.send("❌ Erro ao adicionar participante.")
+
+    @app_commands.command(name="participante_remover", description="[ADM] Remove manualmente um membro do torneio")
+    @app_commands.describe(id="ID do torneio", membro="Membro a ser removido")
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def adm_remove_participant(self, interaction: discord.Interaction, id: int, membro: discord.Member):
+        await interaction.response.defer()
+        try:
+            res = await self.db.admin_remove_participant(id, membro.id)
+            if not res.get("success"):
+                await interaction.followup.send(f"⚠️ {res.get('reason', 'Não foi possível remover o membro.')}")
+                return
+            await interaction.followup.send(f"ℹ️ {membro.mention} foi removido do Torneio #{id}. ({res['count']}/{res['max']} vagas preenchidas)")
+        except Exception as e:
+            logger.error(f"Erro ao remover participante do torneio {id}: {e}")
+            await interaction.followup.send("❌ Erro ao remover participante.")
+
+    @app_commands.command(name="participante_substituir", description="[ADM] Substitui um jogador por outro mantendo as chaves")
+    @app_commands.describe(id="ID do torneio", membro_antigo="Jogador saindo", novo_membro="Novo jogador entrando")
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def adm_substitute_participant(self, interaction: discord.Interaction, id: int, membro_antigo: discord.Member, novo_membro: discord.Member):
+        await interaction.response.defer()
+        try:
+            m_avatar = str(novo_membro.display_avatar.url) if hasattr(novo_membro, 'display_avatar') else None
+            await self.db.upsert_user(novo_membro.id, novo_membro.name, novo_membro.discriminator, novo_membro.bot, avatar_url=m_avatar)
+            res = await self.db.admin_substitute_participant(id, membro_antigo.id, novo_membro.id)
+            if not res.get("success"):
+                await interaction.followup.send(f"⚠️ {res.get('reason', 'Não foi possível realizar a substituição.')}")
+                return
+            await interaction.followup.send(f"🔄 Substituição concluída! {membro_antigo.mention} foi substituído por {novo_membro.mention} no Torneio #{id}.")
+        except Exception as e:
+            logger.error(f"Erro ao substituir participante no torneio {id}: {e}")
+            await interaction.followup.send("❌ Erro ao substituir participante.")
+
+    @app_commands.command(name="test_fill", description="[TESTE] Preenche vagas vazias com participantes fictícios (Dummies/Bots)")
+    @app_commands.describe(id="ID do torneio", quantidade="Quantidade de dummies a inserir (opcional)")
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def test_fill_cmd(self, interaction: discord.Interaction, id: int, quantidade: Optional[int] = None):
+        await interaction.response.defer()
+        try:
+            res = await self.db.fill_dummy_participants(id, count=quantidade)
+            if not res.get("success"):
+                await interaction.followup.send(f"⚠️ {res.get('reason', 'Não foi possível preencher com bots de teste.')}")
+                return
+            names_preview = ", ".join(f"`{n}`" for n in res["added_names"][:8])
+            if len(res["added_names"]) > 8:
+                names_preview += f" ... e mais {len(res['added_names']) - 8}"
+            await interaction.followup.send(f"🤖 **{res['added_count']} participantes de teste adicionados com sucesso!**\nTotal: **{res['total_count']} / {res['max_participants']}**\n{names_preview}")
+        except Exception as e:
+            logger.error(f"Erro ao test-fill no torneio {id}: {e}")
+            await interaction.followup.send("❌ Erro ao preencher vagas de teste.")
+
+    @app_commands.command(name="evento_vincular", description="Cria um Discord Scheduled Event oficial para o torneio")
+    @app_commands.describe(id="ID do torneio")
+    @app_commands.checks.has_permissions(manage_events=True)
+    async def evento_vincular_cmd(self, interaction: discord.Interaction, id: int):
+        await interaction.response.defer()
+        try:
+            tourney = await self.db.get_tournament(id)
+            if not tourney or tourney["guild_id"] != interaction.guild.id:
+                await interaction.followup.send("❌ Torneio não encontrado.")
+                return
+            event_id = await _create_tournament_scheduled_event(
+                guild=interaction.guild,
+                tourney_id=id,
+                name=tourney["name"],
+                game_name=tourney["game_name"],
+                prize=tourney.get("prize"),
+                rules=tourney.get("rules")
+            )
+            if not event_id:
+                await interaction.followup.send("⚠️ Não foi possível criar o evento agendado no servidor.")
+                return
+            await interaction.followup.send(f"📅 **Evento oficial agendado com sucesso!** O evento foi publicado no topo do servidor para o Torneio #{id}.")
+        except Exception as e:
+            logger.error(f"Erro ao vincular evento ao torneio {id}: {e}")
+            await interaction.followup.send("❌ Erro ao vincular evento.")
 
 
     @app_commands.command(name="listar", description="Lista os torneios abertos ou recentes do servidor")
@@ -520,7 +875,40 @@ class TournamentCommands(app_commands.Group):
                 podium_embed.set_thumbnail(url=vencedor.avatar.url)
             podium_embed.set_footer(text=f"Torneio #{tourney['id']} • Parabéns a todos os participantes!")
 
-            await interaction.followup.send(embed=podium_embed)
+            # Gera a imagem oficial do bracket ou classificação para incorporar no embed final
+            final_file = None
+            try:
+                t_type = tourney.get("tournament_type") or "bracket"
+                matches = await self.db.get_tournament_matches(id)
+                if t_type == "round_robin":
+                    standings = await self.db.get_tournament_standings(id)
+                    if standings:
+                        builder = LeagueTableBuilder()
+                        img_buf = await builder.generate_table(
+                            guild=interaction.guild,
+                            tournament=tourney,
+                            standings=standings,
+                            matches=matches
+                        )
+                        final_file = discord.File(fp=img_buf, filename="classificacao_final.png")
+                        podium_embed.set_image(url="attachment://classificacao_final.png")
+                else:
+                    builder = BracketBuilder()
+                    img_buf = await builder.generate_bracket(
+                        guild=interaction.guild,
+                        tournament=tourney,
+                        participants=participants,
+                        matches=matches
+                    )
+                    final_file = discord.File(fp=img_buf, filename="chaveamento_final.png")
+                    podium_embed.set_image(url="attachment://chaveamento_final.png")
+            except Exception as img_err:
+                logger.debug(f"Não foi possível gerar imagem de encerramento do torneio {id}: {img_err}")
+
+            if final_file:
+                await interaction.followup.send(embed=podium_embed, file=final_file)
+            else:
+                await interaction.followup.send(embed=podium_embed)
 
             # Desabilita botões da mensagem original se acessível
             if tourney.get("channel_id") and tourney.get("message_id"):
