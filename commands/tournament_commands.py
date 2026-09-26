@@ -48,7 +48,7 @@ async def _create_tournament_scheduled_event(
         return None
 
 
-class TournamentCreateModal(discord.ui.Modal, title="Criar Novo Torneio"):
+class TournamentCreateModal(discord.ui.Modal):
     """Modal com formulário visual para criação e configuração de torneios."""
 
     nome = discord.ui.TextInput(
@@ -85,10 +85,20 @@ class TournamentCreateModal(discord.ui.Modal, title="Criar Novo Torneio"):
         required=False
     )
 
-    def __init__(self, db: Database, points_manager: Any = None):
-        super().__init__()
+    def __init__(self, db: Database, points_manager: Any = None, preset_type: str = "single_elimination"):
+        tipo_labels = {
+            "single_elimination": "Mata-Mata Simples",
+            "double_elimination": "Eliminação Dupla",
+            "round_robin": "Pontos Corridos (Liga)",
+            "swiss": "Sistema Suíço",
+            "group_stages": "Fase de Grupos",
+            "ffa_race": "FFA & Corrida"
+        }
+        lbl = tipo_labels.get(preset_type, "Torneio")
+        super().__init__(title=f"Criar: {lbl}"[:45])
         self.db = db
         self.points_manager = points_manager
+        self.preset_type = preset_type
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -104,6 +114,8 @@ class TournamentCreateModal(discord.ui.Modal, title="Criar Novo Torneio"):
             except ValueError:
                 bo_val = 1
 
+            tipo_val = self.preset_type or "single_elimination"
+
             tourney_id = await self.db.create_tournament(
                 guild_id=interaction.guild.id,
                 name=self.nome.value.strip(),
@@ -112,7 +124,7 @@ class TournamentCreateModal(discord.ui.Modal, title="Criar Novo Torneio"):
                 max_participants=vagas_val,
                 prize=self.regras.value.strip() if self.regras.value else None,
                 created_by=interaction.user.id,
-                tournament_type="bracket",
+                tournament_type=tipo_val,
                 rules=self.regras.value.strip() if self.regras.value else None,
                 best_of=bo_val
             )
@@ -127,6 +139,16 @@ class TournamentCreateModal(discord.ui.Modal, title="Criar Novo Torneio"):
                 rules=self.regras.value.strip() if self.regras.value else None
             )
 
+            tipo_labels = {
+                "single_elimination": "🏆 Single Elimination (Mata-Mata Simples)",
+                "double_elimination": "🔁 Double Elimination (Eliminação Dupla)",
+                "round_robin": "⚡ Round Robin (Pontos Corridos / Liga)",
+                "swiss": "🇨🇭 Swiss System (Sistema Suíço)",
+                "group_stages": "🌐 Group Stages (Grupos + Playoffs)",
+                "ffa_race": "🏁 FFA & Race (Lobbies / Corrida)"
+            }
+            tipo_label = tipo_labels.get(tipo_val, "🏆 Mata-Mata")
+
             embed = discord.Embed(
                 title=f"🏆 NOVO TORNEIO: {self.nome.value.strip()}",
                 description="Clique nos botões abaixo para participar do torneio!",
@@ -134,7 +156,7 @@ class TournamentCreateModal(discord.ui.Modal, title="Criar Novo Torneio"):
             )
             embed.add_field(name="🎮 Jogo", value=f"**{self.jogo.value.strip()}**", inline=True)
             embed.add_field(name="⚔️ Formato", value="**1V1**", inline=True)
-            embed.add_field(name="📊 Tipo", value="**🏆 Mata-Mata (Chaveamento)**", inline=True)
+            embed.add_field(name="📊 Bracket", value=f"**{tipo_label}**", inline=True)
             embed.add_field(name="👥 Vagas / Inscritos", value=f"**0 / {vagas_val}**", inline=True)
             if bo_val > 1:
                 embed.add_field(name="🎯 Série", value=f"**Melhor de {bo_val} (MD{bo_val})**", inline=True)
@@ -153,6 +175,73 @@ class TournamentCreateModal(discord.ui.Modal, title="Criar Novo Torneio"):
         except Exception as e:
             logger.error(f"Erro ao criar torneio via modal: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao criar o torneio.")
+
+
+class TournamentBracketSelect(discord.ui.Select):
+    """Menu Dropdown para selecionar o formato de bracket antes de preencher o formulário."""
+
+    def __init__(self, db: Database, points_manager: Any = None):
+        options = [
+            discord.SelectOption(
+                label="Single Elimination (Mata-Mata Simples)",
+                value="single_elimination",
+                description="Eliminatório clássico direto (1v1, 2v2, equipes).",
+                emoji="🏆",
+                default=True
+            ),
+            discord.SelectOption(
+                label="Double Elimination (Eliminação Dupla)",
+                value="double_elimination",
+                description="Chaves Winners e Losers com repescagem.",
+                emoji="🔁"
+            ),
+            discord.SelectOption(
+                label="Round Robin (Pontos Corridos / Liga)",
+                value="round_robin",
+                description="Todos contra todos gerando tabela de pontuação.",
+                emoji="⚡"
+            ),
+            discord.SelectOption(
+                label="Swiss System (Sistema Suíço)",
+                value="swiss",
+                description="Rodadas pareadas por vitórias/derrotas.",
+                emoji="🇨🇭"
+            ),
+            discord.SelectOption(
+                label="Group Stages (Grupos + Playoffs)",
+                value="group_stages",
+                description="Fase de grupos A/B avançando para mata-mata.",
+                emoji="🌐"
+            ),
+            discord.SelectOption(
+                label="FFA & Race (Lobbies / Corrida)",
+                value="ffa_race",
+                description="Para Fall Guys, Disney Speedstorm, Uno 4p.",
+                emoji="🏁"
+            ),
+        ]
+        super().__init__(
+            placeholder="Selecione o Tipo de Bracket para abrir o formulário...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="tourney_setup_select_type"
+        )
+        self.db = db
+        self.points_manager = points_manager
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen_type = self.values[0]
+        modal = TournamentCreateModal(self.db, self.points_manager, preset_type=chosen_type)
+        await interaction.response.send_modal(modal)
+
+
+class TournamentCreationSetupView(discord.ui.View):
+    """View interativa com o menu suspenso de seleção de bracket."""
+
+    def __init__(self, db: Database, points_manager: Any = None):
+        super().__init__(timeout=180)
+        self.add_item(TournamentBracketSelect(db, points_manager))
 
 
 class MatchScoreModal(discord.ui.Modal):
@@ -477,11 +566,44 @@ class TournamentCommands(app_commands.Group):
             logger.error(f"Erro ao criar torneio: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao criar o torneio. Verifique os parâmetros e tente novamente.")
 
-    @app_commands.command(name="formulario", description="Abre o formulário interativo (Modal) para criar e configurar um torneio")
+    @app_commands.command(name="formulario", description="Abre o assistente com formulário (Modal) para criar um torneio")
+    @app_commands.describe(tipo="Tipo de bracket desejado (opcional, abre o formulário direto se escolhido)")
+    @app_commands.choices(
+        tipo=[
+            app_commands.Choice(name="Single Elimination (Mata-Mata Simples)", value="single_elimination"),
+            app_commands.Choice(name="Double Elimination (Eliminação Dupla)", value="double_elimination"),
+            app_commands.Choice(name="Round Robin (Pontos Corridos / Liga)", value="round_robin"),
+            app_commands.Choice(name="Swiss System (Sistema Suíço)", value="swiss"),
+            app_commands.Choice(name="Group Stages (Fase de Grupos + Playoffs)", value="group_stages"),
+            app_commands.Choice(name="FFA & Race (Lobbies / Corrida)", value="ffa_race"),
+        ]
+    )
     @app_commands.checks.has_permissions(manage_events=True)
-    async def formulario_torneio(self, interaction: discord.Interaction):
-        modal = TournamentCreateModal(self.db, self.points_manager)
-        await interaction.response.send_modal(modal)
+    async def formulario_torneio(self, interaction: discord.Interaction, tipo: Optional[app_commands.Choice[str]] = None):
+        if tipo:
+            tipo_val = tipo.value if isinstance(tipo, app_commands.Choice) else str(tipo)
+            modal = TournamentCreateModal(self.db, self.points_manager, preset_type=tipo_val)
+            await interaction.response.send_modal(modal)
+        else:
+            embed = discord.Embed(
+                title="⚙️ Assistente de Criação de Torneio",
+                description="Selecione abaixo no menu o **Tipo de Bracket / Chaveamento** para abrir o formulário:",
+                color=discord.Color.gold()
+            )
+            embed.add_field(
+                name="📋 Formatos Disponíveis",
+                value=(
+                    "• 🏆 **Single Elimination**: Mata-Mata clássico direto\n"
+                    "• 🔁 **Double Elimination**: Chaves Winners & Losers (com repescagem)\n"
+                    "• ⚡ **Round Robin**: Pontos Corridos / Liga com tabela\n"
+                    "• 🇨🇭 **Swiss System**: Sistema Suíço baseado em pontuações\n"
+                    "• 🌐 **Group Stages**: Fase de Grupos + Playoffs\n"
+                    "• 🏁 **FFA & Race**: Baterias de Corrida / Lobbies (Fall Guys, Speedstorm, Uno)"
+                ),
+                inline=False
+            )
+            view = TournamentCreationSetupView(self.db, self.points_manager)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="placar_modal", description="Abre formulário (Modal) para lançar placar de partida")
     @app_commands.describe(id="ID do torneio", jogo="Número da partida")

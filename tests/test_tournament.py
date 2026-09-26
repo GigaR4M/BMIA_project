@@ -572,7 +572,7 @@ class TestTournamentAdminAndModals:
             max_participants=8,
             prize="Sem cartas acumuladas",
             created_by=999,
-            tournament_type="bracket",
+            tournament_type="single_elimination",
             rules="Sem cartas acumuladas",
             best_of=3
         )
