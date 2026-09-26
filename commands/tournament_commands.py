@@ -12,39 +12,97 @@ from utils.image_generator import BracketBuilder, LeagueTableBuilder
 logger = logging.getLogger(__name__)
 
 
+def _parse_event_datetime(dt_str: Optional[str]) -> Optional[datetime]:
+    """Tenta converter uma string de data/hora fornecida pelo usuário em datetime timezone-aware UTC."""
+    if not dt_str:
+        return None
+    dt_str = dt_str.strip()
+    now = datetime.now(timezone.utc)
+
+    # Formatos completos com data e hora
+    for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M", "%d-%m-%Y %H:%M"):
+        try:
+            dt = datetime.strptime(dt_str, fmt)
+            return dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+    # Formato DD/MM HH:MM (ex: "28/09 20:00")
+    for fmt_suffix in ("%d/%m %H:%M", "%d-%m %H:%M"):
+        try:
+            full_str = f"{now.year} {dt_str}"
+            dt = datetime.strptime(full_str, f"%Y {fmt_suffix}")
+            dt = dt.replace(tzinfo=timezone.utc)
+            if dt < now:
+                dt = dt.replace(year=now.year + 1)
+            return dt
+        except ValueError:
+            pass
+
+    # Formato apenas horário HH:MM (ex: "20:00")
+    try:
+        dt = datetime.strptime(dt_str, "%H:%M")
+        combined = now.replace(hour=dt.hour, minute=dt.minute, second=0, microsecond=0)
+        if combined < now:
+            combined += timedelta(days=1)
+        return combined
+    except ValueError:
+        pass
+
+    return None
+
+
 async def _create_tournament_scheduled_event(
     guild: discord.Guild,
     tourney_id: int,
     name: str,
     game_name: str,
+    start_time: Optional[datetime],
+    end_time: Optional[datetime] = None,
+    location: Optional[str] = None,
+    channel: Optional[discord.VoiceChannel] = None,
     prize: Optional[str] = None,
     rules: Optional[str] = None
 ) -> Optional[int]:
-    """Cria um Discord Scheduled Event oficial para o torneio."""
+    """Cria um Discord Scheduled Event oficial para o torneio apenas com dados válidos."""
     try:
-        now_utc = datetime.now(timezone.utc)
-        start_time = now_utc + timedelta(hours=1)
-        end_time = start_time + timedelta(hours=3)
+        if not start_time:
+            return None
+
+        if not end_time:
+            end_time = start_time + timedelta(hours=3)
 
         desc_parts = [f"🎮 Jogo: {game_name}"]
         if prize:
             desc_parts.append(f"🎁 Premiação: {prize}")
         if rules:
             desc_parts.append(f"📜 Regras: {rules}")
-        desc_parts.append(f"\nTorneio Oficial BMIA #{tourney_id} • Inscreva-se pelo chat!")
+        desc_parts.append(f"\nTorneio Oficial BMIA #{tourney_id} • Inscrições abertas no canal do torneio!")
 
-        event = await guild.create_scheduled_event(
-            name=f"🏆 {name[:95]}",
-            description="\n".join(desc_parts)[:990],
-            start_time=start_time,
-            end_time=end_time,
-            entity_type=discord.EntityType.external,
-            location="Servidor BMIA • Arena de Torneios",
-            privacy_level=discord.PrivacyLevel.guild_only
-        )
+        loc = (location or "Servidor BMIA • Arena de Torneios")[:100]
+
+        if channel:
+            event = await guild.create_scheduled_event(
+                name=f"🏆 {name[:95]}",
+                description="\n".join(desc_parts)[:990],
+                start_time=start_time,
+                end_time=end_time,
+                channel=channel,
+                privacy_level=discord.PrivacyLevel.guild_only
+            )
+        else:
+            event = await guild.create_scheduled_event(
+                name=f"🏆 {name[:95]}",
+                description="\n".join(desc_parts)[:990],
+                start_time=start_time,
+                end_time=end_time,
+                entity_type=discord.EntityType.external,
+                location=loc,
+                privacy_level=discord.PrivacyLevel.guild_only
+            )
         return event.id
     except Exception as e:
-        logger.debug(f"Não foi possível criar Scheduled Event no Discord: {e}")
+        logger.warning(f"Não foi possível criar Scheduled Event no Discord: {e}")
         return None
 
 
@@ -70,18 +128,17 @@ class TournamentCreateModal(discord.ui.Modal):
         max_length=4,
         required=True
     )
-    best_of = discord.ui.TextInput(
-        label="Formato de Série (MD1, MD3, MD5)",
-        placeholder="Digite 1, 3 ou 5",
-        default="1",
-        max_length=2,
+    premio = discord.ui.TextInput(
+        label="Premiação (Opcional)",
+        placeholder="ex: 5.000 XP + Cargo Campeão, R$ 50...",
+        max_length=100,
         required=False
     )
     regras = discord.ui.TextInput(
-        label="Regras & Premiação",
+        label="Regras (Opcional)",
         style=discord.TextStyle.paragraph,
-        placeholder="Insira a premiação, regras de WO, mapas ou observações adicionais...",
-        max_length=500,
+        placeholder="Insira regras do jogo, tolerância de WO, observações adicionais...",
+        max_length=400,
         required=False
     )
 
@@ -109,12 +166,9 @@ class TournamentCreateModal(discord.ui.Modal):
                 vagas_val = 16
             vagas_val = max(2, min(vagas_val, 128))
 
-            try:
-                bo_val = int(self.best_of.value.strip()) if self.best_of.value else 1
-            except ValueError:
-                bo_val = 1
-
             tipo_val = self.preset_type or "single_elimination"
+            premio_val = self.premio.value.strip() if self.premio.value else None
+            regras_val = self.regras.value.strip() if self.regras.value else None
 
             tourney_id = await self.db.create_tournament(
                 guild_id=interaction.guild.id,
@@ -122,21 +176,11 @@ class TournamentCreateModal(discord.ui.Modal):
                 game_name=self.jogo.value.strip(),
                 format="1v1",
                 max_participants=vagas_val,
-                prize=self.regras.value.strip() if self.regras.value else None,
+                prize=premio_val,
                 created_by=interaction.user.id,
                 tournament_type=tipo_val,
-                rules=self.regras.value.strip() if self.regras.value else None,
-                best_of=bo_val
-            )
-
-            # Cria Scheduled Event
-            event_id = await _create_tournament_scheduled_event(
-                guild=interaction.guild,
-                tourney_id=tourney_id,
-                name=self.nome.value.strip(),
-                game_name=self.jogo.value.strip(),
-                prize=self.regras.value.strip() if self.regras.value else None,
-                rules=self.regras.value.strip() if self.regras.value else None
+                rules=regras_val,
+                best_of=1
             )
 
             tipo_labels = {
@@ -158,12 +202,10 @@ class TournamentCreateModal(discord.ui.Modal):
             embed.add_field(name="⚔️ Formato", value="**1V1**", inline=True)
             embed.add_field(name="📊 Bracket", value=f"**{tipo_label}**", inline=True)
             embed.add_field(name="👥 Vagas / Inscritos", value=f"**0 / {vagas_val}**", inline=True)
-            if bo_val > 1:
-                embed.add_field(name="🎯 Série", value=f"**Melhor de {bo_val} (MD{bo_val})**", inline=True)
-            if self.regras.value:
-                embed.add_field(name="📜 Regras / Informações", value=self.regras.value.strip(), inline=False)
-            if event_id:
-                embed.add_field(name="📅 Evento Criado", value="Um evento agendado oficial foi criado no topo do servidor!", inline=False)
+            if premio_val:
+                embed.add_field(name="🎁 Premiação", value=f"**{premio_val}**", inline=False)
+            if regras_val:
+                embed.add_field(name="📜 Regras", value=regras_val, inline=False)
 
             embed.set_footer(text=f"Torneio ID: #{tourney_id} • Organizado por {interaction.user.display_name}")
             embed.timestamp = datetime.now()
@@ -520,17 +562,22 @@ class TournamentCommands(app_commands.Group):
             }
             tipo_label = tipo_labels.get(tipo_val, "🏆 Mata-Mata")
 
-            # Cria Scheduled Event
+            # Cria Scheduled Event se data/hora de início válida for fornecida
             event_id = None
             if inicio:
-                event_id = await _create_tournament_scheduled_event(
-                    guild=interaction.guild,
-                    tourney_id=tourney_id,
-                    name=nome,
-                    game_name=jogo,
-                    prize=premio,
-                    rules=regras
-                )
+                start_dt = _parse_event_datetime(inicio)
+                if start_dt:
+                    event_id = await _create_tournament_scheduled_event(
+                        guild=interaction.guild,
+                        tourney_id=tourney_id,
+                        name=nome,
+                        game_name=jogo,
+                        start_time=start_dt,
+                        prize=premio,
+                        rules=regras
+                    )
+                    if event_id:
+                        await self.db.update_tournament_event_id(tourney_id, event_id)
 
             embed = discord.Embed(
                 title=f"🏆 NOVO TORNEIO: {nome}",
@@ -696,28 +743,56 @@ class TournamentCommands(app_commands.Group):
             logger.error(f"Erro ao test-fill no torneio {id}: {e}")
             await interaction.followup.send("❌ Erro ao preencher vagas de teste.")
 
-    @app_commands.command(name="evento_vincular", description="Cria um Discord Scheduled Event oficial para o torneio")
-    @app_commands.describe(id="ID do torneio")
+    @app_commands.command(name="evento_vincular", description="Cria um Discord Scheduled Event oficial vinculado ao torneio")
+    @app_commands.describe(
+        id="ID do torneio",
+        data_hora="Data e hora de início (ex: '28/09/2026 20:00', '28/09 20:00' ou '20:00')",
+        local="Local do evento (opcional se não usar canal de voz)",
+        canal_voz="Canal de voz onde o torneio acontecerá (opcional)"
+    )
     @app_commands.checks.has_permissions(manage_events=True)
-    async def evento_vincular_cmd(self, interaction: discord.Interaction, id: int):
+    async def evento_vincular_cmd(
+        self,
+        interaction: discord.Interaction,
+        id: int,
+        data_hora: str,
+        local: Optional[str] = None,
+        canal_voz: Optional[discord.VoiceChannel] = None
+    ):
         await interaction.response.defer()
         try:
             tourney = await self.db.get_tournament(id)
             if not tourney or tourney["guild_id"] != interaction.guild.id:
                 await interaction.followup.send("❌ Torneio não encontrado.")
                 return
+
+            start_dt = _parse_event_datetime(data_hora)
+            if not start_dt:
+                await interaction.followup.send(
+                    "⚠️ Formato de data/hora não reconhecido. Formatos suportados:\n"
+                    "• `DD/MM/AAAA HH:MM` (ex: `28/09/2026 20:00`)\n"
+                    "• `DD/MM HH:MM` (ex: `28/09 20:00`)\n"
+                    "• `HH:MM` (ex: `20:00`)"
+                )
+                return
+
             event_id = await _create_tournament_scheduled_event(
                 guild=interaction.guild,
                 tourney_id=id,
                 name=tourney["name"],
                 game_name=tourney["game_name"],
+                start_time=start_dt,
+                location=local,
+                channel=canal_voz,
                 prize=tourney.get("prize"),
                 rules=tourney.get("rules")
             )
             if not event_id:
-                await interaction.followup.send("⚠️ Não foi possível criar o evento agendado no servidor.")
+                await interaction.followup.send("⚠️ Não foi possível criar o evento agendado no servidor. Verifique as permissões de gerenciar eventos.")
                 return
-            await interaction.followup.send(f"📅 **Evento oficial agendado com sucesso!** O evento foi publicado no topo do servidor para o Torneio #{id}.")
+
+            await self.db.update_tournament_event_id(id, event_id)
+            await interaction.followup.send(f"📅 **Evento oficial agendado com sucesso!** Vinculado ao Torneio #{id} para `{data_hora}`.")
         except Exception as e:
             logger.error(f"Erro ao vincular evento ao torneio {id}: {e}")
             await interaction.followup.send("❌ Erro ao vincular evento.")

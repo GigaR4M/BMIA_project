@@ -2367,6 +2367,15 @@ class Database:
                 WHERE id = $1
             """, tournament_id, channel_id, message_id)
 
+    async def update_tournament_event_id(self, tournament_id: int, discord_event_id: int):
+        """Atualiza o discord_event_id vinculado ao torneio."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE tournaments
+                SET discord_event_id = $2
+                WHERE id = $1
+            """, tournament_id, discord_event_id)
+
     async def get_tournament(self, tournament_id: int) -> Optional[Dict[str, Any]]:
         """Busca os dados de um torneio pelo ID."""
         async with self.pool.acquire() as conn:
@@ -2650,9 +2659,9 @@ class Database:
                 bot_name = dummy_names[added_count % len(dummy_names)] + f"_{added_count + 1}"
                 # Garante que o usuário existe na tabela users
                 await conn.execute("""
-                    INSERT INTO users (user_id, username, discriminator, is_bot, points)
-                    VALUES ($1, $2, '0000', TRUE, 0)
-                    ON CONFLICT (user_id) DO UPDATE SET username = $2
+                    INSERT INTO users (user_id, username, discriminator, is_bot, last_seen)
+                    VALUES ($1, $2, '0000', TRUE, NOW())
+                    ON CONFLICT (user_id) DO UPDATE SET username = $2, last_seen = NOW()
                 """, fake_id, bot_name)
 
                 await conn.execute("""

@@ -12,6 +12,7 @@ def mock_db():
     db = MagicMock()
     db.create_tournament = AsyncMock(return_value=1)
     db.update_tournament_message = AsyncMock()
+    db.update_tournament_event_id = AsyncMock()
     db.get_tournament = AsyncMock(return_value={
         "id": 1,
         "guild_id": 123456789,
@@ -550,12 +551,11 @@ class TestTournamentAdminAndModals:
         modal.nome._value = "Torneio Teste"
         modal.jogo._value = "Uno"
         modal.vagas._value = "8"
-        modal.best_of._value = "3"
+        modal.premio._value = "1000 XP"
         modal.regras._value = "Sem cartas acumuladas"
 
         interaction = MagicMock()
         interaction.guild.id = 123456789
-        interaction.guild.create_scheduled_event = AsyncMock(return_value=MagicMock(id=5555))
         interaction.user.id = 999
         interaction.user.display_name = "Organizador"
         interaction.channel.id = 101
@@ -570,12 +570,48 @@ class TestTournamentAdminAndModals:
             game_name="Uno",
             format="1v1",
             max_participants=8,
-            prize="Sem cartas acumuladas",
+            prize="1000 XP",
             created_by=999,
             tournament_type="single_elimination",
             rules="Sem cartas acumuladas",
-            best_of=3
+            best_of=1
         )
+
+    def test_parse_event_datetime(self):
+        from commands.tournament_commands import _parse_event_datetime
+        dt1 = _parse_event_datetime("28/09/2026 20:00")
+        assert dt1 is not None
+        assert dt1.day == 28 and dt1.month == 9 and dt1.year == 2026 and dt1.hour == 20
+
+        dt2 = _parse_event_datetime("20:00")
+        assert dt2 is not None
+        assert dt2.hour == 20 and dt2.minute == 0
+
+        assert _parse_event_datetime("data_invalida") is None
+        assert _parse_event_datetime("") is None
+
+    @pytest.mark.asyncio
+    async def test_evento_vincular_cmd(self, mock_db):
+        mock_db.get_tournament.return_value = {
+            "id": 1,
+            "guild_id": 123456789,
+            "name": "Copa Disney",
+            "game_name": "Disney Speedstorm",
+            "prize": "1000 XP",
+            "rules": "3 corridas"
+        }
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.guild.create_scheduled_event = AsyncMock(return_value=MagicMock(id=8888))
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        await cmd.evento_vincular_cmd.callback(cmd, interaction, id=1, data_hora="28/09/2026 20:00")
+
+        mock_db.update_tournament_event_id.assert_awaited_once_with(1, 8888)
+        interaction.followup.send.assert_awaited_once()
+        assert "Evento oficial agendado com sucesso" in interaction.followup.send.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_match_score_modal(self, mock_db):
