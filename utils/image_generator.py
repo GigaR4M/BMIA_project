@@ -1,3 +1,6 @@
+import os
+import hashlib
+import json
 import discord
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
@@ -5,6 +8,90 @@ import aiohttp
 from typing import Optional, List, Any, Dict
 import base64
 import asyncio
+
+_AVATAR_CACHE: Dict[str, str] = {}
+_GUILD_ICON_CACHE: Dict[int, str] = {}
+
+CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache", "tournaments")
+
+def _get_tournament_state_hash(tourney: dict, participants: list, matches: Optional[list] = None) -> str:
+    """Gera uma assinatura hash determinística do estado atual do torneio."""
+    state_payload = {
+        "id": tourney.get("id"),
+        "status": tourney.get("status"),
+        "format": tourney.get("format"),
+        "participants": [(p.get("user_id"), p.get("username")) for p in sorted(participants, key=lambda x: str(x.get("user_id", 0)))],
+        "matches": [
+            (
+                m.get("id"),
+                m.get("round_number"),
+                m.get("match_number"),
+                m.get("winner_id"),
+                m.get("score_a"),
+                m.get("score_b"),
+                m.get("scores_json"),
+                m.get("status")
+            )
+            for m in sorted((matches or []), key=lambda x: str(x.get("id", 0)))
+        ]
+    }
+    encoded = json.dumps(state_payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.md5(encoded).hexdigest()
+
+def _get_league_state_hash(tourney: dict, standings: list, matches: Optional[list] = None) -> str:
+    """Gera uma assinatura hash determinística do estado atual da liga de pontos corridos."""
+    state_payload = {
+        "id": tourney.get("id"),
+        "status": tourney.get("status"),
+        "standings": standings,
+        "matches": [
+            (
+                m.get("id"),
+                m.get("round_number"),
+                m.get("match_number"),
+                m.get("winner_id"),
+                m.get("score_a"),
+                m.get("score_b"),
+                m.get("status")
+            )
+            for m in sorted((matches or []), key=lambda x: str(x.get("id", 0)))
+        ]
+    }
+    encoded = json.dumps(state_payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.md5(encoded).hexdigest()
+
+def _read_cached_image(prefix: str, state_hash: str) -> Optional[BytesIO]:
+    """Lê a imagem em cache do disco se o hash de estado coincidir."""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        filename = f"{prefix}_{state_hash}.png"
+        filepath = os.path.join(CACHE_DIR, filename)
+        if os.path.exists(filepath):
+            with open(filepath, "rb") as f:
+                data = f.read()
+            if data and data.startswith(b"\x89PNG"):
+                buf = BytesIO(data)
+                buf.seek(0)
+                return buf
+    except Exception:
+        pass
+    return None
+
+def _save_cached_image(prefix: str, state_hash: str, image_bytes: bytes):
+    """Salva a nova imagem gerada no disco e remove versões obsoletas para economizar espaço."""
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        for fname in os.listdir(CACHE_DIR):
+            if fname.startswith(f"{prefix}_") and fname.endswith(".png"):
+                try:
+                    os.remove(os.path.join(CACHE_DIR, fname))
+                except Exception:
+                    pass
+        target_path = os.path.join(CACHE_DIR, f"{prefix}_{state_hash}.png")
+        with open(target_path, "wb") as f:
+            f.write(image_bytes)
+    except Exception:
+        pass
 
 class PodiumBuilder:
     """
@@ -14,14 +101,23 @@ class PodiumBuilder:
     """
 
     async def _get_avatar_data_uri(self, member: Optional[discord.Member], user_data: dict) -> str:
-        """Obtém o avatar do membro em base64 data URI ou fallback SVG sofisticado."""
-        import base64
+        """Obtém o avatar do membro em base64 data URI ou fallback SVG sofisticado com cache em memória."""
+        uid = getattr(member, "id", None) or user_data.get("user_id") or user_data.get("id")
+        cache_key = str(uid) if uid else None
+        if cache_key and cache_key in _AVATAR_CACHE:
+            return _AVATAR_CACHE[cache_key]
+
         try:
             if member:
                 avatar_asset = member.display_avatar.with_size(128)
                 avatar_bytes = await avatar_asset.read()
                 b64 = base64.b64encode(avatar_bytes).decode("utf-8")
-                return f"data:image/png;base64,{b64}"
+                res = f"data:image/png;base64,{b64}"
+                if cache_key:
+                    if len(_AVATAR_CACHE) > 500:
+                        _AVATAR_CACHE.clear()
+                    _AVATAR_CACHE[cache_key] = res
+                return res
         except Exception:
             pass
 
@@ -41,15 +137,20 @@ class PodiumBuilder:
         return f"data:image/svg+xml;base64,{b64_svg}"
 
     async def _get_guild_icon_data_uri(self, guild: discord.Guild) -> Optional[str]:
-        """Obtém o ícone do servidor em base64 data URI."""
-        import base64
+        """Obtém o ícone do servidor em base64 data URI com cache."""
         if not guild or not guild.icon:
             return None
+        gid = getattr(guild, "id", None)
+        if gid and gid in _GUILD_ICON_CACHE:
+            return _GUILD_ICON_CACHE[gid]
         try:
             icon_asset = guild.icon.with_size(128)
             icon_bytes = await icon_asset.read()
             b64 = base64.b64encode(icon_bytes).decode("utf-8")
-            return f"data:image/png;base64,{b64}"
+            res = f"data:image/png;base64,{b64}"
+            if gid:
+                _GUILD_ICON_CACHE[gid] = res
+            return res
         except Exception:
             return None
 
@@ -439,20 +540,34 @@ class PodiumBuilder:
     async def generate_podium(self, guild: discord.Guild, top_users: list, period_text: str = None) -> BytesIO:
         """
         Gera uma imagem moderna de pódio com os top 10 usuários (3 no pódio + 7 em lista)
-        via Playwright 1300x850.
+        via Playwright 1300x850 com carregamento paralelo e domcontentloaded.
         """
         from playwright.async_api import async_playwright
 
         guild_name = guild.name if guild else "Servidor BMIA"
-        guild_icon_uri = await self._get_guild_icon_data_uri(guild)
+        
+        # Carrega guild icon e avatares concorrentemente
+        top_list = top_users[:10]
+        avatar_tasks = []
+        for u in top_list:
+            uid = u.get("user_id", 0)
+            m = guild.get_member(uid) if guild else None
+            avatar_tasks.append(self._get_avatar_data_uri(m, u))
+
+        icon_task = self._get_guild_icon_data_uri(guild)
+        results = await asyncio.gather(icon_task, *avatar_tasks, return_exceptions=True)
+        
+        guild_icon_uri = results[0] if isinstance(results[0], (str, type(None))) else None
+        avatar_uris = results[1:]
 
         top_3 = []
         others = []
 
-        for i, user_data in enumerate(top_users[:10]):
+        for i, user_data in enumerate(top_list):
             uid = user_data.get("user_id", 0)
             member = guild.get_member(uid) if guild else None
-            avatar_uri = await self._get_avatar_data_uri(member, user_data)
+            raw_uri = avatar_uris[i] if i < len(avatar_uris) else None
+            avatar_uri = raw_uri if isinstance(raw_uri, str) else await self._get_avatar_data_uri(None, user_data)
             display_name = member.display_name if member else user_data.get("username", "Membro")
 
             item = {
@@ -482,7 +597,7 @@ class PodiumBuilder:
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
             )
             page = await browser.new_page(viewport={"width": 1300, "height": 850})
-            await page.set_content(html_code, wait_until="networkidle")
+            await page.set_content(html_code, wait_until="domcontentloaded")
             element = await page.query_selector('.card-container')
             if element:
                 screenshot_bytes = await element.screenshot(type="png", omit_background=True)
@@ -508,13 +623,22 @@ class BracketBuilder:
 
     async def _get_avatar_data_uri(self, member: Optional[discord.Member], user_data: dict) -> str:
         """Obtém o avatar do membro em base64 data URI ou gera um fallback SVG sofisticado."""
-        import base64
+        uid = getattr(member, "id", None) or user_data.get("user_id") or user_data.get("id")
+        cache_key = str(uid) if uid else None
+        if cache_key and cache_key in _AVATAR_CACHE:
+            return _AVATAR_CACHE[cache_key]
+
         try:
             if member:
                 avatar_asset = member.display_avatar.with_size(128)
                 avatar_bytes = await avatar_asset.read()
                 b64 = base64.b64encode(avatar_bytes).decode("utf-8")
-                return f"data:image/png;base64,{b64}"
+                res = f"data:image/png;base64,{b64}"
+                if cache_key:
+                    if len(_AVATAR_CACHE) > 500:
+                        _AVATAR_CACHE.clear()
+                    _AVATAR_CACHE[cache_key] = res
+                return res
         except Exception:
             pass
 
@@ -536,14 +660,19 @@ class BracketBuilder:
 
     async def _get_guild_icon_data_uri(self, guild: discord.Guild) -> Optional[str]:
         """Obtém o ícone do servidor em base64 data URI."""
-        import base64
-        if not guild.icon:
+        if not guild or not guild.icon:
             return None
+        gid = getattr(guild, "id", None)
+        if gid and gid in _GUILD_ICON_CACHE:
+            return _GUILD_ICON_CACHE[gid]
         try:
             icon_asset = guild.icon.with_size(128)
             icon_bytes = await icon_asset.read()
             b64 = base64.b64encode(icon_bytes).decode("utf-8")
-            return f"data:image/png;base64,{b64}"
+            res = f"data:image/png;base64,{b64}"
+            if gid:
+                _GUILD_ICON_CACHE[gid] = res
+            return res
         except Exception:
             return None
 
@@ -1547,11 +1676,22 @@ class BracketBuilder:
         guild: discord.Guild,
         tournament: dict,
         participants: List[dict],
-        matches: Optional[List[dict]] = None
+        matches: Optional[List[dict]] = None,
+        use_cache: bool = True
     ) -> BytesIO:
         """
         Renderiza o chaveamento do torneio em 1920x1080 com HTML/CSS de altíssima fidelidade.
+        Utiliza cache local baseado no hash determinístico do torneio para resposta ultra-rápida.
         """
+        t_id = tournament.get("id", 0)
+        state_hash = _get_tournament_state_hash(tournament, participants, matches)
+        prefix = f"bracket_{t_id}"
+
+        if use_cache:
+            cached_buf = _read_cached_image(prefix, state_hash)
+            if cached_buf is not None:
+                return cached_buf
+
         from playwright.async_api import async_playwright
 
         fmt_raw = str(tournament.get("format", "1v1")).lower().strip()
@@ -1576,25 +1716,37 @@ class BracketBuilder:
             else:
                 bracket_mode = 8
 
-        # Agrupa e carrega avatares em base64 data URI
+        # Carrega avatares e guild icon de forma totalmente concorrente (paralelo)
+        avatar_tasks = []
+        for p in participants:
+            m = guild.get_member(p.get("user_id", 0)) if guild else None
+            avatar_tasks.append(self._get_avatar_data_uri(m, p))
+
+        icon_task = self._get_guild_icon_data_uri(guild)
+        gather_results = await asyncio.gather(icon_task, *avatar_tasks, return_exceptions=True)
+        guild_icon_uri = gather_results[0] if isinstance(gather_results[0], (str, type(None))) else None
+        avatar_uris = gather_results[1:]
+
+        participant_map = {}
+        for idx, p in enumerate(participants):
+            uid = p.get("user_id", 0)
+            m = guild.get_member(uid) if guild else None
+            raw_name = m.display_name if (m and hasattr(m, "display_name") and not str(type(m.display_name)).endswith("MagicMock'>")) else (p.get("username") or "Jogador")
+            name = str(raw_name)
+            raw_uri = avatar_uris[idx] if idx < len(avatar_uris) else None
+            av_uri = raw_uri if isinstance(raw_uri, str) else await self._get_avatar_data_uri(None, p)
+            participant_map[uid] = {"name": name, "avatar_uri": av_uri, "user_id": uid}
+
+        # Agrupa os participantes em equipes
         teams_data = []
         for i in range(0, len(participants), team_size):
             chunk = participants[i:i + team_size]
-            team_members = []
-            for p in chunk:
-                m = guild.get_member(p.get("user_id", 0))
-                raw_name = m.display_name if (m and hasattr(m, "display_name") and not str(type(m.display_name)).endswith("MagicMock'>")) else (p.get("username") or "Jogador")
-                name = str(raw_name)
-                av_uri = await self._get_avatar_data_uri(m, p)
-                team_members.append({"name": name, "avatar_uri": av_uri, "user_id": p.get("user_id")})
-
+            team_members = [participant_map[p.get("user_id", 0)] for p in chunk if p.get("user_id", 0) in participant_map]
             teams_data.append(team_members)
 
         # Preenche com slots vazios
         while len(teams_data) < bracket_mode:
             teams_data.append([])
-
-        guild_icon_uri = await self._get_guild_icon_data_uri(guild)
 
         # Gera o HTML
         html_code = self._build_html_template(
@@ -1614,10 +1766,11 @@ class BracketBuilder:
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
             )
             page = await browser.new_page(viewport={"width": 1920, "height": 1080})
-            await page.set_content(html_code, wait_until="networkidle")
+            await page.set_content(html_code, wait_until="domcontentloaded")
             screenshot_bytes = await page.screenshot(type="png", full_page=False)
             await browser.close()
 
+        _save_cached_image(prefix, state_hash, screenshot_bytes)
         buffer = BytesIO(screenshot_bytes)
         buffer.seek(0)
         return buffer
@@ -1632,13 +1785,22 @@ class LeagueTableBuilder:
 
     async def _get_avatar_data_uri(self, member: Optional[discord.Member], user_data: dict) -> str:
         """Obtém o avatar do membro em base64 data URI ou fallback SVG."""
-        import base64
+        uid = getattr(member, "id", None) or user_data.get("user_id") or user_data.get("id")
+        cache_key = str(uid) if uid else None
+        if cache_key and cache_key in _AVATAR_CACHE:
+            return _AVATAR_CACHE[cache_key]
+
         try:
             if member:
                 avatar_asset = member.display_avatar.with_size(128)
                 avatar_bytes = await avatar_asset.read()
                 b64 = base64.b64encode(avatar_bytes).decode("utf-8")
-                return f"data:image/png;base64,{b64}"
+                res = f"data:image/png;base64,{b64}"
+                if cache_key:
+                    if len(_AVATAR_CACHE) > 500:
+                        _AVATAR_CACHE.clear()
+                    _AVATAR_CACHE[cache_key] = res
+                return res
         except Exception:
             pass
 
@@ -1658,14 +1820,19 @@ class LeagueTableBuilder:
         return f"data:image/svg+xml;base64,{b64_svg}"
 
     async def _get_guild_icon_data_uri(self, guild: discord.Guild) -> Optional[str]:
-        import base64
-        if not guild.icon:
+        if not guild or not guild.icon:
             return None
+        gid = getattr(guild, "id", None)
+        if gid and gid in _GUILD_ICON_CACHE:
+            return _GUILD_ICON_CACHE[gid]
         try:
             icon_asset = guild.icon.with_size(128)
             icon_bytes = await icon_asset.read()
             b64 = base64.b64encode(icon_bytes).decode("utf-8")
-            return f"data:image/png;base64,{b64}"
+            res = f"data:image/png;base64,{b64}"
+            if gid:
+                _GUILD_ICON_CACHE[gid] = res
+            return res
         except Exception:
             return None
 
@@ -2152,19 +2319,41 @@ class LeagueTableBuilder:
         guild: discord.Guild,
         tournament: dict,
         standings: List[dict],
-        matches: Optional[List[dict]] = None
+        matches: Optional[List[dict]] = None,
+        use_cache: bool = True
     ) -> BytesIO:
-        """Renderiza a tabela de classificação em imagem 1920x1080 com Playwright."""
+        """
+        Renderiza a tabela de classificação em imagem 1920x1080 com Playwright e carregamento paralelo.
+        Utiliza cache local baseado no hash determinístico da liga para resposta instantânea.
+        """
+        t_id = tournament.get("id", 0)
+        state_hash = _get_league_state_hash(tournament, standings, matches)
+        prefix = f"table_{t_id}"
+
+        if use_cache:
+            cached_buf = _read_cached_image(prefix, state_hash)
+            if cached_buf is not None:
+                return cached_buf
+
         from playwright.async_api import async_playwright
 
-        # Enriquece os dados de avatares para cada participante na classificação
+        # Enriquece os dados de avatares para cada participante na classificação de forma concorrente
+        member_tasks = []
+        member_refs = []
         for s in standings:
             for m_data in s.get("members", []):
                 uid = m_data.get("user_id", 0)
-                m = guild.get_member(uid)
-                m_data["avatar_uri"] = await self._get_avatar_data_uri(m, m_data)
+                m = guild.get_member(uid) if guild else None
+                member_tasks.append(self._get_avatar_data_uri(m, m_data))
+                member_refs.append(m_data)
 
-        guild_icon_uri = await self._get_guild_icon_data_uri(guild)
+        icon_task = self._get_guild_icon_data_uri(guild)
+        gather_results = await asyncio.gather(icon_task, *member_tasks, return_exceptions=True)
+        guild_icon_uri = gather_results[0] if isinstance(gather_results[0], (str, type(None))) else None
+        avatar_uris = gather_results[1:]
+
+        for m_data, uri in zip(member_refs, avatar_uris):
+            m_data["avatar_uri"] = uri if isinstance(uri, str) else ""
 
         html_code = self._build_html_template(
             tournament=tournament,
@@ -2179,10 +2368,11 @@ class LeagueTableBuilder:
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
             )
             page = await browser.new_page(viewport={"width": 1920, "height": 1080})
-            await page.set_content(html_code, wait_until="networkidle")
+            await page.set_content(html_code, wait_until="domcontentloaded")
             screenshot_bytes = await page.screenshot(type="png", full_page=False)
             await browser.close()
 
+        _save_cached_image(prefix, state_hash, screenshot_bytes)
         buffer = BytesIO(screenshot_bytes)
         buffer.seek(0)
         return buffer
@@ -2196,14 +2386,23 @@ class RankCardBuilder:
     """
 
     async def _get_avatar_data_uri(self, member: Optional[discord.Member], username: str = "User") -> str:
-        """Obtém o avatar do membro em base64 data URI ou fallback SVG."""
-        import base64
+        """Obtém o avatar do membro em base64 data URI ou fallback SVG com cache."""
+        uid = getattr(member, "id", None)
+        cache_key = str(uid) if uid else None
+        if cache_key and cache_key in _AVATAR_CACHE:
+            return _AVATAR_CACHE[cache_key]
+
         try:
             if member:
                 avatar_asset = member.display_avatar.with_size(256)
                 avatar_bytes = await avatar_asset.read()
                 b64 = base64.b64encode(avatar_bytes).decode("utf-8")
-                return f"data:image/png;base64,{b64}"
+                res = f"data:image/png;base64,{b64}"
+                if cache_key:
+                    if len(_AVATAR_CACHE) > 500:
+                        _AVATAR_CACHE.clear()
+                    _AVATAR_CACHE[cache_key] = res
+                return res
         except Exception:
             pass
 
@@ -2548,7 +2747,7 @@ class RankCardBuilder:
                 args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
             )
             page = await browser.new_page(viewport={"width": 1060, "height": 300})
-            await page.set_content(html_code, wait_until="networkidle")
+            await page.set_content(html_code, wait_until="domcontentloaded")
             element = await page.query_selector('.card-container')
             if element:
                 screenshot_bytes = await element.screenshot(type="png", omit_background=True)

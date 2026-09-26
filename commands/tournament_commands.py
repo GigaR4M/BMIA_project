@@ -3,7 +3,7 @@
 import discord
 from discord import app_commands
 from database import Database
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Dict
 import logging
 import json
 from datetime import datetime, timedelta, timezone
@@ -295,10 +295,10 @@ class TournamentCreationSetupView(discord.ui.View):
 
 
 class MatchScoreModal(discord.ui.Modal):
-    """Modal interativo para submissão e registro de placar de partida."""
+    """Modal interativo para submissão e registro de placar de partida (1v1, 2v2, Liga, Mata-Mata)."""
 
     def __init__(self, db: Database, tournament_id: int, match_number: int, team_a_label: str, team_b_label: str):
-        super().__init__(title=f"Lançar Placar — Jogo #{match_number}")
+        super().__init__(title=f"Lançar Placar — Jogo #{match_number}"[:45])
         self.db = db
         self.tournament_id = tournament_id
         self.match_number = match_number
@@ -343,6 +343,232 @@ class MatchScoreModal(discord.ui.Modal):
             color=discord.Color.green()
         )
         await interaction.followup.send(embed=embed)
+
+
+class RaceScoreModal(discord.ui.Modal):
+    """Modal interativo para submissão e registro de classificação em Corridas / FFA."""
+
+    def __init__(self, db: Database, tournament_id: int, match_number: int, match_name: str, participants: List[Dict[str, Any]]):
+        super().__init__(title=f"Classificação: {match_name}"[:45])
+        self.db = db
+        self.tournament_id = tournament_id
+        self.match_number = match_number
+        self.participants = participants
+
+        self.pos_1 = discord.ui.TextInput(
+            label="🥇 1º Lugar (Piloto Vencedor)",
+            placeholder="Digite o @membro ou nome do piloto",
+            max_length=60,
+            required=True
+        )
+        self.pos_2 = discord.ui.TextInput(
+            label="🥈 2º Lugar",
+            placeholder="Digite o @membro ou nome do piloto",
+            max_length=60,
+            required=True
+        )
+        self.pos_3 = discord.ui.TextInput(
+            label="🥉 3º Lugar (Opcional)",
+            placeholder="Digite o @membro ou nome do piloto",
+            max_length=60,
+            required=False
+        )
+        self.pos_4 = discord.ui.TextInput(
+            label="4º Lugar (Opcional)",
+            placeholder="Digite o @membro ou nome do piloto",
+            max_length=60,
+            required=False
+        )
+        self.add_item(self.pos_1)
+        self.add_item(self.pos_2)
+        self.add_item(self.pos_3)
+        self.add_item(self.pos_4)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            import re
+            valid_inputs = [
+                (1, "1º", self.pos_1.value.strip()),
+                (2, "2º", self.pos_2.value.strip()),
+                (3, "3º", self.pos_3.value.strip() if self.pos_3.value else None),
+                (4, "4º", self.pos_4.value.strip() if self.pos_4.value else None),
+            ]
+            valid_inputs = [item for item in valid_inputs if item[2]]
+
+            points_dist = {1: 15, 2: 12, 3: 10, 4: 8, 5: 6, 6: 5, 7: 4, 8: 3}
+            p_map = {p["user_id"]: p for p in self.participants}
+            results_list = []
+
+            for pos_num, pos_label, raw_val in valid_inputs:
+                match_id = re.search(r'\d+', raw_val)
+                target_uid = None
+                display_name = raw_val
+
+                if match_id and int(match_id.group()) in p_map:
+                    target_uid = int(match_id.group())
+                else:
+                    raw_lower = str(raw_val).lower().replace("@", "").strip()
+                    for uid, p_data in p_map.items():
+                        p_username = str(p_data.get("username") or "").lower()
+                        m = interaction.guild.get_member(uid) if interaction.guild else None
+                        m_name = str(m.display_name).lower() if (m and hasattr(m, "display_name") and not str(type(m.display_name)).endswith("MagicMock'>")) else ""
+                        if (raw_lower and raw_lower in p_username) or (m_name and raw_lower in m_name) or (p_username and p_username in raw_lower):
+                            target_uid = uid
+                            break
+
+                if target_uid:
+                    m = interaction.guild.get_member(target_uid) if interaction.guild else None
+                    if m and hasattr(m, "mention") and not str(type(m.mention)).endswith("MagicMock'>"):
+                        display_name = m.mention
+                    else:
+                        display_name = p_map.get(target_uid, {}).get("username", raw_val)
+
+                pts = points_dist.get(pos_num, 5)
+                results_list.append({
+                    "position": pos_num,
+                    "label": pos_label,
+                    "name": display_name,
+                    "user_id": target_uid,
+                    "points": pts
+                })
+
+            res_dict = {
+                "results": results_list,
+                "recorded_by": interaction.user.id
+            }
+
+            async with self.db.pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE tournament_matches
+                    SET status = 'completed', scores_json = $3, completed_at = NOW()
+                    WHERE tournament_id = $1 AND match_number = $2
+                """, self.tournament_id, self.match_number, json.dumps(res_dict))
+
+            embed = discord.Embed(
+                title=f"🏁 Resultado Registrado — Bateria / Corrida #{self.match_number}",
+                description="Classificação oficial gravada com sucesso!\n",
+                color=discord.Color.green()
+            )
+            medals = ["🥇", "🥈", "🥉", "4️⃣"]
+            lines = []
+            for r in results_list:
+                m_icon = medals[r["position"] - 1] if r["position"] <= len(medals) else f"#{r['position']}"
+                lines.append(f"{m_icon} **{r['position']}º Lugar:** {r['name']} *(+{r['points']} pts)*")
+            embed.add_field(name="🏎️ Posições de Chegada", value="\n".join(lines), inline=False)
+            embed.set_footer(text=f"Torneio #{self.tournament_id} • Registrado por {interaction.user.display_name}")
+
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            logger.error(f"Erro ao registrar resultado de corrida: {e}")
+            await interaction.followup.send("❌ Erro ao registrar resultado da corrida.")
+
+
+class TournamentMatchSelect(discord.ui.Select):
+    """Menu suspenso para escolher qual partida/bateria deseja lançar o resultado."""
+
+    def __init__(self, db: Database, tournament: dict, matches: List[dict], participants: List[dict]):
+        self.db = db
+        self.tournament = tournament
+        self.matches = matches
+        self.participants = participants
+        p_map = {p["user_id"]: p for p in participants}
+
+        t_type = (tournament.get("tournament_type") or "bracket").lower()
+        is_ffa = t_type in ("ffa_race", "ffa", "race")
+
+        options = []
+        for m in matches[:25]:
+            m_num = m["match_number"]
+            st = "✅" if m.get("status") == "completed" else "⏳"
+            r_name = m.get("round_name") or f"Jogo #{m_num}"
+
+            if is_ffa or m.get("bracket_group") in ("ffa_lobby", "ffa_heat"):
+                desc = f"{len(m.get('team_a_ids') or [])} pilotos no grid"
+                label = f"{st} Jogo #{m_num}: {r_name[:35]}"
+            else:
+                ta_ids = m.get("team_a_ids") or []
+                tb_ids = m.get("team_b_ids") or []
+                ta_n = p_map.get(ta_ids[0], {}).get("username", "Time A") if ta_ids else "A definir"
+                tb_n = p_map.get(tb_ids[0], {}).get("username", "Time B") if tb_ids else "A definir"
+                label = f"{st} #{m_num}: {ta_n[:12]} vs {tb_n[:12]}"
+                desc = f"{r_name} ({st} {'Concluído' if m.get('status') == 'completed' else 'Pendente'})"
+
+            options.append(discord.SelectOption(
+                label=label[:100],
+                value=str(m_num),
+                description=desc[:100],
+                emoji="🎮" if not is_ffa else "🏎️"
+            ))
+
+        super().__init__(
+            placeholder="Selecione o Jogo / Corrida para abrir o formulário...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="tourney_select_match_to_score"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        m_num = int(self.values[0])
+        target_match = next((m for m in self.matches if m["match_number"] == m_num), None)
+        if not target_match:
+            await interaction.response.send_message("❌ Partida não encontrada.", ephemeral=True)
+            return
+
+        t_type = (self.tournament.get("tournament_type") or "bracket").lower()
+        if t_type in ("ffa_race", "ffa", "race") or target_match.get("bracket_group") in ("ffa_lobby", "ffa_heat"):
+            modal = RaceScoreModal(
+                db=self.db,
+                tournament_id=self.tournament["id"],
+                match_number=m_num,
+                match_name=target_match.get("round_name") or f"Corrida #{m_num}",
+                participants=self.participants
+            )
+            await interaction.response.send_modal(modal)
+        else:
+            ta_ids = target_match.get("team_a_ids") or []
+            tb_ids = target_match.get("team_b_ids") or []
+            ta_str = "Time A"
+            tb_str = "Time B"
+            if ta_ids:
+                m_a = interaction.guild.get_member(ta_ids[0])
+                ta_str = m_a.display_name if m_a else f"Jogador #{ta_ids[0]}"
+            if tb_ids:
+                m_b = interaction.guild.get_member(tb_ids[0])
+                tb_str = m_b.display_name if m_b else f"Jogador #{tb_ids[0]}"
+
+            modal = MatchScoreModal(self.db, self.tournament["id"], m_num, ta_str, tb_str)
+            await interaction.response.send_modal(modal)
+
+
+class TournamentScoreSelectView(discord.ui.View):
+    """View que renderiza o menu de seleção de partidas para lançar resultado."""
+
+    def __init__(self, db: Database, tournament: dict, matches: List[dict], participants: List[dict]):
+        super().__init__(timeout=180)
+        self.add_item(TournamentMatchSelect(db, tournament, matches, participants))
+
+
+class TournamentRoundsView(discord.ui.View):
+    """View anexada ao calendário de rodadas com botão para lançar resultados."""
+
+    def __init__(self, db: Database, tournament: dict, matches: List[dict], participants: List[dict]):
+        super().__init__(timeout=300)
+        self.db = db
+        self.tournament = tournament
+        self.matches = matches
+        self.participants = participants
+
+    @discord.ui.button(label="Lançar Resultado", style=discord.ButtonStyle.primary, emoji="📝", custom_id="tourney_rounds_score_btn")
+    async def btn_score(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title=f"📝 Lançar Resultado: {self.tournament['name']}",
+            description="Selecione o confronto/corrida para abrir o formulário:",
+            color=discord.Color.gold()
+        )
+        view = TournamentScoreSelectView(self.db, self.tournament, self.matches, self.participants)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class TournamentRegistrationView(discord.ui.View):
@@ -660,29 +886,73 @@ class TournamentCommands(app_commands.Group):
             view = TournamentCreationSetupView(self.db, self.points_manager)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @app_commands.command(name="placar_modal", description="Abre formulário (Modal) para lançar placar de partida")
-    @app_commands.describe(id="ID do torneio", jogo="Número da partida")
+    @app_commands.command(name="resultado", description="Abre o formulário (Modal) para lançar placar ou classificação da partida")
+    @app_commands.describe(id="ID do torneio (opcional, padrão: torneio ativo)", jogo="Número da partida/bateria (opcional)")
     @app_commands.checks.has_permissions(manage_events=True)
-    async def placar_modal_cmd(self, interaction: discord.Interaction, id: int, jogo: int):
-        matches = await self.db.get_tournament_matches(id)
-        target = next((m for m in matches if m["match_number"] == jogo), None)
-        if not target:
-            await interaction.response.send_message(f"❌ Partida #{jogo} não encontrada.", ephemeral=True)
+    async def resultado_cmd(self, interaction: discord.Interaction, id: Optional[int] = None, jogo: Optional[int] = None):
+        if id is None:
+            active = await self.db.get_active_tournaments(interaction.guild.id)
+            if active:
+                id = active[0]["id"]
+            else:
+                recent = await self.db.get_recent_tournaments(interaction.guild.id, limit=1)
+                if recent:
+                    id = recent[0]["id"]
+                else:
+                    await interaction.response.send_message("❌ Nenhum torneio encontrado neste servidor.", ephemeral=True)
+                    return
+
+        tourney = await self.db.get_tournament(id)
+        if not tourney or tourney["guild_id"] != interaction.guild.id:
+            await interaction.response.send_message("❌ Torneio não encontrado.", ephemeral=True)
             return
 
-        ta_ids = target.get("team_a_ids") or []
-        tb_ids = target.get("team_b_ids") or []
-        ta_str = "Time A"
-        tb_str = "Time B"
-        if ta_ids:
-            ta_m = interaction.guild.get_member(ta_ids[0])
-            ta_str = ta_m.display_name if ta_m else f"ID:{ta_ids[0]}"
-        if tb_ids:
-            tb_m = interaction.guild.get_member(tb_ids[0])
-            tb_str = tb_m.display_name if tb_m else f"ID:{tb_ids[0]}"
+        matches = await self.db.get_tournament_matches(id)
+        if not matches:
+            await interaction.response.send_message("⚠️ As partidas ainda não foram geradas. Use `/torneio sortear` primeiro.", ephemeral=True)
+            return
 
-        modal = MatchScoreModal(self.db, id, jogo, ta_str, tb_str)
-        await interaction.response.send_modal(modal)
+        participants = await self.db.get_tournament_participants(id)
+        t_type = (tourney.get("tournament_type") or "bracket").lower()
+        is_ffa = t_type in ("ffa_race", "ffa", "race")
+
+        if jogo is not None:
+            target = next((m for m in matches if m["match_number"] == jogo), None)
+            if not target:
+                await interaction.response.send_message(f"❌ Partida #{jogo} não encontrada.", ephemeral=True)
+                return
+
+            if is_ffa or target.get("bracket_group") in ("ffa_lobby", "ffa_heat"):
+                modal = RaceScoreModal(
+                    db=self.db,
+                    tournament_id=id,
+                    match_number=jogo,
+                    match_name=target.get("round_name") or f"Corrida #{jogo}",
+                    participants=participants
+                )
+                await interaction.response.send_modal(modal)
+            else:
+                ta_ids = target.get("team_a_ids") or []
+                tb_ids = target.get("team_b_ids") or []
+                ta_str = "Time A"
+                tb_str = "Time B"
+                if ta_ids:
+                    m_a = interaction.guild.get_member(ta_ids[0])
+                    ta_str = m_a.display_name if m_a else f"Jogador #{ta_ids[0]}"
+                if tb_ids:
+                    m_b = interaction.guild.get_member(tb_ids[0])
+                    tb_str = m_b.display_name if m_b else f"Jogador #{tb_ids[0]}"
+
+                modal = MatchScoreModal(self.db, id, jogo, ta_str, tb_str)
+                await interaction.response.send_modal(modal)
+        else:
+            embed = discord.Embed(
+                title=f"📝 Lançar Resultado: {tourney['name']}",
+                description="Selecione no menu abaixo qual **jogo ou corrida** você deseja registrar o resultado:",
+                color=discord.Color.gold()
+            )
+            view = TournamentScoreSelectView(self.db, tourney, matches, participants)
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="participante_adicionar", description="[ADM] Inscreve manualmente um membro no torneio")
     @app_commands.describe(id="ID do torneio", membro="Membro a ser inscrito", forcar="Ignorar limite de vagas")
@@ -1678,8 +1948,9 @@ class TournamentCommands(app_commands.Group):
                     inline=False
                 )
 
-            embed.set_footer(text=f"Torneio #{id} • Use /torneio partida para registrar os resultados")
-            await interaction.followup.send(embed=embed)
+            embed.set_footer(text=f"Torneio #{id} • Clique no botão abaixo ou use /torneio resultado para registrar resultados")
+            view = TournamentRoundsView(self.db, tourney, matches, participants)
+            await interaction.followup.send(embed=embed, view=view)
         except Exception as e:
             logger.error(f"Erro ao listar rodadas do torneio {id}: {e}")
             await interaction.followup.send("❌ Ocorreu um erro ao consultar as rodadas.")

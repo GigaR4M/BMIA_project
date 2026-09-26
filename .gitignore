@@ -46,5 +46,6 @@ restore_*.sql
 *.txt.bak
 _tracked_files.txt
 
-# Logs
+# Logs e Caches Locais
 *.log
+cache/

@@ -311,6 +311,36 @@ class TestBracketBuilder:
         assert buf is not None
         assert buf.getvalue().startswith(b"\x89PNG")
 
+    @pytest.mark.asyncio
+    async def test_bracket_cache_hit(self):
+        from utils.image_generator import BracketBuilder
+        builder = BracketBuilder()
+        guild = MagicMock()
+        guild.icon = None
+        guild.get_member.return_value = None
+
+        tournament = {
+            "id": 99,
+            "name": "Cache Test Tournament",
+            "game_name": "Rocket League",
+            "format": "1v1",
+            "max_participants": 2,
+            "prize": "100 pts",
+            "status": "open",
+            "winner_id": None
+        }
+        participants = [
+            {"user_id": 101, "username": "Gideon"},
+            {"user_id": 102, "username": "Henrique"}
+        ]
+
+        # Primeira chamada: gera e salva em cache
+        buf1 = await builder.generate_bracket(guild, tournament, participants)
+        # Segunda chamada: lê do cache instantaneamente
+        buf2 = await builder.generate_bracket(guild, tournament, participants)
+        assert buf2 is not None
+        assert buf2.getvalue() == buf1.getvalue()
+
 
     @pytest.mark.asyncio
     async def test_view_join(self, mock_db):
@@ -633,6 +663,54 @@ class TestTournamentAdminAndModals:
             score_a=2,
             score_b=1
         )
+
+    @pytest.mark.asyncio
+    async def test_race_score_modal(self, mock_db):
+        from commands.tournament_commands import RaceScoreModal
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock()
+        mock_db.pool = MagicMock()
+        mock_db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        participants = [
+            {"user_id": 101, "username": "GigaR4M"},
+            {"user_id": 102, "username": "Gigahoo"}
+        ]
+        modal = RaceScoreModal(db=mock_db, tournament_id=1, match_number=1, match_name="Corrida 1", participants=participants)
+        modal.pos_1._value = "@GigaR4M"
+        modal.pos_2._value = "Gigahoo"
+
+        interaction = MagicMock()
+        interaction.user.id = 999
+        interaction.user.display_name = "Admin"
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        await modal.on_submit(interaction)
+
+        mock_conn.execute.assert_awaited_once()
+        interaction.followup.send.assert_awaited_once()
+        embed = interaction.followup.send.call_args[1]["embed"]
+        assert "Resultado Registrado" in embed.title
+
+    @pytest.mark.asyncio
+    async def test_resultado_cmd(self, mock_db):
+        mock_db.get_tournament_matches.return_value = [
+            {"match_number": 1, "round_name": "Final", "team_a_ids": [101], "team_b_ids": [102], "status": "pending"}
+        ]
+        mock_db.get_tournament_participants.return_value = [
+            {"user_id": 101, "username": "GigaR4M"},
+            {"user_id": 102, "username": "Gigahoo"}
+        ]
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.send_modal = AsyncMock()
+        interaction.response.send_message = AsyncMock()
+
+        # Com jogo especificado -> abre o modal direto
+        await cmd.resultado_cmd.callback(cmd, interaction, id=1, jogo=1)
+        interaction.response.send_modal.assert_awaited_once()
 
 
 class TestExpandedBracketGenerators:
