@@ -12,40 +12,48 @@ from utils.image_generator import BracketBuilder, LeagueTableBuilder
 logger = logging.getLogger(__name__)
 
 
+BRT_TZ = timezone(timedelta(hours=-3))
+
+
 def _parse_event_datetime(dt_str: Optional[str]) -> Optional[datetime]:
-    """Tenta converter uma string de data/hora fornecida pelo usuário em datetime timezone-aware UTC."""
+    """Tenta converter uma string de data/hora no fuso de Brasília (UTC-3) em datetime timezone-aware UTC."""
     if not dt_str:
         return None
     dt_str = dt_str.strip()
-    now = datetime.now(timezone.utc)
+    now_brt = datetime.now(BRT_TZ)
+    now_utc = datetime.now(timezone.utc)
 
     # Formatos completos com data e hora
     for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M", "%d-%m-%Y %H:%M"):
         try:
             dt = datetime.strptime(dt_str, fmt)
-            return dt.replace(tzinfo=timezone.utc)
+            dt_brt = dt.replace(tzinfo=BRT_TZ)
+            dt_utc = dt_brt.astimezone(timezone.utc)
+            if dt_utc < now_utc:
+                return None
+            return dt_utc
         except ValueError:
             pass
 
     # Formato DD/MM HH:MM (ex: "28/09 20:00")
     for fmt_suffix in ("%d/%m %H:%M", "%d-%m %H:%M"):
         try:
-            full_str = f"{now.year} {dt_str}"
+            full_str = f"{now_brt.year} {dt_str}"
             dt = datetime.strptime(full_str, f"%Y {fmt_suffix}")
-            dt = dt.replace(tzinfo=timezone.utc)
-            if dt < now:
-                dt = dt.replace(year=now.year + 1)
-            return dt
+            dt_brt = dt.replace(tzinfo=BRT_TZ)
+            if dt_brt < now_brt:
+                dt_brt = dt_brt.replace(year=now_brt.year + 1)
+            return dt_brt.astimezone(timezone.utc)
         except ValueError:
             pass
 
     # Formato apenas horário HH:MM (ex: "20:00")
     try:
         dt = datetime.strptime(dt_str, "%H:%M")
-        combined = now.replace(hour=dt.hour, minute=dt.minute, second=0, microsecond=0)
-        if combined < now:
-            combined += timedelta(days=1)
-        return combined
+        combined_brt = now_brt.replace(hour=dt.hour, minute=dt.minute, second=0, microsecond=0)
+        if combined_brt <= now_brt:
+            combined_brt += timedelta(days=1)
+        return combined_brt.astimezone(timezone.utc)
     except ValueError:
         pass
 
@@ -1417,16 +1425,41 @@ class TournamentCommands(app_commands.Group):
                     color=discord.Color.green()
                 )
 
+                p_map = {p["user_id"]: p for p in participants}
+                def get_p_name(uid):
+                    m = interaction.guild.get_member(uid)
+                    if m:
+                        return m.display_name
+                    if uid in p_map:
+                        return p_map[uid].get("username") or f"User_{uid}"
+                    if uid < 0:
+                        return f"Bot #{abs(uid)}"
+                    return f"<@{uid}>"
+
                 r1_matches = rounds_map.get(1, [])
                 if r1_matches:
                     lines = []
                     for m in r1_matches:
-                        ta_names = [interaction.guild.get_member(uid).display_name if interaction.guild.get_member(uid) else f"<@{uid}>" for uid in (m.get("team_a_ids") or [])]
-                        tb_names = [interaction.guild.get_member(uid).display_name if interaction.guild.get_member(uid) else f"<@{uid}>" for uid in (m.get("team_b_ids") or [])]
+                        ta_names = [get_p_name(uid) for uid in (m.get("team_a_ids") or [])]
+                        tb_names = [get_p_name(uid) for uid in (m.get("team_b_ids") or [])]
                         lines.append(f"⚔️ **Jogo #{m['match_number']}:** {' & '.join(ta_names)} **vs** {' & '.join(tb_names)}")
                     embed.add_field(name="📅 Confrontos da Rodada 1", value="\n".join(lines), inline=False)
 
                 embed.set_footer(text=f"Use /torneio tabela id:{id} para ver a classificação ou /torneio rodadas para a lista completa.")
+                await interaction.followup.send(embed=embed)
+            elif t_type in ("ffa_race", "ffa", "race"):
+                embed = discord.Embed(
+                    title=f"🎲 Sorteio do Grid: {tourney['name']}",
+                    description="🏁 Formato **FFA & Corrida (Lobby / Grid)**\nTodos os pilotos foram ordenados e posicionados no grid!",
+                    color=discord.Color.green()
+                )
+                lines = []
+                for idx, p in enumerate(participants, 1):
+                    m = interaction.guild.get_member(p["user_id"])
+                    name = m.display_name if m else (p.get("username") or f"Bot #{abs(p['user_id'])}")
+                    lines.append(f"`#{idx:02d}` **{name}**")
+                embed.add_field(name="🏎️ Grid de Largada / Pilotos", value="\n".join(lines), inline=False)
+                embed.set_footer(text=f"Torneio #{id} • Use /torneio rodadas id:{id} para visualizar as corridas.")
                 await interaction.followup.send(embed=embed)
             else:
                 embed = discord.Embed(
@@ -1442,7 +1475,7 @@ class TournamentCommands(app_commands.Group):
                         duo_names = []
                         for p in duo:
                             m = interaction.guild.get_member(p["user_id"])
-                            duo_names.append(m.mention if m else (p.get("username") or f"<@{p['user_id']}>"))
+                            duo_names.append(m.display_name if m else (p.get("username") or f"Bot #{abs(p['user_id'])}"))
                         duo_str = " & ".join(duo_names)
                         duos_lines.append(f"⚔️ **Dupla #{(i // 2) + 1}:** {duo_str}")
                     embed.add_field(name="👥 Duplas Sorteadas", value="\n".join(duos_lines) if duos_lines else "Nenhum participante", inline=False)
@@ -1450,8 +1483,8 @@ class TournamentCommands(app_commands.Group):
                     lines = []
                     for idx, p in enumerate(participants, 1):
                         m = interaction.guild.get_member(p["user_id"])
-                        name = m.mention if m else (p.get("username") or f"<@{p['user_id']}>")
-                        lines.append(f"`#{idx:02d}` {name}")
+                        name = m.display_name if m else (p.get("username") or f"Bot #{abs(p['user_id'])}")
+                        lines.append(f"`#{idx:02d}` **{name}**")
                     embed.add_field(name="📋 Ordem dos Seeds / Chaves", value="\n".join(lines), inline=False)
 
                 embed.set_footer(text=f"Use /torneio chaveamento id:{id} para visualizar a imagem oficial do chaveamento")
@@ -1594,24 +1627,53 @@ class TournamentCommands(app_commands.Group):
 
             selected_rounds = [rodada] if (rodada and rodada in rounds_map) else sorted(rounds_map.keys())
 
+            participants = await self.db.get_tournament_participants(id)
+            p_map = {p["user_id"]: p for p in participants}
+
+            def get_p_name(uid):
+                m = interaction.guild.get_member(uid)
+                if m:
+                    return m.display_name
+                if uid in p_map:
+                    return p_map[uid].get("username") or f"User_{uid}"
+                if uid < 0:
+                    return f"Bot #{abs(uid)}"
+                return f"<@{uid}>"
+
+            t_type = (tourney.get("tournament_type") or "bracket").lower()
+            is_ffa = t_type in ("ffa_race", "ffa", "race")
+
             for r_num in selected_rounds:
                 r_matches = rounds_map[r_num]
                 lines = []
                 for m in r_matches:
-                    ta_names = [interaction.guild.get_member(uid).display_name if interaction.guild.get_member(uid) else f"<@{uid}>" for uid in (m.get("team_a_ids") or [])]
-                    tb_names = [interaction.guild.get_member(uid).display_name if interaction.guild.get_member(uid) else f"<@{uid}>" for uid in (m.get("team_b_ids") or [])]
-                    ta_str = " & ".join(ta_names)
-                    tb_str = " & ".join(tb_names)
+                    m_ffa = is_ffa or m.get("bracket_group") in ("ffa_lobby", "ffa_heat") or (not m.get("team_b_ids") and m.get("team_a_ids"))
 
-                    if m.get("status") == "completed":
-                        sa = m.get("score_a", 0)
-                        sb = m.get("score_b", 0)
-                        lines.append(f"`#{m['match_number']:02d}` **{ta_str}** `{sa} x {sb}` **{tb_str}** ✅")
+                    if m_ffa:
+                        ta_ids = m.get("team_a_ids") or []
+                        r_name = m.get("round_name") or f"Bateria #{m['match_number']}"
+                        if ta_ids:
+                            pilots = [get_p_name(uid) for uid in ta_ids]
+                            st_icon = "✅ Concluído" if m.get("status") == "completed" else "⏳ Em Espera"
+                            lines.append(f"🏁 **Jogo #{m['match_number']:02d} ({r_name})** — {st_icon}\n   • **Pilotos:** {', '.join(pilots)}")
+                        else:
+                            lines.append(f"🏆 **Jogo #{m['match_number']:02d} ({r_name})** ⏳ *(Aguardando classificados)*")
                     else:
-                        lines.append(f"`#{m['match_number']:02d}` **{ta_str}** *vs* **{tb_str}** ⏳")
+                        ta_names = [get_p_name(uid) for uid in (m.get("team_a_ids") or [])]
+                        tb_names = [get_p_name(uid) for uid in (m.get("team_b_ids") or [])]
+                        ta_str = " & ".join(ta_names) if ta_names else "A definir"
+                        tb_str = " & ".join(tb_names) if tb_names else "A definir"
 
+                        if m.get("status") == "completed":
+                            sa = m.get("score_a", 0)
+                            sb = m.get("score_b", 0)
+                            lines.append(f"`#{m['match_number']:02d}` **{ta_str}** `{sa} x {sb}` **{tb_str}** ✅")
+                        else:
+                            lines.append(f"`#{m['match_number']:02d}` **{ta_str}** *vs* **{tb_str}** ⏳")
+
+                r_header = f"🏁 Rodada / Bateria {r_num}" if is_ffa else f"📍 Rodada {r_num}"
                 embed.add_field(
-                    name=f"📍 Rodada {r_num}",
+                    name=r_header,
                     value="\n".join(lines) if lines else "Nenhum jogo nesta rodada",
                     inline=False
                 )

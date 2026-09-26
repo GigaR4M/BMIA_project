@@ -579,13 +579,14 @@ class TestTournamentAdminAndModals:
 
     def test_parse_event_datetime(self):
         from commands.tournament_commands import _parse_event_datetime
+        # 28/09/2026 20:00 no fuso de Brasília (UTC-3) -> 23:00 UTC
         dt1 = _parse_event_datetime("28/09/2026 20:00")
         assert dt1 is not None
-        assert dt1.day == 28 and dt1.month == 9 and dt1.year == 2026 and dt1.hour == 20
+        assert dt1.day == 28 and dt1.month == 9 and dt1.year == 2026 and dt1.hour == 23
 
         dt2 = _parse_event_datetime("20:00")
         assert dt2 is not None
-        assert dt2.hour == 20 and dt2.minute == 0
+        assert dt2.hour == 23 and dt2.minute == 0
 
         assert _parse_event_datetime("data_invalida") is None
         assert _parse_event_datetime("") is None
@@ -690,9 +691,15 @@ class TestExpandedBracketGenerators:
         mock_conn.fetch = AsyncMock(return_value=[])
         db.pool.acquire.return_value.__aenter__.return_value = mock_conn
 
-        # 16 players in FFA (Fall Guys / Disney Speedstorm) -> 2 Heats + 1 Final Lobby = 3 matches + 1 DELETE
-        participants = [{"user_id": i} for i in range(1, 17)]
-        await db.init_ffa_matches(1, "1v1", participants)
+        # 8 players in FFA (Lobby Único / Grid Completo) -> 1 match + 1 DELETE = 2 executes
+        participants_8 = [{"user_id": i} for i in range(1, 9)]
+        await db.init_ffa_matches(1, "1v1", participants_8)
+        assert mock_conn.execute.await_count == 2
+
+        # 16 players in FFA (2 Heats + 1 Final Lobby) -> 3 matches + 1 DELETE = 4 executes
+        mock_conn.execute.reset_mock()
+        participants_16 = [{"user_id": i} for i in range(1, 17)]
+        await db.init_ffa_matches(1, "1v1", participants_16)
         assert mock_conn.execute.await_count == 4
 
 

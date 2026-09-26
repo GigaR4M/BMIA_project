@@ -3262,17 +3262,17 @@ class Database:
         format_str: str,
         participants: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Gera baterias/lobbies para jogos Free-For-All e Corrida (Fall Guys, Speedstorm, Uno 4p)."""
+        """Gera lobbies para jogos Free-For-All e Corrida (Disney Speedstorm, Mario Kart, Fall Guys, Uno)."""
         all_ids = [p["user_id"] for p in participants]
-        heat_size = 4 if len(all_ids) <= 8 else 8
+        heat_size = 8
         
         matches_to_insert = []
         match_idx = 1
         
         if len(all_ids) <= heat_size:
-            # Lobby único / Bateria Direta
+            # Lobby único / Grid Completo
             matches_to_insert.append({
-                "round_name": "final",
+                "round_name": "Corrida / Lobby Principal",
                 "round_number": 1,
                 "match_number": 1,
                 "team_a_ids": all_ids,
@@ -3282,7 +3282,7 @@ class Database:
                 "bracket_group": "ffa_lobby"
             })
         else:
-            # Dividir em Heats / Baterias classificatórias + Bateria Final
+            # Mais de 8 jogadores: Baterias classificatórias de 8 + Bateria Final de 8
             for i in range(0, len(all_ids), heat_size):
                 heat_participants = all_ids[i:i + heat_size]
                 matches_to_insert.append({
@@ -3299,7 +3299,7 @@ class Database:
             
             # Final Lobby
             matches_to_insert.append({
-                "round_name": "final",
+                "round_name": "Bateria Final",
                 "round_number": 2,
                 "match_number": match_idx,
                 "team_a_ids": [],
