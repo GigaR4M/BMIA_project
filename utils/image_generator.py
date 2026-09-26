@@ -718,6 +718,16 @@ class BracketBuilder:
             for p in team:
                 user_info_map[p.get("user_id")] = p
 
+        # Identifica a partida da Final se existir
+        final_m = None
+        if matches:
+            final_m = next((m for m in matches if m.get("round_name") == "final"), None)
+            if not final_m:
+                final_m = max(matches, key=lambda m: m.get("match_number", 0))
+
+        if not winner_id and final_m and final_m.get("status") == "completed" and final_m.get("winner_team_ids"):
+            winner_id = final_m.get("winner_team_ids")[0]
+
         # Identifica a equipe vencedora se o torneio estiver concluído
         winner_team_idx = None
         winner_team_members = []
@@ -730,6 +740,24 @@ class BracketBuilder:
                         break
                 if winner_team_idx is not None:
                     break
+
+            if not winner_team_members:
+                for uid_key, p_info in user_info_map.items():
+                    if str(uid_key) == str(winner_id):
+                        winner_team_members = [p_info]
+                        break
+
+            if not winner_team_members:
+                for p in participants:
+                    if str(p.get("user_id")) == str(winner_id):
+                        m = guild.get_member(p.get("user_id")) if guild else None
+                        name = m.display_name if (m and hasattr(m, "display_name") and not str(type(m.display_name)).endswith("MagicMock'>")) else (p.get("username") or f"Jogador {winner_id}")
+                        av_uri = user_info_map.get(p.get("user_id"), {}).get("avatar_uri", "")
+                        winner_team_members = [{"name": name, "avatar_uri": av_uri, "user_id": p.get("user_id")}]
+                        break
+
+            if not winner_team_members and tournament.get("winner_name"):
+                winner_team_members = [{"name": tournament["winner_name"], "avatar_uri": "", "user_id": 0}]
 
         # Conteúdo do corpo conforme o modo de chaveamento
         content_html = ""
@@ -982,82 +1010,230 @@ class BracketBuilder:
             elif bracket_mode == 8:
                 content_html = f"""
                 <div class="bracket-tree-wrapper eight-teams">
-                    <div class="column-round">
+                    <!-- QUARTAS ESQUERDA -->
+                    <div class="column-round col-quartas">
                         <div class="column-title">QUARTAS</div>
-                        {render_tree_match(1, "Time 1", "Time 2")}
-                        {render_tree_match(2, "Time 3", "Time 4")}
-                    </div>
-                    <div class="column-round">
-                        <div class="column-title">SEMIFINAIS</div>
-                        {render_tree_match(5, "Venc. Q1", "Venc. Q2")}
-                    </div>
-                    <div class="column-round center-col">
-                        <div class="column-title gold-title">★ FINAL ★</div>
-                        {render_tree_match(7, "Finalista 1", "Finalista 2")}
-                        <div class="trophy-card mini">
-                            <div class="trophy-icon">🏆</div>
-                            <div class="trophy-details">
-                                <span class="trophy-title">CAMPEÃO</span>
-                                <span class="trophy-winner">{w_label}</span>
+                        <div class="round-branch-container">
+                            <div class="match-branch-pair">
+                                {render_tree_match(1, "Time 1", "Time 2")}
+                                {render_tree_match(2, "Time 3", "Time 4")}
                             </div>
                         </div>
                     </div>
-                    <div class="column-round">
-                        <div class="column-title">SEMIFINAIS</div>
-                        {render_tree_match(6, "Venc. Q3", "Venc. Q4")}
+
+                    <!-- CONECTOR 1 -->
+                    <div class="connector-col">
+                        <div class="connector-branch">
+                            <div class="bracket-line-fork"></div>
+                        </div>
                     </div>
-                    <div class="column-round">
+
+                    <!-- SEMIS ESQUERDA -->
+                    <div class="column-round col-semis">
+                        <div class="column-title">SEMIFINAIS</div>
+                        <div class="round-branch-container">
+                            <div class="match-branch-single full-center">
+                                {render_tree_match(5, "Venc. Q1", "Venc. Q2")}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONECTOR 2 -->
+                    <div class="connector-col">
+                        <div class="connector-straight-line"></div>
+                    </div>
+
+                    <!-- CENTRO: TROFEU NO TOPO + FINAL NO CENTRO -->
+                    <div class="column-round center-col col-final">
+                        <div class="trophy-top-wrapper">
+                            <div class="trophy-card featured">
+                                <div class="trophy-icon">🏆</div>
+                                <div class="trophy-details">
+                                    <span class="trophy-title">★ CAMPEÃO DO TORNEIO ★</span>
+                                    <span class="trophy-winner">{w_label}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="final-middle-wrapper">
+                            <div class="column-title gold-title">★ GRANDE FINAL ★</div>
+                            {render_tree_match(7, "Finalista 1", "Finalista 2")}
+                        </div>
+                        <div class="bottom-spacer"></div>
+                    </div>
+
+                    <!-- CONECTOR 3 -->
+                    <div class="connector-col">
+                        <div class="connector-straight-line reverse"></div>
+                    </div>
+
+                    <!-- SEMIS DIREITA -->
+                    <div class="column-round col-semis">
+                        <div class="column-title">SEMIFINAIS</div>
+                        <div class="round-branch-container">
+                            <div class="match-branch-single full-center">
+                                {render_tree_match(6, "Venc. Q3", "Venc. Q4")}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONECTOR 4 -->
+                    <div class="connector-col">
+                        <div class="connector-branch">
+                            <div class="bracket-line-fork reverse"></div>
+                        </div>
+                    </div>
+
+                    <!-- QUARTAS DIREITA -->
+                    <div class="column-round col-quartas">
                         <div class="column-title">QUARTAS</div>
-                        {render_tree_match(3, "Time 5", "Time 6")}
-                        {render_tree_match(4, "Time 7", "Time 8")}
+                        <div class="round-branch-container">
+                            <div class="match-branch-pair">
+                                {render_tree_match(3, "Time 5", "Time 6")}
+                                {render_tree_match(4, "Time 7", "Time 8")}
+                            </div>
+                        </div>
                     </div>
                 </div>
                 """
             elif bracket_mode == 16:
                 content_html = f"""
                 <div class="bracket-tree-wrapper sixteen-teams">
+                    <!-- COLUNA 1: OITAVAS ESQUERDA -->
                     <div class="column-round col-oitavas">
                         <div class="column-title">OITAVAS</div>
-                        {render_tree_match(1, "Time 1", "Time 2")}
-                        {render_tree_match(2, "Time 3", "Time 4")}
-                        {render_tree_match(3, "Time 5", "Time 6")}
-                        {render_tree_match(4, "Time 7", "Time 8")}
-                    </div>
-                    <div class="column-round col-quartas">
-                        <div class="column-title">QUARTAS</div>
-                        {render_tree_match(9, "Venc. O1", "Venc. O2")}
-                        {render_tree_match(10, "Venc. O3", "Venc. O4")}
-                    </div>
-                    <div class="column-round col-semis">
-                        <div class="column-title">SEMIFINAIS</div>
-                        {render_tree_match(13, "Venc. Q1", "Venc. Q2")}
-                    </div>
-                    <div class="column-round center-col col-final">
-                        <div class="column-title gold-title">★ FINAL ★</div>
-                        {render_tree_match(15, "Finalista 1", "Finalista 2")}
-                        <div class="trophy-card mini">
-                            <div class="trophy-icon">🏆</div>
-                            <div class="trophy-details">
-                                <span class="trophy-title">CAMPEÃO</span>
-                                <span class="trophy-winner">{w_label}</span>
+                        <div class="round-branch-container">
+                            <div class="match-branch-pair">
+                                {render_tree_match(1, "Time 1", "Time 2")}
+                                {render_tree_match(2, "Time 3", "Time 4")}
+                            </div>
+                            <div class="match-branch-pair">
+                                {render_tree_match(3, "Time 5", "Time 6")}
+                                {render_tree_match(4, "Time 7", "Time 8")}
                             </div>
                         </div>
                     </div>
-                    <div class="column-round col-semis">
-                        <div class="column-title">SEMIFINAIS</div>
-                        {render_tree_match(14, "Venc. Q3", "Venc. Q4")}
+
+                    <!-- CONECTOR 1 (Oitavas -> Quartas) -->
+                    <div class="connector-col">
+                        <div class="connector-branch">
+                            <div class="bracket-line-fork"></div>
+                        </div>
+                        <div class="connector-branch">
+                            <div class="bracket-line-fork"></div>
+                        </div>
                     </div>
+
+                    <!-- COLUNA 2: QUARTAS ESQUERDA -->
                     <div class="column-round col-quartas">
                         <div class="column-title">QUARTAS</div>
-                        {render_tree_match(11, "Venc. O5", "Venc. O6")}
-                        {render_tree_match(12, "Venc. O7", "Venc. O8")}
+                        <div class="round-branch-container">
+                            <div class="match-branch-single">
+                                {render_tree_match(9, "Venc. O1", "Venc. O2")}
+                            </div>
+                            <div class="match-branch-single">
+                                {render_tree_match(10, "Venc. O3", "Venc. O4")}
+                            </div>
+                        </div>
                     </div>
+
+                    <!-- CONECTOR 2 (Quartas -> Semis) -->
+                    <div class="connector-col">
+                        <div class="connector-branch-large">
+                            <div class="bracket-line-fork-large"></div>
+                        </div>
+                    </div>
+
+                    <!-- COLUNA 3: SEMIS ESQUERDA -->
+                    <div class="column-round col-semis">
+                        <div class="column-title">SEMIFINAIS</div>
+                        <div class="round-branch-container">
+                            <div class="match-branch-single full-center">
+                                {render_tree_match(13, "Venc. Q1", "Venc. Q2")}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONECTOR 3 (Semis -> Final) -->
+                    <div class="connector-col">
+                        <div class="connector-straight-line"></div>
+                    </div>
+
+                    <!-- COLUNA CENTRAL: TROFÉU NO TOPO & FINAL NO CENTRO -->
+                    <div class="column-round center-col col-final">
+                        <div class="trophy-top-wrapper">
+                            <div class="trophy-card featured">
+                                <div class="trophy-icon">🏆</div>
+                                <div class="trophy-details">
+                                    <span class="trophy-title">★ CAMPEÃO DO TORNEIO ★</span>
+                                    <span class="trophy-winner">{w_label}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="final-middle-wrapper">
+                            <div class="column-title gold-title">★ GRANDE FINAL ★</div>
+                            {render_tree_match(15, "Finalista 1", "Finalista 2")}
+                        </div>
+                        <div class="bottom-spacer"></div>
+                    </div>
+
+                    <!-- CONECTOR 4 (Final <- Semis) -->
+                    <div class="connector-col">
+                        <div class="connector-straight-line reverse"></div>
+                    </div>
+
+                    <!-- COLUNA 5: SEMIS DIREITA -->
+                    <div class="column-round col-semis">
+                        <div class="column-title">SEMIFINAIS</div>
+                        <div class="round-branch-container">
+                            <div class="match-branch-single full-center">
+                                {render_tree_match(14, "Venc. Q3", "Venc. Q4")}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONECTOR 5 (Semis <- Quartas) -->
+                    <div class="connector-col">
+                        <div class="connector-branch-large">
+                            <div class="bracket-line-fork-large reverse"></div>
+                        </div>
+                    </div>
+
+                    <!-- COLUNA 6: QUARTAS DIREITA -->
+                    <div class="column-round col-quartas">
+                        <div class="column-title">QUARTAS</div>
+                        <div class="round-branch-container">
+                            <div class="match-branch-single">
+                                {render_tree_match(11, "Venc. O5", "Venc. O6")}
+                            </div>
+                            <div class="match-branch-single">
+                                {render_tree_match(12, "Venc. O7", "Venc. O8")}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONECTOR 6 (Quartas <- Oitavas) -->
+                    <div class="connector-col">
+                        <div class="connector-branch">
+                            <div class="bracket-line-fork reverse"></div>
+                        </div>
+                        <div class="connector-branch">
+                            <div class="bracket-line-fork reverse"></div>
+                        </div>
+                    </div>
+
+                    <!-- COLUNA 7: OITAVAS DIREITA -->
                     <div class="column-round col-oitavas">
                         <div class="column-title">OITAVAS</div>
-                        {render_tree_match(5, "Time 9", "Time 10")}
-                        {render_tree_match(6, "Time 11", "Time 12")}
-                        {render_tree_match(7, "Time 13", "Time 14")}
-                        {render_tree_match(8, "Time 15", "Time 16")}
+                        <div class="round-branch-container">
+                            <div class="match-branch-pair">
+                                {render_tree_match(5, "Time 9", "Time 10")}
+                                {render_tree_match(6, "Time 11", "Time 12")}
+                            </div>
+                            <div class="match-branch-pair">
+                                {render_tree_match(7, "Time 13", "Time 14")}
+                                {render_tree_match(8, "Time 15", "Time 16")}
+                            </div>
+                        </div>
                     </div>
                 </div>
                 """
@@ -1605,76 +1781,246 @@ class BracketBuilder:
         }}
 
         /* ----------------------------------------------------------- */
-        /* TREE BRACKETS (4 & 8 TEAMS)                                 */
+        /* TREE BRACKETS (4, 8 & 16 TEAMS)                            */
         /* ----------------------------------------------------------- */
         .bracket-tree-wrapper {{
             width: 100%;
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            gap: 20px;
+            align-items: stretch;
+            height: 750px;
+            gap: 6px;
         }}
         .column-round {{
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 25px;
+            justify-content: flex-start;
             flex: 1;
+            height: 100%;
         }}
         .column-title {{
             font-family: 'Orbitron', sans-serif;
-            font-size: 18px;
-            font-weight: 700;
+            font-size: 15px;
+            font-weight: 800;
             letter-spacing: 2px;
             color: #94a3b8;
+            margin-bottom: 6px;
+            text-transform: uppercase;
         }}
         .column-title.gold-title {{
             color: #ffd700;
             text-shadow: 0 0 15px rgba(255, 215, 0, 0.5);
         }}
-        .match-box {{
-            width: 100%;
-            max-width: 290px;
-            background: rgba(15, 23, 42, 0.88);
-            border: 2px solid rgba(0, 240, 255, 0.25);
-            border-radius: 14px;
-            padding: 10px 14px;
+        .round-branch-container {{
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            justify-content: space-between;
+            height: calc(100% - 30px);
+            width: 100%;
+        }}
+        .match-branch-pair {{
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            height: 49%;
+            width: 100%;
+            align-items: center;
+        }}
+        .match-branch-single {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 49%;
+            width: 100%;
+        }}
+        .match-branch-single.full-center {{
+            height: 100%;
+        }}
+        .trophy-top-wrapper {{
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            margin-top: 4px;
+        }}
+        .final-middle-wrapper {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1;
+            gap: 12px;
+        }}
+        .bottom-spacer {{
+            height: 60px;
+            width: 100%;
+        }}
+        .trophy-card.featured {{
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            background: linear-gradient(135deg, rgba(45, 35, 10, 0.95) 0%, rgba(30, 24, 10, 0.85) 100%);
+            border: 2px solid #ffd700;
+            border-radius: 18px;
+            padding: 12px 28px;
+            box-shadow: 0 0 45px rgba(255, 215, 0, 0.45), inset 0 0 20px rgba(255, 215, 0, 0.15);
+            backdrop-filter: blur(16px);
+            min-width: 290px;
+        }}
+        .trophy-card.featured .trophy-icon {{
+            font-size: 44px;
+            filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.8));
+        }}
+        .trophy-card.featured .trophy-details {{
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }}
+        .trophy-card.featured .trophy-title {{
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #ffd700;
+            text-shadow: 0 0 12px rgba(255, 215, 0, 0.6);
+        }}
+        .trophy-card.featured .trophy-winner {{
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 24px;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 1px;
+            text-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+        }}
+
+        /* Connector Lines */
+        .connector-col {{
+            width: 24px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            height: calc(100% - 30px);
+            margin-top: 30px;
+            position: relative;
+        }}
+        .connector-branch {{
+            height: 49%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }}
+        .bracket-line-fork {{
+            width: 100%;
+            height: 52%;
+            border-right: 2px solid rgba(0, 240, 255, 0.4);
+            border-top: 2px solid rgba(0, 240, 255, 0.4);
+            border-bottom: 2px solid rgba(0, 240, 255, 0.4);
+            position: relative;
+        }}
+        .bracket-line-fork::after {{
+            content: '';
+            position: absolute;
+            right: -12px;
+            top: 50%;
+            width: 12px;
+            height: 2px;
+            background: rgba(0, 240, 255, 0.4);
+            transform: translateY(-50%);
+        }}
+        .bracket-line-fork.reverse {{
+            border-right: none;
+            border-left: 2px solid rgba(0, 240, 255, 0.4);
+        }}
+        .bracket-line-fork.reverse::after {{
+            right: auto;
+            left: -12px;
+        }}
+        .connector-branch-large {{
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }}
+        .bracket-line-fork-large {{
+            width: 100%;
+            height: 52%;
+            border-right: 2px solid rgba(0, 240, 255, 0.4);
+            border-top: 2px solid rgba(0, 240, 255, 0.4);
+            border-bottom: 2px solid rgba(0, 240, 255, 0.4);
+            position: relative;
+        }}
+        .bracket-line-fork-large::after {{
+            content: '';
+            position: absolute;
+            right: -12px;
+            top: 50%;
+            width: 12px;
+            height: 2px;
+            background: rgba(0, 240, 255, 0.4);
+            transform: translateY(-50%);
+        }}
+        .bracket-line-fork-large.reverse {{
+            border-right: none;
+            border-left: 2px solid rgba(0, 240, 255, 0.4);
+        }}
+        .bracket-line-fork-large.reverse::after {{
+            right: auto;
+            left: -12px;
+        }}
+        .connector-straight-line {{
+            width: 100%;
+            height: 2px;
+            background: rgba(0, 240, 255, 0.4);
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+        }}
+
+        .match-box {{
+            width: 100%;
+            max-width: 220px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 2px solid rgba(0, 240, 255, 0.3);
+            border-radius: 12px;
+            padding: 7px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
             backdrop-filter: blur(12px);
         }}
         .match-box.match-completed {{
-            border-color: rgba(255, 215, 0, 0.35);
+            border-color: rgba(255, 215, 0, 0.4);
         }}
         .match-participant {{
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 10px;
+            gap: 8px;
         }}
         .participant-left {{
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
             flex: 1;
             overflow: hidden;
         }}
         .match-score-pill {{
             font-family: 'Orbitron', sans-serif;
-            font-size: 15px;
+            font-size: 13px;
             font-weight: 800;
-            padding: 2px 8px;
+            padding: 2px 7px;
             border-radius: 6px;
             background: rgba(255, 255, 255, 0.08);
             color: #ffffff;
             border: 1px solid rgba(255, 255, 255, 0.15);
         }}
         .winner-side .match-score-pill {{
-            background: rgba(255, 215, 0, 0.2);
+            background: rgba(255, 215, 0, 0.25);
             color: #ffd700;
-            border-color: rgba(255, 215, 0, 0.6);
+            border-color: rgba(255, 215, 0, 0.7);
             box-shadow: 0 0 10px rgba(255, 215, 0, 0.4);
         }}
         .winner-side .p-name {{
@@ -1685,27 +2031,27 @@ class BracketBuilder:
             opacity: 0.55;
         }}
         .mini-avatar {{
-            width: 38px;
-            height: 38px;
+            width: 28px;
+            height: 28px;
             border-radius: 50%;
             border: 1px solid #00f0ff;
             object-fit: cover;
         }}
         .mini-ph {{
-            width: 38px;
-            height: 38px;
+            width: 28px;
+            height: 28px;
             border-radius: 50%;
             background: rgba(255, 255, 255, 0.05);
             border: 1px dashed #94a3b8;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 16px;
+            font-size: 13px;
             color: #94a3b8;
         }}
         .p-name {{
             font-family: 'Rajdhani', sans-serif;
-            font-size: 18px;
+            font-size: 16px;
             font-weight: 700;
             color: #ffffff;
             white-space: nowrap;
@@ -1716,78 +2062,20 @@ class BracketBuilder:
             height: 1px;
             background: rgba(255, 255, 255, 0.08);
         }}
-        .trophy-card.mini {{
-            padding: 10px 20px;
-            gap: 14px;
-            margin-top: 15px;
-        }}
-        .trophy-card.mini .trophy-icon {{
-            font-size: 32px;
-        }}
-        .trophy-card.mini .trophy-title {{
-            font-size: 14px;
-        }}
-        .trophy-card.mini .trophy-winner {{
-            font-size: 18px;
-        }}
 
-        /* 16 Teams Bracket Custom Sizing & Grid */
+        /* 16 Teams Bracket Custom Sizing */
         .bracket-tree-wrapper.sixteen-teams {{
-            gap: 12px;
-            padding: 0 10px;
-            height: 720px;
-        }}
-        .sixteen-teams .column-round {{
-            gap: 8px;
-            height: 100%;
-        }}
-        .sixteen-teams .column-title {{
-            font-size: 13px;
-            letter-spacing: 1.5px;
-            margin-bottom: 2px;
+            gap: 4px;
+            padding: 0 8px;
         }}
         .sixteen-teams .match-box {{
-            max-width: 220px;
-            padding: 5px 8px;
-            gap: 3px;
-            border-radius: 10px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-        }}
-        .sixteen-teams .mini-avatar, .sixteen-teams .mini-ph {{
-            width: 26px;
-            height: 26px;
-            font-size: 11px;
+            max-width: 215px;
+            padding: 6px 9px;
+            gap: 4px;
         }}
         .sixteen-teams .p-name {{
-            font-size: 13px;
-        }}
-        .sixteen-teams .match-score-pill {{
-            font-size: 11px;
-            padding: 1px 5px;
-        }}
-        .sixteen-teams .col-oitavas {{
-            justify-content: space-between;
-        }}
-        .sixteen-teams .col-quartas {{
-            justify-content: space-around;
-        }}
-        .sixteen-teams .col-semis {{
-            justify-content: center;
-            gap: 80px;
-        }}
-        .sixteen-teams .center-col {{
-            justify-content: center;
-        }}
-        .sixteen-teams .trophy-card.mini {{
-            padding: 8px 14px;
-            gap: 10px;
-            margin-top: 10px;
-        }}
-        .sixteen-teams .trophy-card.mini .trophy-icon {{
-            font-size: 24px;
-        }}
-        .sixteen-teams .trophy-card.mini .trophy-winner {{
             font-size: 15px;
+            font-weight: 700;
         }}
 
         /* 32 Teams Bracket Custom Sizing & Grid */

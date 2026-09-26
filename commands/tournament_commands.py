@@ -302,6 +302,8 @@ class MatchScoreModal(discord.ui.Modal):
         self.db = db
         self.tournament_id = tournament_id
         self.match_number = match_number
+        self.team_a_label = team_a_label
+        self.team_b_label = team_b_label
 
         self.score_a = discord.ui.TextInput(
             label=f"Placar: {team_a_label[:40]}",
@@ -319,6 +321,10 @@ class MatchScoreModal(discord.ui.Modal):
         self.add_item(self.score_b)
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.manage_events and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Apenas organizadores ou administradores podem registrar placares.", ephemeral=True)
+            return
+
         await interaction.response.defer()
         try:
             sa = int(self.score_a.value.strip())
@@ -337,9 +343,10 @@ class MatchScoreModal(discord.ui.Modal):
             await interaction.followup.send(f"❌ {res.get('reason', 'Erro ao registrar resultado.')}", ephemeral=True)
             return
 
+        winner_info = f"\n🏆 **Vencedor:** {self.team_a_label}" if sa > sb else (f"\n🏆 **Vencedor:** {self.team_b_label}" if sb > sa else "\n🤝 **Resultado:** Empate")
         embed = discord.Embed(
             title=f"⚔️ Placar Registrado — Jogo #{self.match_number}",
-            description=f"O resultado `{sa} x {sb}` foi gravado com sucesso!",
+            description=f"**{self.team_a_label}** (`{sa}`) x (`{sb}`) **{self.team_b_label}**{winner_info}\nO resultado foi gravado com sucesso!",
             color=discord.Color.green()
         )
         await interaction.followup.send(embed=embed)
@@ -385,6 +392,10 @@ class RaceScoreModal(discord.ui.Modal):
         self.add_item(self.pos_4)
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.manage_events and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Apenas organizadores ou administradores podem registrar resultados.", ephemeral=True)
+            return
+
         await interaction.response.defer()
         try:
             import re
@@ -542,6 +553,10 @@ class TournamentMatchSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        if not interaction.user.guild_permissions.manage_events and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Apenas organizadores ou administradores podem registrar placares.", ephemeral=True)
+            return
+
         m_num = int(self.values[0])
         target_match = next((m for m in self.matches if m["match_number"] == m_num), None)
         if not target_match:
@@ -559,16 +574,17 @@ class TournamentMatchSelect(discord.ui.Select):
             )
             await interaction.response.send_modal(modal)
         else:
+            p_map = {p["user_id"]: p.get("username", f"Jogador #{p['user_id']}") for p in self.participants}
             ta_ids = target_match.get("team_a_ids") or []
             tb_ids = target_match.get("team_b_ids") or []
             ta_str = "Time A"
             tb_str = "Time B"
             if ta_ids:
                 m_a = interaction.guild.get_member(ta_ids[0])
-                ta_str = m_a.display_name if m_a else f"Jogador #{ta_ids[0]}"
+                ta_str = m_a.display_name if m_a else p_map.get(ta_ids[0], f"Jogador #{ta_ids[0]}")
             if tb_ids:
                 m_b = interaction.guild.get_member(tb_ids[0])
-                tb_str = m_b.display_name if m_b else f"Jogador #{tb_ids[0]}"
+                tb_str = m_b.display_name if m_b else p_map.get(tb_ids[0], f"Jogador #{tb_ids[0]}")
 
             modal = MatchScoreModal(self.db, self.tournament["id"], m_num, ta_str, tb_str)
             await interaction.response.send_modal(modal)
@@ -594,6 +610,10 @@ class TournamentRoundsView(discord.ui.View):
 
     @discord.ui.button(label="Lançar Resultado", style=discord.ButtonStyle.primary, emoji="📝", custom_id="tourney_rounds_score_btn")
     async def btn_score(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not interaction.user.guild_permissions.manage_events and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Apenas organizadores ou administradores podem lançar resultados de partidas.", ephemeral=True)
+            return
+
         embed = discord.Embed(
             title=f"📝 Lançar Resultado: {self.tournament['name']}",
             description="Selecione o confronto/corrida para abrir o formulário:",
@@ -963,16 +983,17 @@ class TournamentCommands(app_commands.Group):
                 )
                 await interaction.response.send_modal(modal)
             else:
+                p_map = {p["user_id"]: p.get("username", f"Jogador #{p['user_id']}") for p in participants}
                 ta_ids = target.get("team_a_ids") or []
                 tb_ids = target.get("team_b_ids") or []
                 ta_str = "Time A"
                 tb_str = "Time B"
                 if ta_ids:
                     m_a = interaction.guild.get_member(ta_ids[0])
-                    ta_str = m_a.display_name if m_a else f"Jogador #{ta_ids[0]}"
+                    ta_str = m_a.display_name if m_a else p_map.get(ta_ids[0], f"Jogador #{ta_ids[0]}")
                 if tb_ids:
                     m_b = interaction.guild.get_member(tb_ids[0])
-                    tb_str = m_b.display_name if m_b else f"Jogador #{tb_ids[0]}"
+                    tb_str = m_b.display_name if m_b else p_map.get(tb_ids[0], f"Jogador #{tb_ids[0]}")
 
                 modal = MatchScoreModal(self.db, id, jogo, ta_str, tb_str)
                 await interaction.response.send_modal(modal)
@@ -1384,6 +1405,9 @@ class TournamentCommands(app_commands.Group):
             # Gera a imagem oficial do bracket ou classificação para incorporar no embed final
             final_file = None
             try:
+                tourney["status"] = "completed"
+                tourney["winner_id"] = vencedor.id
+                tourney["final_score"] = final_placar_display
                 t_type = tourney.get("tournament_type") or "bracket"
                 matches = await self.db.get_tournament_matches(id)
                 if t_type == "round_robin":
