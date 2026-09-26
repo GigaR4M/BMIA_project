@@ -2,6 +2,7 @@
 
 import asyncpg
 import os
+import math
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Union
 import json
@@ -2865,119 +2866,60 @@ class Database:
             bracket_mode = 2
         elif num_teams <= 4:
             bracket_mode = 4
-        else:
+        elif num_teams <= 8:
             bracket_mode = 8
+        elif num_teams <= 16:
+            bracket_mode = 16
+        else:
+            bracket_mode = 32
+
+        total_rounds = int(math.log2(bracket_mode))
+        round_name_map = {
+            1: "final",
+            2: "semifinal",
+            3: "quartas",
+            4: "oitavas",
+            5: "16avos"
+        }
 
         matches_to_insert = []
-        if bracket_mode == 2:
-            # Final direta (Jogo 1)
-            team_a = teams[0] if len(teams) > 0 else []
-            team_b = teams[1] if len(teams) > 1 else []
-            matches_to_insert.append({
-                "round_name": "final",
-                "round_number": 1,
-                "match_number": 1,
-                "team_a_ids": team_a,
-                "team_b_ids": team_b,
-                "next_match_number": None,
-                "next_match_slot": None
-            })
-        elif bracket_mode == 4:
-            # Semifinal 1 (Jogo 1) -> Final (Jogo 3, Slot A)
-            matches_to_insert.append({
-                "round_name": "semifinal",
-                "round_number": 1,
-                "match_number": 1,
-                "team_a_ids": teams[0] if len(teams) > 0 else [],
-                "team_b_ids": teams[1] if len(teams) > 1 else [],
-                "next_match_number": 3,
-                "next_match_slot": "A"
-            })
-            # Semifinal 2 (Jogo 2) -> Final (Jogo 3, Slot B)
-            matches_to_insert.append({
-                "round_name": "semifinal",
-                "round_number": 1,
-                "match_number": 2,
-                "team_a_ids": teams[2] if len(teams) > 2 else [],
-                "team_b_ids": teams[3] if len(teams) > 3 else [],
-                "next_match_number": 3,
-                "next_match_slot": "B"
-            })
-            # Final (Jogo 3)
-            matches_to_insert.append({
-                "round_name": "final",
-                "round_number": 2,
-                "match_number": 3,
-                "team_a_ids": [],
-                "team_b_ids": [],
-                "next_match_number": None,
-                "next_match_slot": None
-            })
-        else:
-            # 8 Equipes: Quartas 1..4, Semis 5..6, Final 7
-            matches_to_insert.append({
-                "round_name": "quartas",
-                "round_number": 1,
-                "match_number": 1,
-                "team_a_ids": teams[0] if len(teams) > 0 else [],
-                "team_b_ids": teams[1] if len(teams) > 1 else [],
-                "next_match_number": 5,
-                "next_match_slot": "A"
-            })
-            matches_to_insert.append({
-                "round_name": "quartas",
-                "round_number": 1,
-                "match_number": 2,
-                "team_a_ids": teams[2] if len(teams) > 2 else [],
-                "team_b_ids": teams[3] if len(teams) > 3 else [],
-                "next_match_number": 5,
-                "next_match_slot": "B"
-            })
-            matches_to_insert.append({
-                "round_name": "quartas",
-                "round_number": 1,
-                "match_number": 3,
-                "team_a_ids": teams[4] if len(teams) > 4 else [],
-                "team_b_ids": teams[5] if len(teams) > 5 else [],
-                "next_match_number": 6,
-                "next_match_slot": "A"
-            })
-            matches_to_insert.append({
-                "round_name": "quartas",
-                "round_number": 1,
-                "match_number": 4,
-                "team_a_ids": teams[6] if len(teams) > 6 else [],
-                "team_b_ids": teams[7] if len(teams) > 7 else [],
-                "next_match_number": 6,
-                "next_match_slot": "B"
-            })
-            matches_to_insert.append({
-                "round_name": "semifinal",
-                "round_number": 2,
-                "match_number": 5,
-                "team_a_ids": [],
-                "team_b_ids": [],
-                "next_match_number": 7,
-                "next_match_slot": "A"
-            })
-            matches_to_insert.append({
-                "round_name": "semifinal",
-                "round_number": 2,
-                "match_number": 6,
-                "team_a_ids": [],
-                "team_b_ids": [],
-                "next_match_number": 7,
-                "next_match_slot": "B"
-            })
-            matches_to_insert.append({
-                "round_name": "final",
-                "round_number": 3,
-                "match_number": 7,
-                "team_a_ids": [],
-                "team_b_ids": [],
-                "next_match_number": None,
-                "next_match_slot": None
-            })
+        current_match_start = 1
+
+        for r in range(1, total_rounds + 1):
+            k_matches = bracket_mode // (2 ** r)
+            rounds_left = total_rounds - r + 1
+            r_name = round_name_map.get(rounds_left, f"rodada_{r}")
+            next_round_start = current_match_start + k_matches
+
+            for i in range(k_matches):
+                m_num = current_match_start + i
+                if r == 1:
+                    idx_a = i * 2
+                    idx_b = i * 2 + 1
+                    t_a = teams[idx_a] if len(teams) > idx_a else []
+                    t_b = teams[idx_b] if len(teams) > idx_b else []
+                else:
+                    t_a = []
+                    t_b = []
+
+                if r < total_rounds:
+                    next_m = next_round_start + (i // 2)
+                    next_slot = "A" if (i % 2 == 0) else "B"
+                else:
+                    next_m = None
+                    next_slot = None
+
+                matches_to_insert.append({
+                    "round_name": r_name,
+                    "round_number": r,
+                    "match_number": m_num,
+                    "team_a_ids": t_a,
+                    "team_b_ids": t_b,
+                    "next_match_number": next_m,
+                    "next_match_slot": next_slot
+                })
+
+            current_match_start = next_round_start
 
         async with self.pool.acquire() as conn:
             await conn.execute("DELETE FROM tournament_matches WHERE tournament_id = $1", tournament_id)

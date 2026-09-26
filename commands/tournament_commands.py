@@ -130,7 +130,7 @@ class TournamentCreateModal(discord.ui.Modal):
         required=True
     )
     vagas = discord.ui.TextInput(
-        label="Vagas / Participantes (2 a 128)",
+        label="Vagas / Participantes (2 a 32)",
         placeholder="ex: 8, 16, 32",
         default="16",
         max_length=4,
@@ -172,7 +172,7 @@ class TournamentCreateModal(discord.ui.Modal):
                 vagas_val = int(self.vagas.value.strip())
             except ValueError:
                 vagas_val = 16
-            vagas_val = max(2, min(vagas_val, 128))
+            vagas_val = max(2, min(vagas_val, 32))
 
             tipo_val = self.preset_type or "single_elimination"
             premio_val = self.premio.value.strip() if self.premio.value else None
@@ -357,25 +357,25 @@ class RaceScoreModal(discord.ui.Modal):
 
         self.pos_1 = discord.ui.TextInput(
             label="🥇 1º Lugar (Piloto Vencedor)",
-            placeholder="Digite o @membro ou nome do piloto",
+            placeholder="Nome, @username ou ID do piloto",
             max_length=60,
             required=True
         )
         self.pos_2 = discord.ui.TextInput(
             label="🥈 2º Lugar",
-            placeholder="Digite o @membro ou nome do piloto",
+            placeholder="Nome, @username ou ID do piloto",
             max_length=60,
             required=True
         )
         self.pos_3 = discord.ui.TextInput(
             label="🥉 3º Lugar (Opcional)",
-            placeholder="Digite o @membro ou nome do piloto",
+            placeholder="Nome, @username ou ID do piloto",
             max_length=60,
             required=False
         )
         self.pos_4 = discord.ui.TextInput(
             label="4º Lugar (Opcional)",
-            placeholder="Digite o @membro ou nome do piloto",
+            placeholder="Nome, @username ou ID do piloto",
             max_length=60,
             required=False
         )
@@ -401,20 +401,52 @@ class RaceScoreModal(discord.ui.Modal):
             results_list = []
 
             for pos_num, pos_label, raw_val in valid_inputs:
-                match_id = re.search(r'\d+', raw_val)
                 target_uid = None
                 display_name = raw_val
 
-                if match_id and int(match_id.group()) in p_map:
-                    target_uid = int(match_id.group())
-                else:
-                    raw_lower = str(raw_val).lower().replace("@", "").strip()
+                # 1. Extração direta de ID ou menção <@123456>
+                id_match = re.search(r'<@!?(\d+)>', raw_val) or re.search(r'\b(\d{15,22})\b', raw_val)
+                if id_match:
+                    possible_id = int(id_match.group(1))
+                    if possible_id in p_map:
+                        target_uid = possible_id
+                    elif interaction.guild and interaction.guild.get_member(possible_id):
+                        target_uid = possible_id
+
+                # 2. Busca exata e depois parcial por texto no mapa de participantes
+                if not target_uid:
+                    raw_clean = str(raw_val).lower().replace("@", "").strip()
+                    # Busca exata por username, display_name ou apelido
                     for uid, p_data in p_map.items():
                         p_username = str(p_data.get("username") or "").lower()
                         m = interaction.guild.get_member(uid) if interaction.guild else None
-                        m_name = str(m.display_name).lower() if (m and hasattr(m, "display_name") and not str(type(m.display_name)).endswith("MagicMock'>")) else ""
-                        if (raw_lower and raw_lower in p_username) or (m_name and raw_lower in m_name) or (p_username and p_username in raw_lower):
+                        m_display = str(m.display_name).lower() if (m and hasattr(m, "display_name") and not str(type(m.display_name)).endswith("MagicMock'>")) else ""
+                        m_name = str(m.name).lower() if (m and hasattr(m, "name") and not str(type(m.name)).endswith("MagicMock'>")) else ""
+                        if raw_clean in (p_username, m_display, m_name):
                             target_uid = uid
+                            break
+
+                    # Busca parcial (substring)
+                    if not target_uid:
+                        for uid, p_data in p_map.items():
+                            p_username = str(p_data.get("username") or "").lower()
+                            m = interaction.guild.get_member(uid) if interaction.guild else None
+                            m_display = str(m.display_name).lower() if (m and hasattr(m, "display_name") and not str(type(m.display_name)).endswith("MagicMock'>")) else ""
+                            m_name = str(m.name).lower() if (m and hasattr(m, "name") and not str(type(m.name)).endswith("MagicMock'>")) else ""
+                            if (raw_clean and raw_clean in p_username) or (raw_clean and raw_clean in m_display) or (raw_clean and raw_clean in m_name):
+                                target_uid = uid
+                                break
+
+                # 3. Busca no servidor se o membro não estava no mapa inicial
+                if not target_uid and interaction.guild:
+                    raw_clean = str(raw_val).lower().replace("@", "").strip()
+                    for m in interaction.guild.members:
+                        if hasattr(m, "bot") and m.bot:
+                            continue
+                        m_disp = str(m.display_name).lower() if hasattr(m, "display_name") else ""
+                        m_user = str(m.name).lower() if hasattr(m, "name") else ""
+                        if raw_clean in (m_disp, m_user):
+                            target_uid = m.id
                             break
 
                 if target_uid:
@@ -441,7 +473,7 @@ class RaceScoreModal(discord.ui.Modal):
             async with self.db.pool.acquire() as conn:
                 await conn.execute("""
                     UPDATE tournament_matches
-                    SET status = 'completed', scores_json = $3, completed_at = NOW()
+                    SET status = 'completed', scores_json = $3
                     WHERE tournament_id = $1 AND match_number = $2
                 """, self.tournament_id, self.match_number, json.dumps(res_dict))
 
@@ -740,7 +772,6 @@ class TournamentCommands(app_commands.Group):
             app_commands.Choice(name="8 Participantes (Semis em 2v2 / Quartas em 1v1)", value=8),
             app_commands.Choice(name="16 Participantes (Quartas em 2v2 / Oitavas em 1v1)", value=16),
             app_commands.Choice(name="32 Participantes", value=32),
-            app_commands.Choice(name="64 Participantes", value=64),
         ],
         tipo=[
             app_commands.Choice(name="Single Elimination (Mata-Mata Simples)", value="single_elimination"),
@@ -770,7 +801,7 @@ class TournamentCommands(app_commands.Group):
             vagas_val = vagas.value if isinstance(vagas, app_commands.Choice) else int(vagas)
             formato_val = formato.value if isinstance(formato, app_commands.Choice) else str(formato)
             tipo_val = tipo.value if isinstance(tipo, app_commands.Choice) else (str(tipo) if tipo else "single_elimination")
-            vagas_val = max(2, min(vagas_val, 128))
+            vagas_val = max(2, min(vagas_val, 32))
             bo_val = max(1, min(best_of or 1, 9))
 
             tourney_id = await self.db.create_tournament(
@@ -1785,8 +1816,17 @@ class TournamentCommands(app_commands.Group):
                 await interaction.followup.send("❌ Torneio não encontrado.")
                 return
 
-            if tourney.get("tournament_type") == "round_robin":
-                await interaction.followup.send("ℹ️ Este é um torneio de Pontos Corridos (Liga). Utilize `/torneio tabela` para ver a classificação.")
+            t_type = (tourney.get("tournament_type") or "bracket").lower()
+            if t_type in ("ffa_race", "ffa", "race"):
+                await interaction.followup.send("ℹ️ Este é um torneio de **Corrida / Todos Contra Todos (FFA)**. Utilize `/torneio rodadas` para ver as baterias ou `/torneio resultado` para registrar a classificação.")
+                return
+
+            if t_type in ("round_robin",):
+                await interaction.followup.send("ℹ️ Este é um torneio de **Pontos Corridos (Liga)**. Utilize `/torneio tabela` para ver a classificação ou `/torneio rodadas` para os confrontos.")
+                return
+
+            if t_type in ("swiss",):
+                await interaction.followup.send("ℹ️ Este é um torneio no **Sistema Suíço**. Utilize `/torneio rodadas` para acompanhar as rodadas e confrontos.")
                 return
 
             participants = await self.db.get_tournament_participants(id)
@@ -1833,8 +1873,13 @@ class TournamentCommands(app_commands.Group):
                 await interaction.followup.send("❌ Torneio não encontrado.")
                 return
 
-            if tourney.get("tournament_type") == "bracket":
-                await interaction.followup.send("ℹ️ Este é um torneio de Mata-Mata. Utilize `/torneio chaveamento` para visualizar a árvore de confrontos.")
+            t_type = (tourney.get("tournament_type") or "bracket").lower()
+            if t_type in ("bracket", "single_elimination", "double_elimination"):
+                await interaction.followup.send("ℹ️ Este é um torneio de **Mata-Mata / Eliminatórias**. Utilize `/torneio chaveamento` para visualizar a árvore de confrontos.")
+                return
+
+            if t_type in ("ffa_race", "ffa", "race"):
+                await interaction.followup.send("ℹ️ Este é um torneio de **Corrida / Todos Contra Todos (FFA)**. Utilize `/torneio rodadas` para acompanhar as baterias ou `/torneio resultado` para registrar a classificação.")
                 return
 
             standings = await self.db.get_tournament_standings(id)

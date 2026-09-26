@@ -223,6 +223,44 @@ class TestTournamentCommands:
         call_kwargs = interaction.followup.send.call_args[1]
         assert "file" in call_kwargs
 
+    @pytest.mark.asyncio
+    async def test_chaveamento_validation_for_race_and_league(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        # Torneio de corrida
+        mock_db.get_tournament.return_value = {
+            "id": 10,
+            "guild_id": 123456789,
+            "tournament_type": "ffa_race",
+            "name": "Copa Disney Speedstorm"
+        }
+        await cmd.chaveamento_torneio.callback(cmd, interaction, id=10)
+        call_msg = interaction.followup.send.call_args[0][0]
+        assert "Corrida / Todos Contra Todos" in call_msg
+
+    @pytest.mark.asyncio
+    async def test_tabela_validation_for_bracket_and_race(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        # Torneio Mata-Mata chamado na tabela
+        mock_db.get_tournament.return_value = {
+            "id": 11,
+            "guild_id": 123456789,
+            "tournament_type": "bracket",
+            "name": "Copa Mata-Mata"
+        }
+        await cmd.tabela_torneio.callback(cmd, interaction, id=11)
+        call_msg = interaction.followup.send.call_args[0][0]
+        assert "Mata-Mata" in call_msg
+
 
 class TestBracketBuilder:
     @pytest.mark.asyncio
@@ -305,6 +343,60 @@ class TestBracketBuilder:
 
         participants = [
             {"user_id": i, "username": f"Player{i}"} for i in range(1, 9)
+        ]
+
+        buf = await builder.generate_bracket(guild, tournament, participants)
+        assert buf is not None
+        assert buf.getvalue().startswith(b"\x89PNG")
+
+    @pytest.mark.asyncio
+    async def test_generate_bracket_image_16_teams(self):
+        from utils.image_generator import BracketBuilder
+        builder = BracketBuilder()
+        guild = MagicMock()
+        guild.icon = None
+        guild.get_member.return_value = None
+
+        tournament = {
+            "id": 4,
+            "name": "Super Torneio 16 Times",
+            "game_name": "UFL",
+            "format": "1v1",
+            "max_participants": 16,
+            "prize": "10.000 pts",
+            "status": "open",
+            "winner_id": None
+        }
+
+        participants = [
+            {"user_id": i, "username": f"Player{i}"} for i in range(1, 17)
+        ]
+
+        buf = await builder.generate_bracket(guild, tournament, participants)
+        assert buf is not None
+        assert buf.getvalue().startswith(b"\x89PNG")
+
+    @pytest.mark.asyncio
+    async def test_generate_bracket_image_32_teams(self):
+        from utils.image_generator import BracketBuilder
+        builder = BracketBuilder()
+        guild = MagicMock()
+        guild.icon = None
+        guild.get_member.return_value = None
+
+        tournament = {
+            "id": 5,
+            "name": "Super Torneio 32 Times",
+            "game_name": "Rocket League",
+            "format": "1v1",
+            "max_participants": 32,
+            "prize": "20.000 pts",
+            "status": "open",
+            "winner_id": None
+        }
+
+        participants = [
+            {"user_id": i, "username": f"Player{i}"} for i in range(1, 33)
         ]
 
         buf = await builder.generate_bracket(guild, tournament, participants)
@@ -779,5 +871,38 @@ class TestExpandedBracketGenerators:
         participants_16 = [{"user_id": i} for i in range(1, 17)]
         await db.init_ffa_matches(1, "1v1", participants_16)
         assert mock_conn.execute.await_count == 4
+
+    @pytest.mark.asyncio
+    async def test_init_bracket_matches_32_teams(self):
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        # 32 players in single elimination: 31 matches + 1 DELETE = 32 executes
+        participants_32 = [{"user_id": i} for i in range(1, 33)]
+        await db.init_tournament_bracket_matches(1, "1v1", participants_32)
+        assert mock_conn.execute.await_count == 32
+
+    @pytest.mark.asyncio
+    async def test_tournament_create_modal_max_vagas_32(self):
+        from commands.tournament_commands import TournamentCreateModal
+        modal = TournamentCreateModal(db=MagicMock(), preset_type="single_elimination")
+        modal.vagas._value = "100"
+        interaction = MagicMock()
+        interaction.response.defer = AsyncMock()
+        interaction.guild.id = 123
+        interaction.user.id = 456
+        interaction.followup.send = AsyncMock()
+
+        modal.db.create_tournament = AsyncMock(return_value=1)
+        await modal.on_submit(interaction)
+
+        # Ensure max_participants was capped at 32 even if user entered 100
+        call_kwargs = modal.db.create_tournament.call_args[1]
+        assert call_kwargs["max_participants"] == 32
 
 

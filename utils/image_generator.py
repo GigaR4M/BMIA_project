@@ -979,7 +979,7 @@ class BracketBuilder:
                     </div>
                 </div>
                 """
-            else:
+            elif bracket_mode == 8:
                 content_html = f"""
                 <div class="bracket-tree-wrapper eight-teams">
                     <div class="column-round">
@@ -1010,6 +1010,124 @@ class BracketBuilder:
                         <div class="column-title">QUARTAS</div>
                         {render_tree_match(3, "Time 5", "Time 6")}
                         {render_tree_match(4, "Time 7", "Time 8")}
+                    </div>
+                </div>
+                """
+            elif bracket_mode == 16:
+                content_html = f"""
+                <div class="bracket-tree-wrapper sixteen-teams">
+                    <div class="column-round col-oitavas">
+                        <div class="column-title">OITAVAS</div>
+                        {render_tree_match(1, "Time 1", "Time 2")}
+                        {render_tree_match(2, "Time 3", "Time 4")}
+                        {render_tree_match(3, "Time 5", "Time 6")}
+                        {render_tree_match(4, "Time 7", "Time 8")}
+                    </div>
+                    <div class="column-round col-quartas">
+                        <div class="column-title">QUARTAS</div>
+                        {render_tree_match(9, "Venc. O1", "Venc. O2")}
+                        {render_tree_match(10, "Venc. O3", "Venc. O4")}
+                    </div>
+                    <div class="column-round col-semis">
+                        <div class="column-title">SEMIFINAIS</div>
+                        {render_tree_match(13, "Venc. Q1", "Venc. Q2")}
+                    </div>
+                    <div class="column-round center-col col-final">
+                        <div class="column-title gold-title">★ FINAL ★</div>
+                        {render_tree_match(15, "Finalista 1", "Finalista 2")}
+                        <div class="trophy-card mini">
+                            <div class="trophy-icon">🏆</div>
+                            <div class="trophy-details">
+                                <span class="trophy-title">CAMPEÃO</span>
+                                <span class="trophy-winner">{w_label}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="column-round col-semis">
+                        <div class="column-title">SEMIFINAIS</div>
+                        {render_tree_match(14, "Venc. Q3", "Venc. Q4")}
+                    </div>
+                    <div class="column-round col-quartas">
+                        <div class="column-title">QUARTAS</div>
+                        {render_tree_match(11, "Venc. O5", "Venc. O6")}
+                        {render_tree_match(12, "Venc. O7", "Venc. O8")}
+                    </div>
+                    <div class="column-round col-oitavas">
+                        <div class="column-title">OITAVAS</div>
+                        {render_tree_match(5, "Time 9", "Time 10")}
+                        {render_tree_match(6, "Time 11", "Time 12")}
+                        {render_tree_match(7, "Time 13", "Time 14")}
+                        {render_tree_match(8, "Time 15", "Time 16")}
+                    </div>
+                </div>
+                """
+            else:
+                content_html = f"""
+                <div class="bracket-tree-wrapper thirty-two-teams">
+                    <div class="column-round col-16avos">
+                        <div class="column-title">16 AVOS</div>
+                        {render_tree_match(1, "Time 1", "Time 2")}
+                        {render_tree_match(2, "Time 3", "Time 4")}
+                        {render_tree_match(3, "Time 5", "Time 6")}
+                        {render_tree_match(4, "Time 7", "Time 8")}
+                        {render_tree_match(5, "Time 9", "Time 10")}
+                        {render_tree_match(6, "Time 11", "Time 12")}
+                        {render_tree_match(7, "Time 13", "Time 14")}
+                        {render_tree_match(8, "Time 15", "Time 16")}
+                    </div>
+                    <div class="column-round col-oitavas">
+                        <div class="column-title">OITAVAS</div>
+                        {render_tree_match(17, "Venc. 1", "Venc. 2")}
+                        {render_tree_match(18, "Venc. 3", "Venc. 4")}
+                        {render_tree_match(19, "Venc. 5", "Venc. 6")}
+                        {render_tree_match(20, "Venc. 7", "Venc. 8")}
+                    </div>
+                    <div class="column-round col-quartas">
+                        <div class="column-title">QUARTAS</div>
+                        {render_tree_match(25, "Venc. O1", "Venc. O2")}
+                        {render_tree_match(26, "Venc. O3", "Venc. O4")}
+                    </div>
+                    <div class="column-round col-semis">
+                        <div class="column-title">SEMIS</div>
+                        {render_tree_match(29, "Venc. Q1", "Venc. Q2")}
+                    </div>
+                    <div class="column-round center-col col-final">
+                        <div class="column-title gold-title">★ FINAL ★</div>
+                        {render_tree_match(31, "Finalista 1", "Finalista 2")}
+                        <div class="trophy-card mini">
+                            <div class="trophy-icon">🏆</div>
+                            <div class="trophy-details">
+                                <span class="trophy-title">CAMPEÃO</span>
+                                <span class="trophy-winner">{w_label}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="column-round col-semis">
+                        <div class="column-title">SEMIS</div>
+                        {render_tree_match(30, "Venc. Q3", "Venc. Q4")}
+                    </div>
+                    <div class="column-round col-quartas">
+                        <div class="column-title">QUARTAS</div>
+                        {render_tree_match(27, "Venc. O5", "Venc. O6")}
+                        {render_tree_match(28, "Venc. O7", "Venc. O8")}
+                    </div>
+                    <div class="column-round col-oitavas">
+                        <div class="column-title">OITAVAS</div>
+                        {render_tree_match(21, "Venc. 9", "Venc. 10")}
+                        {render_tree_match(22, "Venc. 11", "Venc. 12")}
+                        {render_tree_match(23, "Venc. 13", "Venc. 14")}
+                        {render_tree_match(24, "Venc. 15", "Venc. 16")}
+                    </div>
+                    <div class="column-round col-16avos">
+                        <div class="column-title">16 AVOS</div>
+                        {render_tree_match(9, "Time 17", "Time 18")}
+                        {render_tree_match(10, "Time 19", "Time 20")}
+                        {render_tree_match(11, "Time 21", "Time 22")}
+                        {render_tree_match(12, "Time 23", "Time 24")}
+                        {render_tree_match(13, "Time 25", "Time 26")}
+                        {render_tree_match(14, "Time 27", "Time 28")}
+                        {render_tree_match(15, "Time 29", "Time 30")}
+                        {render_tree_match(16, "Time 31", "Time 32")}
                     </div>
                 </div>
                 """
@@ -1613,6 +1731,127 @@ class BracketBuilder:
             font-size: 18px;
         }}
 
+        /* 16 Teams Bracket Custom Sizing & Grid */
+        .bracket-tree-wrapper.sixteen-teams {{
+            gap: 12px;
+            padding: 0 10px;
+            height: 720px;
+        }}
+        .sixteen-teams .column-round {{
+            gap: 8px;
+            height: 100%;
+        }}
+        .sixteen-teams .column-title {{
+            font-size: 13px;
+            letter-spacing: 1.5px;
+            margin-bottom: 2px;
+        }}
+        .sixteen-teams .match-box {{
+            max-width: 220px;
+            padding: 5px 8px;
+            gap: 3px;
+            border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        }}
+        .sixteen-teams .mini-avatar, .sixteen-teams .mini-ph {{
+            width: 26px;
+            height: 26px;
+            font-size: 11px;
+        }}
+        .sixteen-teams .p-name {{
+            font-size: 13px;
+        }}
+        .sixteen-teams .match-score-pill {{
+            font-size: 11px;
+            padding: 1px 5px;
+        }}
+        .sixteen-teams .col-oitavas {{
+            justify-content: space-between;
+        }}
+        .sixteen-teams .col-quartas {{
+            justify-content: space-around;
+        }}
+        .sixteen-teams .col-semis {{
+            justify-content: center;
+            gap: 80px;
+        }}
+        .sixteen-teams .center-col {{
+            justify-content: center;
+        }}
+        .sixteen-teams .trophy-card.mini {{
+            padding: 8px 14px;
+            gap: 10px;
+            margin-top: 10px;
+        }}
+        .sixteen-teams .trophy-card.mini .trophy-icon {{
+            font-size: 24px;
+        }}
+        .sixteen-teams .trophy-card.mini .trophy-winner {{
+            font-size: 15px;
+        }}
+
+        /* 32 Teams Bracket Custom Sizing & Grid */
+        .bracket-tree-wrapper.thirty-two-teams {{
+            gap: 6px;
+            padding: 0 4px;
+            height: 740px;
+        }}
+        .thirty-two-teams .column-round {{
+            gap: 4px;
+            height: 100%;
+        }}
+        .thirty-two-teams .column-title {{
+            font-size: 11px;
+            letter-spacing: 1px;
+            margin-bottom: 2px;
+        }}
+        .thirty-two-teams .match-box {{
+            max-width: 175px;
+            padding: 3px 6px;
+            gap: 2px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }}
+        .thirty-two-teams .mini-avatar, .thirty-two-teams .mini-ph {{
+            width: 20px;
+            height: 20px;
+            font-size: 9px;
+        }}
+        .thirty-two-teams .p-name {{
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        .thirty-two-teams .match-score-pill {{
+            font-size: 10px;
+            padding: 1px 4px;
+        }}
+        .thirty-two-teams .col-16avos {{
+            justify-content: space-between;
+        }}
+        .thirty-two-teams .col-oitavas {{
+            justify-content: space-around;
+        }}
+        .thirty-two-teams .col-quartas {{
+            justify-content: space-evenly;
+        }}
+        .thirty-two-teams .col-semis {{
+            justify-content: center;
+        }}
+        .thirty-two-teams .center-col {{
+            justify-content: center;
+        }}
+        .thirty-two-teams .trophy-card.mini {{
+            padding: 6px 10px;
+            gap: 8px;
+            margin-top: 8px;
+        }}
+        .thirty-two-teams .trophy-card.mini .trophy-icon {{
+            font-size: 20px;
+        }}
+        .thirty-two-teams .trophy-card.mini .trophy-winner {{
+            font-size: 13px;
+        }}
+
         /* Footer */
         .footer {{
             padding: 16px 70px;
@@ -1704,8 +1943,12 @@ class BracketBuilder:
                 bracket_mode = 2
             elif len(matches) <= 3:
                 bracket_mode = 4
-            else:
+            elif len(matches) <= 7:
                 bracket_mode = 8
+            elif len(matches) <= 15:
+                bracket_mode = 16
+            else:
+                bracket_mode = 32
         else:
             max_participants = int(tournament.get("max_participants") or 16)
             num_teams_target = max(2, max_participants // team_size)
@@ -1713,8 +1956,12 @@ class BracketBuilder:
                 bracket_mode = 2
             elif num_teams_target <= 4:
                 bracket_mode = 4
-            else:
+            elif num_teams_target <= 8:
                 bracket_mode = 8
+            elif num_teams_target <= 16:
+                bracket_mode = 16
+            else:
+                bracket_mode = 32
 
         # Carrega avatares e guild icon de forma totalmente concorrente (paralelo)
         avatar_tasks = []
