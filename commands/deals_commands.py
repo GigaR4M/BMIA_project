@@ -185,12 +185,12 @@ class TrackedGamesCommands(app_commands.Group):
                 on_sale_count += 1
                 status = f"🔥 **-{discount}% OFF** | **R$ {curr_price:.2f}** ~~(R$ {base_price:.2f})~~"
                 store_info = f"🛒 Melhor oferta em: [{store}]({store_url})"
-            elif curr_price == 0.0 and base_price == 0.0:
-                status = "🆓 **Gratuito para Jogar**"
-                store_info = f"🔗 [Página na Steam]({store_url})"
-            else:
+            elif curr_price > 0:
                 status = f"💵 **R$ {curr_price:.2f}** (Sem desconto)"
                 store_info = f"🔗 [Ver na Steam]({store_url})"
+            else:
+                status = "🏷️ **Preço não divulgado / Em breve**"
+                store_info = f"🔗 [Página na Steam]({store_url})"
 
             if hist_low > 0 and curr_price <= hist_low and discount > 0:
                 status += " ⭐ **MENOR PREÇO HISTÓRICO!**"
