@@ -945,7 +945,7 @@ class BracketBuilder:
                 full_name = " & ".join(names) if names else fallback_label
                 return {"name": full_name, "avatar_uri": av_uri, "is_empty": False}
 
-            def render_tree_match(match_num: int, fallback_label_a="Time A", fallback_label_b="Time B"):
+            def render_tree_match(match_num: int, fallback_label_a="Time A", fallback_label_b="Time B", extra_class: str = ""):
                 m = matches_by_num.get(match_num)
                 team_a_ids = m.get("team_a_ids") if m else None
                 team_b_ids = m.get("team_b_ids") if m else None
@@ -960,12 +960,16 @@ class BracketBuilder:
                 a_is_winner = is_done and (winner_ids and team_a_ids == winner_ids)
                 b_is_winner = is_done and (winner_ids and team_b_ids == winner_ids)
 
+                max_name_len = 20 if "match-final" in extra_class else 16
+                name_a = (info_a['name'][:max_name_len] + '...') if len(info_a['name']) > max_name_len else info_a['name']
+                name_b = (info_b['name'][:max_name_len] + '...') if len(info_b['name']) > max_name_len else info_b['name']
+
                 return f"""
-                <div class="match-box {'match-completed' if is_done else ''}">
+                <div class="match-box {'match-completed' if is_done else ''} {extra_class}">
                     <div class="match-participant {'winner-side' if a_is_winner else ('loser-side' if (is_done and b_is_winner) else '')}">
                         <div class="participant-left">
                             {f'<img class="mini-avatar" src="{info_a["avatar_uri"]}" />' if info_a["avatar_uri"] else '<div class="mini-ph">?</div>'}
-                            <span class="p-name">{(info_a['name'][:15] + '...') if len(info_a['name']) > 15 else info_a['name']}</span>
+                            <span class="p-name">{name_a}</span>
                         </div>
                         {f'<span class="match-score-pill">{score_a}</span>' if score_a is not None else ''}
                     </div>
@@ -973,7 +977,7 @@ class BracketBuilder:
                     <div class="match-participant {'winner-side' if b_is_winner else ('loser-side' if (is_done and a_is_winner) else '')}">
                         <div class="participant-left">
                             {f'<img class="mini-avatar" src="{info_b["avatar_uri"]}" />' if info_b["avatar_uri"] else '<div class="mini-ph">?</div>'}
-                            <span class="p-name">{(info_b['name'][:15] + '...') if len(info_b['name']) > 15 else info_b['name']}</span>
+                            <span class="p-name">{name_b}</span>
                         </div>
                         {f'<span class="match-score-pill">{score_b}</span>' if score_b is not None else ''}
                     </div>
@@ -990,14 +994,18 @@ class BracketBuilder:
                     </div>
                     
                     <div class="column-round center-col">
-                        <div class="column-title gold-title">★ GRANDE FINAL ★</div>
-                        {render_tree_match(3, "Venc. Semi 1", "Venc. Semi 2")}
-                        <div class="trophy-card mini">
-                            <div class="trophy-icon">🏆</div>
-                            <div class="trophy-details">
-                                <span class="trophy-title">CAMPEÃO</span>
-                                <span class="trophy-winner">{w_label}</span>
+                        <div class="trophy-top-wrapper">
+                            <div class="trophy-card featured">
+                                <div class="trophy-icon">🏆</div>
+                                <div class="trophy-details">
+                                    <span class="trophy-title">★ CAMPEÃO DO TORNEIO ★</span>
+                                    <span class="trophy-winner">{w_label}</span>
+                                </div>
                             </div>
+                        </div>
+                        <div class="final-box-group">
+                            <div class="column-title gold-title">★ GRANDE FINAL ★</div>
+                            {render_tree_match(3, "Venc. Semi 1", "Venc. Semi 2", extra_class="match-final")}
                         </div>
                     </div>
 
@@ -1054,11 +1062,12 @@ class BracketBuilder:
                                 </div>
                             </div>
                         </div>
-                        <div class="final-middle-wrapper">
-                            <div class="column-title gold-title">★ GRANDE FINAL ★</div>
-                            {render_tree_match(7, "Finalista 1", "Finalista 2")}
+                        <div class="round-branch-container center-branch">
+                            <div class="match-branch-single full-center final-center-slot">
+                                <div class="final-title-header">★ GRANDE FINAL ★</div>
+                                {render_tree_match(7, "Finalista 1", "Finalista 2", extra_class="match-final")}
+                            </div>
                         </div>
-                        <div class="bottom-spacer"></div>
                     </div>
 
                     <!-- CONECTOR 3 -->
@@ -1169,11 +1178,12 @@ class BracketBuilder:
                                 </div>
                             </div>
                         </div>
-                        <div class="final-middle-wrapper">
-                            <div class="column-title gold-title">★ GRANDE FINAL ★</div>
-                            {render_tree_match(15, "Finalista 1", "Finalista 2")}
+                        <div class="round-branch-container center-branch">
+                            <div class="match-branch-single full-center final-center-slot">
+                                <div class="final-title-header">★ GRANDE FINAL ★</div>
+                                {render_tree_match(15, "Finalista 1", "Finalista 2", extra_class="match-final")}
+                            </div>
                         </div>
-                        <div class="bottom-spacer"></div>
                     </div>
 
                     <!-- CONECTOR 4 (Final <- Semis) -->
@@ -1838,59 +1848,73 @@ class BracketBuilder:
             height: 100%;
         }}
         .trophy-top-wrapper {{
+            position: absolute;
+            top: 40px;
+            left: 50%;
+            transform: translateX(-50%);
             width: 100%;
             display: flex;
             justify-content: center;
-            margin-top: 4px;
+            z-index: 10;
         }}
-        .final-middle-wrapper {{
+        .final-center-slot {{
+            position: relative;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            flex: 1;
-            gap: 12px;
-        }}
-        .bottom-spacer {{
-            height: 60px;
             width: 100%;
+            height: 100%;
+        }}
+        .final-title-header {{
+            position: absolute;
+            bottom: calc(50% + 56px);
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 16px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #ffd700;
+            text-shadow: 0 0 16px rgba(255, 215, 0, 0.6);
+            white-space: nowrap;
+            z-index: 5;
         }}
         .trophy-card.featured {{
             display: flex;
             align-items: center;
-            gap: 18px;
+            gap: 20px;
             background: linear-gradient(135deg, rgba(45, 35, 10, 0.95) 0%, rgba(30, 24, 10, 0.85) 100%);
             border: 2px solid #ffd700;
-            border-radius: 18px;
-            padding: 12px 28px;
-            box-shadow: 0 0 45px rgba(255, 215, 0, 0.45), inset 0 0 20px rgba(255, 215, 0, 0.15);
+            border-radius: 20px;
+            padding: 14px 34px;
+            box-shadow: 0 0 50px rgba(255, 215, 0, 0.45), inset 0 0 22px rgba(255, 215, 0, 0.18);
             backdrop-filter: blur(16px);
-            min-width: 290px;
+            min-width: 340px;
         }}
         .trophy-card.featured .trophy-icon {{
-            font-size: 44px;
-            filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.8));
+            font-size: 52px;
+            filter: drop-shadow(0 0 22px rgba(255, 215, 0, 0.85));
         }}
         .trophy-card.featured .trophy-details {{
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 6px;
         }}
         .trophy-card.featured .trophy-title {{
             font-family: 'Orbitron', sans-serif;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 800;
-            letter-spacing: 2px;
+            letter-spacing: 2.5px;
             color: #ffd700;
-            text-shadow: 0 0 12px rgba(255, 215, 0, 0.6);
+            text-shadow: 0 0 15px rgba(255, 215, 0, 0.6);
         }}
         .trophy-card.featured .trophy-winner {{
             font-family: 'Rajdhani', sans-serif;
-            font-size: 24px;
+            font-size: 28px;
             font-weight: 800;
             color: #ffffff;
             letter-spacing: 1px;
-            text-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+            text-shadow: 0 0 14px rgba(255, 255, 255, 0.6);
         }}
 
         /* Connector Lines */
@@ -1994,6 +2018,27 @@ class BracketBuilder:
         .match-box.match-completed {{
             border-color: rgba(255, 215, 0, 0.4);
         }}
+        .match-box.match-final {{
+            width: 100%;
+            max-width: 310px;
+            padding: 10px 14px;
+            gap: 8px;
+            border: 2px solid rgba(255, 215, 0, 0.55);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 25px rgba(255, 215, 0, 0.25);
+        }}
+        .match-box.match-final .mini-avatar, .match-box.match-final .mini-ph {{
+            width: 34px;
+            height: 34px;
+            font-size: 16px;
+        }}
+        .match-box.match-final .p-name {{
+            font-size: 18px;
+            font-weight: 800;
+        }}
+        .match-box.match-final .match-score-pill {{
+            font-size: 16px;
+            padding: 3px 9px;
+        }}
         .match-participant {{
             display: flex;
             align-items: center;
@@ -2063,19 +2108,71 @@ class BracketBuilder:
             background: rgba(255, 255, 255, 0.08);
         }}
 
+        /* 8 Teams Bracket Custom Sizing */
+        .bracket-tree-wrapper.eight-teams {{
+            gap: 0;
+            padding: 0 40px;
+        }}
+        .eight-teams .col-quartas,
+        .eight-teams .col-semis {{
+            flex: 0 0 240px;
+            width: 240px;
+        }}
+        .eight-teams .col-final {{
+            flex: 0 0 340px;
+            width: 340px;
+            position: relative;
+        }}
+        .eight-teams .connector-col {{
+            flex: 1;
+            width: auto;
+        }}
+        .eight-teams .match-box {{
+            max-width: 240px;
+            padding: 8px 12px;
+        }}
+        .eight-teams .match-box.match-final {{
+            max-width: 340px;
+            padding: 10px 14px;
+        }}
+
         /* 16 Teams Bracket Custom Sizing */
         .bracket-tree-wrapper.sixteen-teams {{
-            gap: 4px;
-            padding: 0 8px;
+            gap: 0;
+            padding: 0 16px;
+        }}
+        .sixteen-teams .col-oitavas,
+        .sixteen-teams .col-quartas,
+        .sixteen-teams .col-semis {{
+            flex: 0 0 215px;
+            width: 215px;
+        }}
+        .sixteen-teams .col-final {{
+            flex: 0 0 310px;
+            width: 310px;
+            position: relative;
+        }}
+        .sixteen-teams .connector-col {{
+            flex: 1;
+            width: auto;
         }}
         .sixteen-teams .match-box {{
             max-width: 215px;
             padding: 6px 9px;
             gap: 4px;
         }}
+        .sixteen-teams .match-box.match-final {{
+            max-width: 310px;
+            padding: 10px 14px;
+            gap: 8px;
+        }}
         .sixteen-teams .p-name {{
             font-size: 15px;
             font-weight: 700;
+        }}
+        .sixteen-teams .match-box.match-final .p-name {{
+            font-size: 18px;
+            font-weight: 800;
         }}
 
         /* 32 Teams Bracket Custom Sizing & Grid */
