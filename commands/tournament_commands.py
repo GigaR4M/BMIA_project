@@ -625,6 +625,11 @@ class RaceScoreModal(discord.ui.Modal):
                 "recorded_by": interaction.user.id
             }
 
+            tourney = await self.db.get_tournament(self.tournament_id)
+            if not tourney or tourney["status"] in ("completed", "cancelled"):
+                await interaction.followup.send("⚠️ Não é possível registrar resultados em um torneio encerrado ou cancelado.", ephemeral=True)
+                return
+
             async with self.db.pool.acquire() as conn:
                 await conn.execute("""
                     UPDATE tournament_matches
@@ -1105,6 +1110,14 @@ class TournamentCommands(app_commands.Group):
             await interaction.response.send_message("❌ Torneio não encontrado.", ephemeral=True)
             return
 
+        if tourney["status"] == "cancelled":
+            await interaction.response.send_message("⚠️ Não é possível lançar resultados em um torneio cancelado.", ephemeral=True)
+            return
+
+        if tourney["status"] == "completed":
+            await interaction.response.send_message("⚠️ Este torneio já foi concluído.", ephemeral=True)
+            return
+
         matches = await self.db.get_tournament_matches(id)
         if not matches:
             await interaction.response.send_message("⚠️ As partidas ainda não foram geradas. Use `/torneio sortear` primeiro.", ephemeral=True)
@@ -1422,6 +1435,10 @@ class TournamentCommands(app_commands.Group):
                 await interaction.followup.send("❌ Torneio não encontrado.")
                 return
 
+            if tourney["status"] == "cancelled":
+                await interaction.followup.send("⚠️ Não é possível encerrar um torneio que foi cancelado.")
+                return
+
             if tourney["status"] == "completed":
                 await interaction.followup.send("⚠️ Este torneio já foi encerrado anteriormente.")
                 return
@@ -1629,6 +1646,10 @@ class TournamentCommands(app_commands.Group):
                 await interaction.followup.send("❌ Torneio não encontrado.")
                 return
 
+            if tourney["status"] == "cancelled":
+                await interaction.followup.send("⚠️ Não é possível registrar resultados em um torneio cancelado.")
+                return
+
             if tourney["status"] == "completed":
                 await interaction.followup.send("⚠️ Este torneio já foi concluído.")
                 return
@@ -1764,12 +1785,29 @@ class TournamentCommands(app_commands.Group):
                 await interaction.followup.send("❌ Torneio não encontrado.")
                 return
 
+            if tourney["status"] == "cancelled":
+                await interaction.followup.send(f"⚠️ O Torneio #{id} ({tourney['name']}) já foi cancelado anteriormente.")
+                return
+
             if tourney["status"] == "completed":
                 await interaction.followup.send("⚠️ Não é possível cancelar um torneio que já foi concluído.")
                 return
 
-            await self.db.cancel_tournament(id)
+            res = await self.db.cancel_tournament(id)
+            if isinstance(res, dict) and not res.get("success"):
+                await interaction.followup.send(f"⚠️ {res.get('reason', 'Não foi possível cancelar o torneio.')}")
+                return
+
             await interaction.followup.send(f"🚫 **Torneio #{id} ({tourney['name']}) foi cancelado com sucesso.**")
+
+            # Cancela evento agendado no Discord se existir
+            if tourney.get("event_id"):
+                try:
+                    event = interaction.guild.get_scheduled_event(tourney["event_id"])
+                    if event:
+                        await event.cancel()
+                except Exception as ev_err:
+                    logger.debug(f"Não foi possível cancelar evento agendado: {ev_err}")
 
             # Atualiza mensagem original
             if tourney.get("channel_id") and tourney.get("message_id"):
@@ -1872,6 +1910,14 @@ class TournamentCommands(app_commands.Group):
             tourney = await self.db.get_tournament(id)
             if not tourney or tourney["guild_id"] != interaction.guild.id:
                 await interaction.followup.send("❌ Torneio não encontrado.")
+                return
+
+            if tourney["status"] == "cancelled":
+                await interaction.followup.send("⚠️ Não é possível realizar sorteio em um torneio que foi cancelado.")
+                return
+
+            if tourney["status"] == "completed":
+                await interaction.followup.send("⚠️ Não é possível realizar sorteio em um torneio que já foi concluído.")
                 return
 
             res = await self.db.shuffle_tournament_participants(id)

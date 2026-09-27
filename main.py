@@ -49,6 +49,8 @@ from commands.context_commands import ContextCommands
 from commands.config_commands import ConfigCommands
 from commands.tournament_commands import TournamentCommands, TournamentRegistrationView
 from commands.reputation_commands import ReputationCommands, report_user_command, report_message_context, report_user_context
+from commands.deals_commands import SteamCommands, TrackedGamesCommands
+from utils.gg_deals_client import GGDealsClient
 from utils.invite_tracker import InviteTracker
 from utils.role_manager import RoleManager
 from utils.giveaway_manager import GiveawayManager
@@ -143,6 +145,7 @@ async def on_ready() -> None:
         await ctx.invite_tracker.initialize()
         ctx.rawg_client = RawgClient(api_key=RAWG_API_KEY)
         ctx.giphy_client = GiphyClient(api_key=GIPHY_API_KEY)
+        ctx.gg_deals_client = GGDealsClient()
 
         # Carrega configuração de canais/cargos do banco (se existir)
         for guild in client.guilds:
@@ -176,6 +179,8 @@ async def on_ready() -> None:
         client.tree.add_command(report_message_context)
         client.tree.add_command(report_user_context)
         client.tree.add_command(GamesCommands(ctx.db))
+        client.tree.add_command(SteamCommands(ctx.db))
+        client.tree.add_command(TrackedGamesCommands(ctx.db, ctx.gg_deals_client))
         setup_rawg_slash_command(client.tree, ctx.rawg_client)
         setup_gif_slash_command(client.tree, ctx.giphy_client)
         client.tree.add_command(InfoCommands())
@@ -198,7 +203,6 @@ async def on_ready() -> None:
         @discord.app_commands.describe(ano="Ano dos destaques para consulta (padrão: ano atual)")
         async def destaques_slash(interaction: discord.Interaction, ano: int | None = None):
             await handle_highlights_gallery(ctx.db, interaction, ano)
-
 
         # Registra persistent views para torneios ativos (para botões continuarem funcionando)
         for guild in client.guilds:
@@ -234,12 +238,51 @@ async def on_ready() -> None:
             if ctx.event_monitor:
                 client.loop.create_task(ctx.event_monitor.sync_all_guild_events(guild))
 
+        # Seed inicial de jogos monitorados
+        INITIAL_SEED_GAMES = [
+            2680010,  # The First Berserker: Khazan
+            2322010,  # God of War Ragnarök
+            892970,   # Valheim
+            2358720,  # Black Myth: Wukong
+            814380,   # Sekiro: Shadows Die Twice - GOTY Edition
+            2651280,  # Marvel's Spider-Man 2
+            1817190,  # Marvel's Spider-Man: Miles Morales
+        ]
+        for guild in client.guilds:
+            try:
+                existing_games = await ctx.db.get_tracked_games(guild.id)
+                if not existing_games:
+                    target_ch_id = ctx.allowed_channels[0] if ctx.allowed_channels else (guild.text_channels[0].id if guild.text_channels else 0)
+                    for appid in INITIAL_SEED_GAMES:
+                        info = await ctx.gg_deals_client.get_game_info(appid)
+                        if info:
+                            await ctx.db.add_tracked_game(
+                                guild_id=guild.id,
+                                channel_id=target_ch_id,
+                                message_id=None,
+                                steam_appid=info["steam_appid"],
+                                game_name=info["game_name"],
+                                suggested_by_id=client.user.id if client.user else 0,
+                                base_price=info["base_price"],
+                                current_price=info["current_price"],
+                                discount_percent=info["discount_percent"],
+                                historical_low_price=info["historical_low_price"],
+                                best_store_name=info["best_store_name"],
+                                best_store_url=info["best_store_url"],
+                                header_image_url=info["header_image_url"],
+                                gg_deals_url=info["gg_deals_url"]
+                            )
+                    logger.info(f"🌱 Seed inicial de 7 jogos cadastrado para o servidor {guild.name}.")
+            except Exception as seed_err:
+                logger.warning(f"Erro no seed inicial de jogos para {guild.name}: {seed_err}")
+
         await ctx.points_manager.recover_sessions()
 
         logger.info("📊 Sistema de estatísticas ativado!")
         logger.info("🏅 Sistema de cargos automáticos ativado!")
         logger.info("🎉 Sistema de sorteios ativado!")
         logger.info("🎮 Sistema de rastreamento de jogos ativado!")
+        logger.info("🔥 Sistema de promoções e eventos Steam ativado!")
 
     except Exception as exc:
         logger.error("❌ Erro ao inicializar sistemas: %s", exc)
@@ -262,6 +305,8 @@ async def on_ready() -> None:
     loop.create_task(bg.send_daily_summary(client, ctx.db, ctx.telegram, ctx.giveaway_manager))
     loop.create_task(bg.weekly_games_report(client, ctx.db, ctx.telegram))
     loop.create_task(bg.check_voice_points_periodically(client, ctx.points_manager))
+    loop.create_task(bg.check_steam_seasonal_events_periodically(client, ctx.db))
+    loop.create_task(bg.check_tracked_game_deals_periodically(client, ctx.db, getattr(ctx, 'gg_deals_client', None)))
     if ctx.leaderboard_updater:
         loop.create_task(ctx.leaderboard_updater.start_loop())
 

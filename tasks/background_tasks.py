@@ -354,3 +354,167 @@ async def check_voice_points_periodically(
         except Exception as exc:
             logger.error("❌ Erro no loop de pontos periódicos: %s", exc)
         await asyncio.sleep(60)
+
+
+# ── Promoções e Eventos Sazonais da Steam ──────────────────────────────────────
+async def check_steam_seasonal_events_periodically(client: discord.Client, db) -> None:
+    """Verifica e notifica o início de grandes promoções e festivais da Steam às 14:00 BRT."""
+    from utils.gg_deals_client import BRT if hasattr(__import__('utils.gg_deals_client'), 'BRT') else zoneinfo.ZoneInfo("America/Sao_Paulo")
+    import zoneinfo
+    brt_zone = zoneinfo.ZoneInfo("America/Sao_Paulo")
+
+    await client.wait_until_ready()
+    while not client.is_closed():
+        try:
+            if db:
+                due_events = await db.get_due_steam_events_for_notification()
+                for event in due_events:
+                    start_dt = event["start_time"]
+                    end_dt = event["end_time"]
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=brt_zone)
+                    if end_dt.tzinfo is None:
+                        end_dt = end_dt.replace(tzinfo=brt_zone)
+
+                    start_str = start_dt.astimezone(brt_zone).strftime("%d/%m/%Y às %H:%M BRT")
+                    end_str = end_dt.astimezone(brt_zone).strftime("%d/%m/%Y às %H:%M BRT")
+
+                    embed = discord.Embed(
+                        title=f"🔥 Começou: {event['event_name']} na Steam!",
+                        description=(
+                            f"O evento oficial da Steam já está no ar com milhares de descontos!\n\n"
+                            f"📆 **Duração:** {start_str} até {end_str}\n"
+                            f"🛒 **Acesse a loja:** [Steam Store](https://store.steampowered.com/)\n"
+                        ),
+                        color=discord.Color.from_rgb(26, 61, 92)
+                    )
+                    if event.get("description"):
+                        embed.description += f"\n_{event['description']}_\n"
+                    if event.get("banner_url"):
+                        embed.set_image(url=event["banner_url"])
+
+                    embed.set_footer(text="Notificação automática de eventos da Steam | BMIA")
+
+                    for guild in client.guilds:
+                        channel_to_send = None
+                        config = await db.get_guild_config(guild.id)
+                        if config.get("announcement_channel_id"):
+                            channel_to_send = guild.get_channel(config["announcement_channel_id"])
+                        if not channel_to_send:
+                            channel_to_send = guild.system_channel
+                        if not channel_to_send:
+                            for ch in guild.text_channels:
+                                if ch.permissions_for(guild.me).send_messages:
+                                    channel_to_send = ch
+                                    break
+
+                        if channel_to_send:
+                            try:
+                                await channel_to_send.send(embed=embed)
+                            except Exception as send_err:
+                                logger.warning(f"Não foi possível enviar alerta de evento Steam em {guild.name}: {send_err}")
+
+                    await db.mark_steam_event_notified(event["id"], "start")
+                    logger.info(f"📢 Alerta do evento Steam '{event['event_name']}' disparado com sucesso.")
+        except Exception as exc:
+            logger.error("❌ Erro ao verificar eventos sazonais da Steam: %s", exc)
+        await asyncio.sleep(300)
+
+
+async def check_tracked_game_deals_periodically(client: discord.Client, db, gg_client=None) -> None:
+    """Verifica periodicamente os jogos monitorados para alertar sobre novas promoções."""
+    from utils.gg_deals_client import GGDealsClient
+    if gg_client is None:
+        gg_client = GGDealsClient()
+
+    await client.wait_until_ready()
+    # Espera 2 minutos antes da primeira checagem para dar tempo de inicializar
+    await asyncio.sleep(120)
+
+    while not client.is_closed():
+        try:
+            if db:
+                games = await db.get_all_tracked_games(is_active=True)
+                for game in games:
+                    appid = game["steam_appid"]
+                    info = await gg_client.get_game_info(appid)
+                    if not info:
+                        continue
+
+                    # Atualiza dados no banco
+                    await db.update_tracked_game_price(
+                        game_id=game["id"],
+                        current_price=info["current_price"],
+                        discount_percent=info["discount_percent"],
+                        historical_low_price=info["historical_low_price"],
+                        best_store_name=info["best_store_name"],
+                        best_store_url=info["best_store_url"],
+                        header_image_url=info["header_image_url"]
+                    )
+
+                    # Verifica se deve alertar: Desconto ativo e não notificado recentemente (ou preço caiu mais)
+                    discount = info["discount_percent"]
+                    last_notified = game.get("last_notified_at")
+                    should_notify = False
+
+                    if discount > 0:
+                        if not last_notified:
+                            should_notify = True
+                        else:
+                            now = utcnow()
+                            if last_notified.tzinfo is None:
+                                last_notified = last_notified.replace(tzinfo=now.tzinfo)
+                            # Se faz mais de 24 horas desde a última notificação
+                            if (now - last_notified).total_seconds() > 86400:
+                                should_notify = True
+
+                    if should_notify:
+                        guild = client.get_guild(game["guild_id"])
+                        if guild:
+                            channel = guild.get_channel(game["channel_id"])
+                            if not channel:
+                                config = await db.get_guild_config(guild.id)
+                                if config.get("announcement_channel_id"):
+                                    channel = guild.get_channel(config["announcement_channel_id"])
+                            if not channel:
+                                channel = guild.system_channel
+
+                            if channel and channel.permissions_for(guild.me).send_messages:
+                                embed = discord.Embed(
+                                    title=f"🔥 Promoção Detectada: {info['game_name']}!",
+                                    description=(
+                                        f"O jogo sugerido está com **-{discount}% de desconto**!\n\n"
+                                        f"💵 **Preço Atual:** R$ {info['current_price']:.2f} ~~(R$ {info['base_price']:.2f})~~\n"
+                                        f"🛒 **Melhor Preço em:** [{info['best_store_name']}]({info['best_store_url']})\n"
+                                    ),
+                                    color=discord.Color.gold()
+                                )
+                                if info["historical_low_price"] > 0 and info["current_price"] <= info["historical_low_price"]:
+                                    embed.description += "⭐ **ATENÇÃO: Este é o MENOR PREÇO HISTÓRICO registrado!**\n"
+                                if info.get("header_image_url"):
+                                    embed.set_image(url=info["header_image_url"])
+
+                                embed.set_footer(text="Monitor de Ofertas Steam | BMIA")
+                                try:
+                                    target_msg = None
+                                    if game.get("message_id"):
+                                        try:
+                                            target_msg = await channel.fetch_message(game["message_id"])
+                                        except Exception:
+                                            target_msg = None
+
+                                    if target_msg:
+                                        await target_msg.reply(embed=embed, mention_author=True)
+                                    else:
+                                        suggester_mention = f"<@{game['suggested_by_id']}> " if game.get("suggested_by_id") and game["suggested_by_id"] > 0 else ""
+                                        await channel.send(content=suggester_mention if suggester_mention else None, embed=embed)
+                                    await db.mark_tracked_game_notified(game["id"])
+                                except Exception as send_err:
+                                    logger.warning(f"Erro ao enviar alerta de promoção para {game['game_name']}: {send_err}")
+                    
+                    # Pausa rápida entre consultas para respeitar rate limits
+                    await asyncio.sleep(2)
+        except Exception as exc:
+            logger.error("❌ Erro no loop de monitoramento de promoções de jogos: %s", exc)
+        await asyncio.sleep(1800)
+

@@ -365,6 +365,43 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                 except Exception as e:
                     logger.warning("Erro ao verificar Chat Revival no canal %s: %s", message.channel.id, e)
 
+        # Rastreamento Automático de Jogos Sugeridos (Links da Steam)
+        if message.guild and ctx.db and "store.steampowered.com/app/" in message.content:
+            from utils.gg_deals_client import extract_steam_appid, GGDealsClient
+            appid = extract_steam_appid(message.content)
+            if appid:
+                async def auto_track_game():
+                    try:
+                        existing = await ctx.db.get_tracked_game(message.guild.id, appid)
+                        if not existing:
+                            gg_client = getattr(ctx, "gg_deals_client", None) or GGDealsClient()
+                            info = await gg_client.get_game_info(appid)
+                            if info:
+                                await ctx.db.add_tracked_game(
+                                    guild_id=message.guild.id,
+                                    channel_id=message.channel.id,
+                                    message_id=message.id,
+                                    steam_appid=info["steam_appid"],
+                                    game_name=info["game_name"],
+                                    suggested_by_id=message.author.id,
+                                    base_price=info["base_price"],
+                                    current_price=info["current_price"],
+                                    discount_percent=info["discount_percent"],
+                                    historical_low_price=info["historical_low_price"],
+                                    best_store_name=info["best_store_name"],
+                                    best_store_url=info["best_store_url"],
+                                    header_image_url=info["header_image_url"],
+                                    gg_deals_url=info["gg_deals_url"]
+                                )
+                                logger.info(f"🎮 Jogo '{info['game_name']}' (AppID {appid}) registrado automaticamente para monitoramento de ofertas.")
+                                try:
+                                    await message.add_reaction("🎮")
+                                except Exception:
+                                    pass
+                    except Exception as track_err:
+                        logger.warning(f"Erro ao rastrear jogo sugerido automaticamente: {track_err}")
+                
+                client.loop.create_task(auto_track_game())
 
         # Buffer de moderação
         ctx.buffer_mensagens.append(message)

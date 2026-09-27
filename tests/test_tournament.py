@@ -905,4 +905,81 @@ class TestExpandedBracketGenerators:
         call_kwargs = modal.db.create_tournament.call_args[1]
         assert call_kwargs["max_participants"] == 32
 
+    @pytest.mark.asyncio
+    async def test_cancelar_torneio_safeguards(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        # 1. Torneio já cancelado
+        mock_db.get_tournament.return_value = {"id": 10, "name": "Copa 10", "guild_id": 123456789, "status": "cancelled"}
+        await cmd.cancelar_torneio.callback(cmd, interaction, id=10)
+        assert "já foi cancelado anteriormente" in interaction.followup.send.call_args[0][0]
+
+        # 2. Torneio concluído
+        interaction.followup.send.reset_mock()
+        mock_db.get_tournament.return_value = {"id": 10, "name": "Copa 10", "guild_id": 123456789, "status": "completed"}
+        await cmd.cancelar_torneio.callback(cmd, interaction, id=10)
+        assert "já foi concluído" in interaction.followup.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_sortear_torneio_safeguards(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        # 1. Torneio cancelado
+        mock_db.get_tournament.return_value = {"id": 10, "name": "Copa 10", "guild_id": 123456789, "status": "cancelled"}
+        await cmd.sortear_torneio.callback(cmd, interaction, id=10)
+        assert "cancelado" in interaction.followup.send.call_args[0][0]
+
+        # 2. Torneio concluído
+        interaction.followup.send.reset_mock()
+        mock_db.get_tournament.return_value = {"id": 10, "name": "Copa 10", "guild_id": 123456789, "status": "completed"}
+        await cmd.sortear_torneio.callback(cmd, interaction, id=10)
+        assert "concluído" in interaction.followup.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_encerrar_torneio_safeguards(self, mock_db):
+        cmd = TournamentCommands(db=mock_db)
+        interaction = MagicMock()
+        interaction.guild.id = 123456789
+        interaction.response.defer = AsyncMock()
+        interaction.followup.send = AsyncMock()
+
+        vencedor = MagicMock()
+        vencedor.id = 999
+        vencedor.mention = "<@999>"
+
+        # 1. Torneio cancelado
+        mock_db.get_tournament.return_value = {"id": 10, "name": "Copa 10", "guild_id": 123456789, "status": "cancelled"}
+        await cmd.encerrar_torneio.callback(cmd, interaction, id=10, vencedor=vencedor)
+        assert "cancelado" in interaction.followup.send.call_args[0][0]
+
+        # 2. Torneio concluído
+        interaction.followup.send.reset_mock()
+        mock_db.get_tournament.return_value = {"id": 10, "name": "Copa 10", "guild_id": 123456789, "status": "completed"}
+        await cmd.encerrar_torneio.callback(cmd, interaction, id=10, vencedor=vencedor)
+        assert "já foi encerrado anteriormente" in interaction.followup.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_database_shuffle_protection_with_played_matches(self):
+        from database import Database
+        db = Database("postgresql://fake")
+        db.pool = MagicMock()
+        mock_conn = MagicMock()
+        db.pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        # Torneio ativo com 1 partida já completada
+        mock_conn.fetchrow = AsyncMock(return_value={"id": 1, "status": "active", "format": "1v1"})
+        mock_conn.fetchval = AsyncMock(return_value=1) # 1 completed match
+
+        res = await db.shuffle_tournament_participants(1)
+        assert res["success"] is False
+        assert "resultados registrados" in res["reason"]
+
 

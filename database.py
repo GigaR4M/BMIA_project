@@ -459,6 +459,52 @@ class Database:
             """)
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_media_highlights_guild_created ON media_highlights (guild_id, created_at, popularity_score DESC)")
 
+            # Tabela de Jogos Monitorados (Wishlist & Sugestões)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS tracked_games (
+                    id SERIAL PRIMARY KEY,
+                    guild_id BIGINT NOT NULL,
+                    channel_id BIGINT NOT NULL,
+                    message_id BIGINT,
+                    steam_appid INTEGER NOT NULL,
+                    game_name TEXT NOT NULL,
+                    suggested_by_id BIGINT NOT NULL,
+                    base_price NUMERIC(10, 2) DEFAULT 0.0,
+                    current_price NUMERIC(10, 2) DEFAULT 0.0,
+                    discount_percent INTEGER DEFAULT 0,
+                    historical_low_price NUMERIC(10, 2) DEFAULT 0.0,
+                    best_store_name TEXT DEFAULT 'Steam',
+                    best_store_url TEXT,
+                    header_image_url TEXT,
+                    gg_deals_url TEXT,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    last_checked_at TIMESTAMP WITH TIME ZONE,
+                    last_notified_at TIMESTAMP WITH TIME ZONE,
+                    UNIQUE (guild_id, steam_appid)
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tracked_games_guild ON tracked_games(guild_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tracked_games_active ON tracked_games(is_active)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_tracked_games_appid ON tracked_games(steam_appid)")
+
+            # Tabela de Eventos Sazonais e Festivais da Steam
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS steam_seasonal_events (
+                    id SERIAL PRIMARY KEY,
+                    event_name TEXT NOT NULL,
+                    event_slug TEXT UNIQUE NOT NULL,
+                    event_type TEXT NOT NULL,
+                    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+                    end_time TIMESTAMP WITH TIME ZONE NOT NULL,
+                    banner_url TEXT,
+                    description TEXT,
+                    notified_24h BOOLEAN DEFAULT FALSE,
+                    notified_start BOOLEAN DEFAULT FALSE
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_steam_events_start ON steam_seasonal_events(start_time)")
+
             
             # ==================== ADVANCED CONTEXT SYSTEM SCHEMAS ====================
 
@@ -760,6 +806,10 @@ class Database:
                 logger.warning(f"⚠️ Erro ao criar funções RPC para o dashboard: {e}")
 
             logger.info("✅ Schema do banco de dados inicializado")
+            try:
+                await self.seed_initial_steam_deals_data()
+            except Exception as e:
+                logger.warning(f"⚠️ Erro ao semear eventos sazonais da Steam: {e}")
     
     # ==================== INSERÇÃO DE DADOS ====================
     
@@ -2424,12 +2474,12 @@ class Database:
         """Inscreve um participante no torneio se houver vagas."""
         async with self.pool.acquire() as conn:
             tournament = await conn.fetchrow("""
-                SELECT status, max_participants FROM tournaments WHERE id = $1
+                SELECT status, max_participants, is_shuffled FROM tournaments WHERE id = $1
             """, tournament_id)
             if not tournament:
                 return {"success": False, "reason": "Torneio não encontrado."}
-            if tournament["status"] != "open":
-                return {"success": False, "reason": "Inscrições encerradas para este torneio."}
+            if tournament["status"] != "open" or tournament.get("is_shuffled"):
+                return {"success": False, "reason": "Inscrições encerradas ou sorteio já realizado para este torneio."}
 
             current_count = await conn.fetchval("""
                 SELECT COUNT(*) FROM tournament_participants WHERE tournament_id = $1
@@ -2457,12 +2507,12 @@ class Database:
         """Remove a inscrição de um participante."""
         async with self.pool.acquire() as conn:
             tournament = await conn.fetchrow("""
-                SELECT status, max_participants FROM tournaments WHERE id = $1
+                SELECT status, max_participants, is_shuffled FROM tournaments WHERE id = $1
             """, tournament_id)
             if not tournament:
                 return {"success": False, "reason": "Torneio não encontrado."}
-            if tournament["status"] not in ("open", "active"):
-                return {"success": False, "reason": "Não é possível cancelar inscrição em torneio encerrado."}
+            if tournament["status"] not in ("open", "active") or tournament.get("is_shuffled"):
+                return {"success": False, "reason": "Não é possível cancelar inscrição após o sorteio das chaves ou encerramento do torneio."}
 
             res = await conn.execute("""
                 DELETE FROM tournament_participants
@@ -2499,6 +2549,20 @@ class Database:
             tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
             if not tournament:
                 return {"success": False, "reason": "Torneio não encontrado."}
+            if tournament["status"] == "completed":
+                return {"success": False, "reason": "Não é possível realizar sorteio em um torneio que já foi concluído."}
+            if tournament["status"] == "cancelled":
+                return {"success": False, "reason": "Não é possível realizar sorteio em um torneio que foi cancelado."}
+
+            # Impede re-sorteio destrutivo se já existirem partidas com resultados lançados
+            completed_matches = await conn.fetchval("""
+                SELECT COUNT(*) FROM tournament_matches WHERE tournament_id = $1 AND status = 'completed'
+            """, tournament_id)
+            if completed_matches and completed_matches > 0:
+                return {
+                    "success": False,
+                    "reason": f"Este torneio já possui {completed_matches} partida(s) com resultados registrados. O sorteio não pode ser refeito para evitar perda de dados."
+                }
 
             rows = await conn.fetch("""
                 SELECT user_id FROM tournament_participants WHERE tournament_id = $1
@@ -2520,7 +2584,7 @@ class Database:
 
             await conn.execute("""
                 UPDATE tournaments
-                SET is_shuffled = TRUE
+                SET is_shuffled = TRUE, status = 'active'
                 WHERE id = $1
             """, tournament_id)
 
@@ -2549,6 +2613,10 @@ class Database:
             tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
             if not tournament:
                 return {"success": False, "reason": "Torneio não encontrado."}
+            if tournament["status"] in ("completed", "cancelled"):
+                return {"success": False, "reason": "Não é possível adicionar participantes a um torneio concluído ou cancelado."}
+            if tournament.get("is_shuffled") and not force:
+                return {"success": False, "reason": "O sorteio já foi realizado. Utilize /torneio participante_substituir para trocar jogadores nas chaves."}
 
             already_registered = await conn.fetchval("""
                 SELECT 1 FROM tournament_participants WHERE tournament_id = $1 AND user_id = $2
@@ -2574,7 +2642,15 @@ class Database:
 
     async def admin_remove_participant(self, tournament_id: int, user_id: int) -> Dict[str, Any]:
         """Remove manualmente um participante do torneio (pela moderação/ADM)."""
-        return await self.remove_tournament_participant(tournament_id, user_id)
+        async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            if not tournament:
+                return {"success": False, "reason": "Torneio não encontrado."}
+            if tournament["status"] in ("completed", "cancelled"):
+                return {"success": False, "reason": "Não é possível remover participantes de um torneio concluído ou cancelado."}
+            if tournament.get("is_shuffled"):
+                return {"success": False, "reason": "O sorteio já foi realizado. As vagas estão fixadas nas chaves. Utilize /torneio participante_substituir."}
+            return await self.remove_tournament_participant(tournament_id, user_id)
 
     async def admin_substitute_participant(self, tournament_id: int, old_user_id: int, new_user_id: int) -> Dict[str, Any]:
         """Substitui um participante por outro, mantendo seu seed e posições nas partidas."""
@@ -2630,6 +2706,10 @@ class Database:
             tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
             if not tournament:
                 return {"success": False, "reason": "Torneio não encontrado."}
+            if tournament["status"] in ("completed", "cancelled"):
+                return {"success": False, "reason": f"Não é possível adicionar bots a um torneio {tournament['status']}."}
+            if tournament.get("is_shuffled"):
+                return {"success": False, "reason": "O sorteio das chaves já foi realizado. As inscrições estão encerradas."}
 
             current_participants = await self.get_tournament_participants(tournament_id)
             current_count = len(current_participants)
@@ -3292,6 +3372,13 @@ class Database:
                 return {"success": False, "reason": f"Partida #{match_number} não encontrada para este torneio."}
 
             tourney = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            if not tourney:
+                return {"success": False, "reason": "Torneio não encontrado."}
+            if tourney["status"] == "cancelled":
+                return {"success": False, "reason": "Não é possível registrar resultados em um torneio cancelado."}
+            if tourney["status"] == "completed":
+                return {"success": False, "reason": "Este torneio já foi concluído."}
+
             t_type = tourney["tournament_type"] if tourney else "bracket"
 
             is_draw = (score_a == score_b)
@@ -3366,6 +3453,10 @@ class Database:
     ) -> bool:
         """Encerra o torneio e define os vencedores (suporta individuais e equipes/duplas)."""
         async with self.pool.acquire() as conn:
+            tourney = await conn.fetchrow("SELECT status FROM tournaments WHERE id = $1", tournament_id)
+            if not tourney or tourney["status"] in ("completed", "cancelled"):
+                return False
+
             await conn.execute("""
                 UPDATE tournaments
                 SET status = 'completed',
@@ -3399,15 +3490,23 @@ class Database:
 
             return True
 
-    async def cancel_tournament(self, tournament_id: int) -> bool:
-        """Cancela um torneio aberto."""
+    async def cancel_tournament(self, tournament_id: int) -> Dict[str, Any]:
+        """Cancela um torneio aberto ou em andamento."""
         async with self.pool.acquire() as conn:
+            tournament = await conn.fetchrow("SELECT * FROM tournaments WHERE id = $1", tournament_id)
+            if not tournament:
+                return {"success": False, "reason": "Torneio não encontrado."}
+            if tournament["status"] == "cancelled":
+                return {"success": False, "reason": "Este torneio já foi cancelado anteriormente."}
+            if tournament["status"] == "completed":
+                return {"success": False, "reason": "Não é possível cancelar um torneio que já foi concluído."}
+
             await conn.execute("""
                 UPDATE tournaments
                 SET status = 'cancelled'
                 WHERE id = $1
             """, tournament_id)
-            return True
+            return {"success": True, "tournament": dict(tournament)}
 
     async def get_tournament_hall_of_fame(self, guild_id: int, limit: int = 5) -> List[Dict[str, Any]]:
         """Retorna o ranking histórico de campeões de torneios com jogos e torneios vencidos."""
@@ -4101,4 +4200,414 @@ class Database:
                 data["created_at"] = data["created_at"].strftime("%d/%m/%Y")
 
             return data
+
+    # ==================== STEAM DEALS & SEASONAL EVENTS ====================
+
+    async def add_tracked_game(
+        self,
+        guild_id: int,
+        channel_id: int,
+        message_id: Optional[int],
+        steam_appid: int,
+        game_name: str,
+        suggested_by_id: int,
+        base_price: float = 0.0,
+        current_price: float = 0.0,
+        discount_percent: int = 0,
+        historical_low_price: float = 0.0,
+        best_store_name: str = "Steam",
+        best_store_url: Optional[str] = None,
+        header_image_url: Optional[str] = None,
+        gg_deals_url: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Adiciona ou reativa um jogo para monitoramento de promoções."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO tracked_games (
+                    guild_id, channel_id, message_id, steam_appid, game_name,
+                    suggested_by_id, base_price, current_price, discount_percent,
+                    historical_low_price, best_store_name, best_store_url,
+                    header_image_url, gg_deals_url, is_active, last_checked_at
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, TRUE, NOW()
+                )
+                ON CONFLICT (guild_id, steam_appid)
+                DO UPDATE SET
+                    game_name = EXCLUDED.game_name,
+                    channel_id = EXCLUDED.channel_id,
+                    base_price = EXCLUDED.base_price,
+                    current_price = EXCLUDED.current_price,
+                    discount_percent = EXCLUDED.discount_percent,
+                    historical_low_price = EXCLUDED.historical_low_price,
+                    best_store_name = EXCLUDED.best_store_name,
+                    best_store_url = EXCLUDED.best_store_url,
+                    header_image_url = COALESCE(EXCLUDED.header_image_url, tracked_games.header_image_url),
+                    gg_deals_url = COALESCE(EXCLUDED.gg_deals_url, tracked_games.gg_deals_url),
+                    is_active = TRUE,
+                    last_checked_at = NOW()
+                RETURNING *
+            """,
+                guild_id, channel_id, message_id, steam_appid, game_name,
+                suggested_by_id, base_price, current_price, discount_percent,
+                historical_low_price, best_store_name, best_store_url,
+                header_image_url, gg_deals_url
+            )
+            return dict(row) if row else {}
+
+    async def get_tracked_games(self, guild_id: int, is_active: bool = True) -> List[Dict[str, Any]]:
+        """Retorna todos os jogos monitorados de um servidor."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM tracked_games
+                WHERE guild_id = $1 AND is_active = $2
+                ORDER BY discount_percent DESC, game_name ASC
+            """, guild_id, is_active)
+            return [dict(row) for row in rows]
+
+    async def get_all_tracked_games(self, is_active: bool = True) -> List[Dict[str, Any]]:
+        """Retorna todos os jogos monitorados ativos de todos os servidores."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM tracked_games
+                WHERE is_active = $1
+                ORDER BY last_checked_at ASC NULLS FIRST
+            """, is_active)
+            return [dict(row) for row in rows]
+
+    async def get_tracked_game(self, guild_id: int, steam_appid: int) -> Optional[Dict[str, Any]]:
+        """Busca um jogo monitorado específico por appid e servidor."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT * FROM tracked_games
+                WHERE guild_id = $1 AND steam_appid = $2
+            """, guild_id, steam_appid)
+            return dict(row) if row else None
+
+    async def update_tracked_game_price(
+        self,
+        game_id: int,
+        current_price: float,
+        discount_percent: int,
+        historical_low_price: float,
+        best_store_name: str,
+        best_store_url: Optional[str] = None,
+        header_image_url: Optional[str] = None
+    ) -> None:
+        """Atualiza os dados de preço e loja mais barata de um jogo monitorado."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE tracked_games
+                SET current_price = $2,
+                    discount_percent = $3,
+                    historical_low_price = $4,
+                    best_store_name = $5,
+                    best_store_url = $6,
+                    header_image_url = COALESCE($7, header_image_url),
+                    last_checked_at = NOW()
+                WHERE id = $1
+            """, game_id, current_price, discount_percent, historical_low_price, best_store_name, best_store_url, header_image_url)
+
+    async def mark_tracked_game_notified(self, game_id: int) -> None:
+        """Registra a data em que a notificação de promoção foi enviada."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE tracked_games
+                SET last_notified_at = NOW()
+                WHERE id = $1
+            """, game_id)
+
+    async def remove_tracked_game(self, guild_id: int, steam_appid: int) -> bool:
+        """Desativa um jogo do monitoramento."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("""
+                UPDATE tracked_games
+                SET is_active = FALSE
+                WHERE guild_id = $1 AND steam_appid = $2
+            """, guild_id, steam_appid)
+            return result != "UPDATE 0"
+
+    # --- Métodos de Eventos Sazonais da Steam ---
+
+    async def upsert_steam_event(
+        self,
+        event_name: str,
+        event_slug: str,
+        event_type: str,
+        start_time: datetime,
+        end_time: datetime,
+        banner_url: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> None:
+        """Insere ou atualiza um evento sazonal da Steam."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO steam_seasonal_events (
+                    event_name, event_slug, event_type, start_time, end_time, banner_url, description
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (event_slug)
+                DO UPDATE SET
+                    event_name = EXCLUDED.event_name,
+                    event_type = EXCLUDED.event_type,
+                    start_time = EXCLUDED.start_time,
+                    end_time = EXCLUDED.end_time,
+                    banner_url = COALESCE(EXCLUDED.banner_url, steam_seasonal_events.banner_url),
+                    description = COALESCE(EXCLUDED.description, steam_seasonal_events.description)
+            """, event_name, event_slug, event_type, start_time, end_time, banner_url, description)
+
+    async def get_upcoming_steam_events(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Retorna os próximos eventos sazonais ou em andamento ordenados por data de início."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM steam_seasonal_events
+                WHERE end_time >= NOW()
+                ORDER BY start_time ASC
+                LIMIT $1
+            """, limit)
+            return [dict(row) for row in rows]
+
+    async def get_due_steam_events_for_notification(self) -> List[Dict[str, Any]]:
+        """Retorna eventos que começaram mas ainda não foram notificados."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM steam_seasonal_events
+                WHERE start_time <= NOW()
+                  AND end_time > NOW()
+                  AND notified_start = FALSE
+                ORDER BY start_time ASC
+            """)
+            return [dict(row) for row in rows]
+
+    async def mark_steam_event_notified(self, event_id: int, notify_type: str = "start") -> None:
+        """Marca o evento como notificado de início ou encerramento."""
+        async with self.pool.acquire() as conn:
+            if notify_type == "start":
+                await conn.execute("""
+                    UPDATE steam_seasonal_events
+                    SET notified_start = TRUE
+                    WHERE id = $1
+                """, event_id)
+            elif notify_type == "end":
+                await conn.execute("""
+                    UPDATE steam_seasonal_events
+                    SET notified_end = TRUE
+                    WHERE id = $1
+                """, event_id)
+
+    async def update_steam_event_banner(self, event_slug: str, banner_url: Optional[str]) -> bool:
+        """Atualiza a URL do banner de um evento específico."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute("""
+                UPDATE steam_seasonal_events
+                SET banner_url = $2
+                WHERE event_slug = $1
+            """, event_slug, banner_url)
+            return result != "UPDATE 0"
+
+    async def seed_initial_steam_deals_data(self) -> None:
+        """Popula os eventos sazonais da Steam de 2026/2027 no banco de dados."""
+        events_data = [
+            {
+                "event_name": "Promoção de Primavera de 2026 (Autumn Sale)",
+                "event_slug": "autumn_sale_2026",
+                "event_type": "major_sale",
+                "start_time": datetime.fromisoformat("2026-10-01T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2026-10-08T14:00:00-03:00"),
+                "banner_url": "https://shared.fastly.steamstatic.com/community_assets/images/steamworks_docs/english/auutmn_sale_doc_26.jpg",
+                "description": "Grande promoção sazonal da Steam com milhares de descontos em todo o catálogo."
+            },
+            {
+                "event_name": "Festival Gastronômico",
+                "event_slug": "festival_gastronomico_2026",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2026-10-12T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2026-10-19T14:00:00-03:00"),
+                "banner_url": "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/4197840/07b3ae44aeba7850c98f33bb58b3e0ad02b9002d/capsule_616x353_2x.jpg",
+                "description": "Festival temático de culinária, restaurantes e gastronomia."
+            },
+            {
+                "event_name": "Steam Vem Aí: Edição de Outubro de 2026",
+                "event_slug": "next_fest_oct_2026",
+                "event_type": "next_fest",
+                "start_time": datetime.fromisoformat("2026-10-19T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2026-10-26T14:00:00-03:00"),
+                "banner_url": "https://clan.fastly.steamstatic.com/images/39049601/2d38a58b6aeb34af1ff6ee0d2ff92b117e72dbc4.jpg",
+                "description": "Celebração de vários dias de futuros lançamentos com centenas de demonstrações gratuitas."
+            },
+            {
+                "event_name": "Festival Susteam 5 (Halloween)",
+                "event_slug": "susteam_5_2026",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2026-10-26T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2026-11-02T14:00:00-03:00"),
+                "banner_url": "https://shared.fastly.steamstatic.com/store_item_assets/optin/sale_horror_2026/0/5dbcb15ad8eec291ecd65a1ec1b1fcaf023c3857.jpg",
+                "description": "Festival temático de terror e Halloween com descontos arrepiantes."
+            },
+            {
+                "event_name": "Festival de RPGs com Batalha Automática",
+                "event_slug": "auto_battler_rpg_2026",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2026-11-16T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2026-11-23T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático focado em RPGs com sistemas de auto-battler e autobattlers."
+            },
+            {
+                "event_name": "Promoção de Fim de Ano de 2026 (Winter Sale)",
+                "event_slug": "winter_sale_2026",
+                "event_type": "major_sale",
+                "start_time": datetime.fromisoformat("2026-12-17T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-01-04T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "A maior promoção do ano na Steam, com os Prêmios Steam e descontos massivos."
+            },
+            {
+                "event_name": "Festival de Companheiros de Área de Trabalho",
+                "event_slug": "desktop_companions_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-01-14T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-01-18T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático de companheiros e utilitários para desktop."
+            },
+            {
+                "event_name": "Festival de Gerenciamento de Lojas",
+                "event_slug": "store_management_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-01-25T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-02-01T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático de simulação e gerenciamento de lojas e comércios."
+            },
+            {
+                "event_name": "Festival de Ovelhas",
+                "event_slug": "sheep_fest_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-02-04T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-02-08T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático comemorativo com jogos de ovelhas e fazenda."
+            },
+            {
+                "event_name": "Festival do Cooperativo Local",
+                "event_slug": "local_coop_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-02-08T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-02-15T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático dedicado a jogos multiplayer cooperativos locais (couch co-op)."
+            },
+            {
+                "event_name": "Steam Vem Aí: Edição de Fevereiro de 2027",
+                "event_slug": "next_fest_feb_2027",
+                "event_type": "next_fest",
+                "start_time": datetime.fromisoformat("2027-02-22T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-03-01T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Centenas de demonstrações de jogos futuros e transmissões de desenvolvedores."
+            },
+            {
+                "event_name": "Festival Rítmico",
+                "event_slug": "rhythm_fest_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-03-08T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-03-15T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival de jogos rítmicos e focados em música."
+            },
+            {
+                "event_name": "Promoção de Outono de 2027 (Spring Sale)",
+                "event_slug": "spring_sale_2027",
+                "event_type": "major_sale",
+                "start_time": datetime.fromisoformat("2027-03-18T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-03-25T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Grande promoção sazonal oficial da Steam com milhares de títulos em desconto."
+            },
+            {
+                "event_name": "Festival Dinos X Robôs",
+                "event_slug": "dinos_vs_robots_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-03-29T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-04-05T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático repleto de dinossauros, mechs e robôs."
+            },
+            {
+                "event_name": "Festival de Corrida",
+                "event_slug": "racing_fest_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-04-12T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-04-19T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival dedicado a jogos de corrida, simulação automobilística e arcade."
+            },
+            {
+                "event_name": "Festival de Bruxaria",
+                "event_slug": "witchcraft_fest_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-04-22T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-04-26T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático de bruxas, magia e feitiçaria."
+            },
+            {
+                "event_name": "Festival de Jogos de Luta",
+                "event_slug": "fighting_fest_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-04-26T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-05-03T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival de jogos de luta, brawlers e artes marciais."
+            },
+            {
+                "event_name": "Festival de Estratégia em Tempo Real (RTS)",
+                "event_slug": "rts_fest_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-05-10T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-05-17T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático dedicado a jogos clássicos e modernos de estratégia em tempo real."
+            },
+            {
+                "event_name": "Festival de Montanhismo",
+                "event_slug": "mountaineering_fest_2027",
+                "event_type": "themed_fest",
+                "start_time": datetime.fromisoformat("2027-05-31T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-06-03T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Festival temático focado em jogos de escalada, montanhismo e sobrevivência alpina."
+            },
+            {
+                "event_name": "Steam Vem Aí: Edição de Junho de 2027",
+                "event_slug": "next_fest_jun_2027",
+                "event_type": "next_fest",
+                "start_time": datetime.fromisoformat("2027-06-14T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-06-21T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "A edição de meio de ano do Steam Vem Aí com demonstrações ao vivo e lançamentos."
+            },
+            {
+                "event_name": "Promoção de Férias de 2027 (Summer Sale)",
+                "event_slug": "summer_sale_2027",
+                "event_type": "major_sale",
+                "start_time": datetime.fromisoformat("2027-06-24T14:00:00-03:00"),
+                "end_time": datetime.fromisoformat("2027-07-08T14:00:00-03:00"),
+                "banner_url": None,
+                "description": "Uma das maiores promoções do ano na Steam, com eventos especiais e descontos profundos."
+            }
+        ]
+
+        for ev in events_data:
+            await self.upsert_steam_event(
+                event_name=ev["event_name"],
+                event_slug=ev["event_slug"],
+                event_type=ev["event_type"],
+                start_time=ev["start_time"],
+                end_time=ev["end_time"],
+                banner_url=ev["banner_url"],
+                description=ev["description"]
+            )
+        logger.info(f"Seed de eventos sazonais da Steam executado ({len(events_data)} eventos cadastrados/atualizados).")
 
