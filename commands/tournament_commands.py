@@ -114,24 +114,59 @@ async def _create_tournament_scheduled_event(
         return None
 
 
+VAGAS_CHOICES = [
+    app_commands.Choice(name="2 Participantes (Final 1v1)", value=2),
+    app_commands.Choice(name="4 Participantes (Semis 1v1 / Final 2v2)", value=4),
+    app_commands.Choice(name="6 Participantes (Final 3v3 - 2 Trios)", value=6),
+    app_commands.Choice(name="8 Participantes (Quartas 1v1 / Semis 2v2)", value=8),
+    app_commands.Choice(name="12 Participantes (Semis 3v3 - 4 Trios)", value=12),
+    app_commands.Choice(name="16 Participantes (Oitavas 1v1 / Quartas 2v2)", value=16),
+    app_commands.Choice(name="24 Participantes (Quartas 3v3 - 8 Trios)", value=24),
+    app_commands.Choice(name="32 Participantes (16 avos 1v1 / Oitavas 2v2)", value=32),
+]
+
+FORMATO_CHOICES = [
+    app_commands.Choice(name="1v1 (Individual)", value="1v1"),
+    app_commands.Choice(name="2v2 (Duplas)", value="2v2"),
+    app_commands.Choice(name="3v3 (Trios)", value="3v3"),
+    app_commands.Choice(name="5v5 (Equipes)", value="5v5"),
+]
+
+TIPO_CHOICES = [
+    app_commands.Choice(name="Single Elimination (Mata-Mata Simples)", value="single_elimination"),
+    app_commands.Choice(name="Double Elimination (Eliminação Dupla)", value="double_elimination"),
+    app_commands.Choice(name="Round Robin (Pontos Corridos / Liga)", value="round_robin"),
+    app_commands.Choice(name="Swiss System (Sistema Suíço)", value="swiss"),
+    app_commands.Choice(name="Group Stages (Fase de Grupos + Playoffs)", value="group_stages"),
+    app_commands.Choice(name="FFA & Race (Lobbies / Corrida)", value="ffa_race"),
+]
+
+BEST_OF_CHOICES = [
+    app_commands.Choice(name="MD1 (Melhor de 1 partida)", value=1),
+    app_commands.Choice(name="MD3 (Melhor de 3 partidas)", value=3),
+    app_commands.Choice(name="MD5 (Melhor de 5 partidas)", value=5),
+    app_commands.Choice(name="MD7 (Melhor de 7 partidas)", value=7),
+]
+
+
 class TournamentCreateModal(discord.ui.Modal):
     """Modal com formulário visual para criação e configuração de torneios."""
 
     nome = discord.ui.TextInput(
         label="Nome do Torneio",
-        placeholder="ex: Copa BMIA Rocket League",
+        placeholder="ex: Copa BMIA Brawl Stars",
         max_length=60,
         required=True
     )
     jogo = discord.ui.TextInput(
         label="Jogo",
-        placeholder="ex: Rocket League, Uno, Fall Guys, Disney Speedstorm",
+        placeholder="ex: Brawl Stars, Rocket League, Uno, Fall Guys",
         max_length=50,
         required=True
     )
     vagas = discord.ui.TextInput(
         label="Vagas / Participantes (2 a 32)",
-        placeholder="ex: 8, 16, 32",
+        placeholder="ex: 6, 8, 12, 16, 24, 32",
         default="16",
         max_length=4,
         required=True
@@ -143,27 +178,39 @@ class TournamentCreateModal(discord.ui.Modal):
         required=False
     )
     regras = discord.ui.TextInput(
-        label="Regras (Opcional)",
+        label="Regras / Início (Opcional)",
         style=discord.TextStyle.paragraph,
-        placeholder="Insira regras do jogo, tolerância de WO, observações adicionais...",
+        placeholder="Insira regras, tolerância de WO, data/hora de início ou observações...",
         max_length=400,
         required=False
     )
 
-    def __init__(self, db: Database, points_manager: Any = None, preset_type: str = "single_elimination"):
+    def __init__(
+        self,
+        db: Database,
+        points_manager: Any = None,
+        preset_type: str = "single_elimination",
+        preset_format: str = "1v1",
+        preset_vagas: int = 16,
+        preset_best_of: int = 1
+    ):
         tipo_labels = {
-            "single_elimination": "Mata-Mata Simples",
-            "double_elimination": "Eliminação Dupla",
-            "round_robin": "Pontos Corridos (Liga)",
-            "swiss": "Sistema Suíço",
-            "group_stages": "Fase de Grupos",
+            "single_elimination": "Mata-Mata",
+            "double_elimination": "Elim. Dupla",
+            "round_robin": "Liga",
+            "swiss": "Suíço",
+            "group_stages": "Grupos",
             "ffa_race": "FFA & Corrida"
         }
         lbl = tipo_labels.get(preset_type, "Torneio")
-        super().__init__(title=f"Criar: {lbl}"[:45])
+        super().__init__(title=f"Criar: {lbl} ({preset_format.upper()})"[:45])
         self.db = db
         self.points_manager = points_manager
         self.preset_type = preset_type
+        self.preset_format = preset_format
+        self.preset_vagas = preset_vagas
+        self.preset_best_of = preset_best_of
+        self.vagas.default = str(preset_vagas)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -171,10 +218,12 @@ class TournamentCreateModal(discord.ui.Modal):
             try:
                 vagas_val = int(self.vagas.value.strip())
             except ValueError:
-                vagas_val = 16
+                vagas_val = self.preset_vagas
             vagas_val = max(2, min(vagas_val, 32))
 
             tipo_val = self.preset_type or "single_elimination"
+            formato_val = self.preset_format or "1v1"
+            bo_val = max(1, min(self.preset_best_of or 1, 9))
             premio_val = self.premio.value.strip() if self.premio.value else None
             regras_val = self.regras.value.strip() if self.regras.value else None
 
@@ -182,13 +231,13 @@ class TournamentCreateModal(discord.ui.Modal):
                 guild_id=interaction.guild.id,
                 name=self.nome.value.strip(),
                 game_name=self.jogo.value.strip(),
-                format="1v1",
+                format=formato_val,
                 max_participants=vagas_val,
                 prize=premio_val,
                 created_by=interaction.user.id,
                 tournament_type=tipo_val,
                 rules=regras_val,
-                best_of=1
+                best_of=bo_val
             )
 
             tipo_labels = {
@@ -207,9 +256,11 @@ class TournamentCreateModal(discord.ui.Modal):
                 color=discord.Color.gold()
             )
             embed.add_field(name="🎮 Jogo", value=f"**{self.jogo.value.strip()}**", inline=True)
-            embed.add_field(name="⚔️ Formato", value="**1V1**", inline=True)
+            embed.add_field(name="⚔️ Formato", value=f"**{formato_val.upper()}**", inline=True)
             embed.add_field(name="📊 Bracket", value=f"**{tipo_label}**", inline=True)
             embed.add_field(name="👥 Vagas / Inscritos", value=f"**0 / {vagas_val}**", inline=True)
+            if bo_val > 1:
+                embed.add_field(name="🎯 Série", value=f"**Melhor de {bo_val} (MD{bo_val})**", inline=True)
             if premio_val:
                 embed.add_field(name="🎁 Premiação", value=f"**{premio_val}**", inline=False)
             if regras_val:
@@ -228,70 +279,163 @@ class TournamentCreateModal(discord.ui.Modal):
 
 
 class TournamentBracketSelect(discord.ui.Select):
-    """Menu Dropdown para selecionar o formato de bracket antes de preencher o formulário."""
+    """Menu Dropdown para selecionar o formato de bracket."""
 
-    def __init__(self, db: Database, points_manager: Any = None):
+    def __init__(self, current_val: str = "single_elimination"):
         options = [
-            discord.SelectOption(
-                label="Single Elimination (Mata-Mata Simples)",
-                value="single_elimination",
-                description="Eliminatório clássico direto (1v1, 2v2, equipes).",
-                emoji="🏆",
-                default=True
-            ),
-            discord.SelectOption(
-                label="Double Elimination (Eliminação Dupla)",
-                value="double_elimination",
-                description="Chaves Winners e Losers com repescagem.",
-                emoji="🔁"
-            ),
-            discord.SelectOption(
-                label="Round Robin (Pontos Corridos / Liga)",
-                value="round_robin",
-                description="Todos contra todos gerando tabela de pontuação.",
-                emoji="⚡"
-            ),
-            discord.SelectOption(
-                label="Swiss System (Sistema Suíço)",
-                value="swiss",
-                description="Rodadas pareadas por vitórias/derrotas.",
-                emoji="🇨🇭"
-            ),
-            discord.SelectOption(
-                label="Group Stages (Grupos + Playoffs)",
-                value="group_stages",
-                description="Fase de grupos A/B avançando para mata-mata.",
-                emoji="🌐"
-            ),
-            discord.SelectOption(
-                label="FFA & Race (Lobbies / Corrida)",
-                value="ffa_race",
-                description="Para Fall Guys, Disney Speedstorm, Uno 4p.",
-                emoji="🏁"
-            ),
+            discord.SelectOption(label="Single Elimination (Mata-Mata Simples)", value="single_elimination", emoji="🏆", default=(current_val == "single_elimination")),
+            discord.SelectOption(label="Double Elimination (Eliminação Dupla)", value="double_elimination", emoji="🔁", default=(current_val == "double_elimination")),
+            discord.SelectOption(label="Round Robin (Pontos Corridos / Liga)", value="round_robin", emoji="⚡", default=(current_val == "round_robin")),
+            discord.SelectOption(label="Swiss System (Sistema Suíço)", value="swiss", emoji="🇨🇭", default=(current_val == "swiss")),
+            discord.SelectOption(label="Group Stages (Grupos + Playoffs)", value="group_stages", emoji="🌐", default=(current_val == "group_stages")),
+            discord.SelectOption(label="FFA & Race (Lobbies / Corrida)", value="ffa_race", emoji="🏁", default=(current_val == "ffa_race")),
         ]
         super().__init__(
-            placeholder="Selecione o Tipo de Bracket para abrir o formulário...",
+            placeholder="1. Selecione o Tipo de Bracket...",
             min_values=1,
             max_values=1,
             options=options,
+            row=0,
             custom_id="tourney_setup_select_type"
         )
-        self.db = db
-        self.points_manager = points_manager
 
     async def callback(self, interaction: discord.Interaction):
-        chosen_type = self.values[0]
-        modal = TournamentCreateModal(self.db, self.points_manager, preset_type=chosen_type)
-        await interaction.response.send_modal(modal)
+        self.view.selected_tipo = self.values[0]
+        await self.view.update_selection(interaction)
+
+
+class TournamentFormatSelect(discord.ui.Select):
+    """Menu Dropdown para selecionar a formação da equipe."""
+
+    def __init__(self, current_val: str = "1v1"):
+        options = [
+            discord.SelectOption(label="1v1 (Individual)", value="1v1", emoji="👤", default=(current_val == "1v1")),
+            discord.SelectOption(label="2v2 (Duplas)", value="2v2", emoji="👥", default=(current_val == "2v2")),
+            discord.SelectOption(label="3v3 (Trios)", value="3v3", emoji="🔺", default=(current_val == "3v3")),
+            discord.SelectOption(label="5v5 (Equipes)", value="5v5", emoji="🛡️", default=(current_val == "5v5")),
+        ]
+        super().__init__(
+            placeholder="2. Selecione a Formação (1v1, 2v2, 3v3, 5v5)...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=1,
+            custom_id="tourney_setup_select_format"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.selected_format = self.values[0]
+        await self.view.update_selection(interaction)
+
+
+class TournamentVagasSelect(discord.ui.Select):
+    """Menu Dropdown para selecionar a quantidade de vagas."""
+
+    def __init__(self, current_val: int = 16):
+        options = [
+            discord.SelectOption(label="2 Participantes (Final 1v1)", value="2", emoji="2️⃣", default=(current_val == 2)),
+            discord.SelectOption(label="4 Participantes (Semis 1v1 / Final 2v2)", value="4", emoji="4️⃣", default=(current_val == 4)),
+            discord.SelectOption(label="6 Participantes (Final 3v3 - 2 Trios)", value="6", emoji="6️⃣", default=(current_val == 6)),
+            discord.SelectOption(label="8 Participantes (Quartas 1v1 / Semis 2v2)", value="8", emoji="8️⃣", default=(current_val == 8)),
+            discord.SelectOption(label="12 Participantes (Semis 3v3 - 4 Trios)", value="12", emoji="🔢", default=(current_val == 12)),
+            discord.SelectOption(label="16 Participantes (Oitavas 1v1 / Quartas 2v2)", value="16", emoji="🔢", default=(current_val == 16)),
+            discord.SelectOption(label="24 Participantes (Quartas 3v3 - 8 Trios)", value="24", emoji="🔢", default=(current_val == 24)),
+            discord.SelectOption(label="32 Participantes (16 avos 1v1 / Oitavas 2v2)", value="32", emoji="🔢", default=(current_val == 32)),
+        ]
+        super().__init__(
+            placeholder="3. Selecione a Quantidade de Vagas...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=2,
+            custom_id="tourney_setup_select_vagas"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.selected_vagas = int(self.values[0])
+        await self.view.update_selection(interaction)
+
+
+class TournamentBestOfSelect(discord.ui.Select):
+    """Menu Dropdown para selecionar o formato da série (MD1, MD3, etc.)."""
+
+    def __init__(self, current_val: int = 1):
+        options = [
+            discord.SelectOption(label="MD1 (Melhor de 1 partida)", value="1", emoji="1️⃣", default=(current_val == 1)),
+            discord.SelectOption(label="MD3 (Melhor de 3 partidas)", value="3", emoji="3️⃣", default=(current_val == 3)),
+            discord.SelectOption(label="MD5 (Melhor de 5 partidas)", value="5", emoji="5️⃣", default=(current_val == 5)),
+            discord.SelectOption(label="MD7 (Melhor de 7 partidas)", value="7", emoji="7️⃣", default=(current_val == 7)),
+        ]
+        super().__init__(
+            placeholder="4. Selecione a Série (MD1, MD3, MD5, MD7)...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=3,
+            custom_id="tourney_setup_select_bo"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.selected_best_of = int(self.values[0])
+        await self.view.update_selection(interaction)
 
 
 class TournamentCreationSetupView(discord.ui.View):
-    """View interativa com o menu suspenso de seleção de bracket."""
+    """View interativa com menus suspensos de configuração e botão para abrir o formulário."""
 
-    def __init__(self, db: Database, points_manager: Any = None):
-        super().__init__(timeout=180)
-        self.add_item(TournamentBracketSelect(db, points_manager))
+    def __init__(
+        self,
+        db: Database,
+        points_manager: Any = None,
+        selected_tipo: str = "single_elimination",
+        selected_format: str = "1v1",
+        selected_vagas: int = 16,
+        selected_best_of: int = 1
+    ):
+        super().__init__(timeout=300)
+        self.db = db
+        self.points_manager = points_manager
+        self.selected_tipo = selected_tipo
+        self.selected_format = selected_format
+        self.selected_vagas = selected_vagas
+        self.selected_best_of = selected_best_of
+
+        self.add_item(TournamentBracketSelect(self.selected_tipo))
+        self.add_item(TournamentFormatSelect(self.selected_format))
+        self.add_item(TournamentVagasSelect(self.selected_vagas))
+        self.add_item(TournamentBestOfSelect(self.selected_best_of))
+
+    @discord.ui.button(label="📝 Abrir Formulário", style=discord.ButtonStyle.primary, row=4, custom_id="tourney_setup_open_modal")
+    async def open_modal_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = TournamentCreateModal(
+            db=self.db,
+            points_manager=self.points_manager,
+            preset_type=self.selected_tipo,
+            preset_format=self.selected_format,
+            preset_vagas=self.selected_vagas,
+            preset_best_of=self.selected_best_of
+        )
+        await interaction.response.send_modal(modal)
+
+    async def update_selection(self, interaction: discord.Interaction):
+        tipo_labels = {
+            "single_elimination": "🏆 Single Elimination (Mata-Mata Simples)",
+            "double_elimination": "🔁 Double Elimination (Eliminação Dupla)",
+            "round_robin": "⚡ Round Robin (Pontos Corridos / Liga)",
+            "swiss": "🇨🇭 Swiss System (Sistema Suíço)",
+            "group_stages": "🌐 Group Stages (Grupos + Playoffs)",
+            "ffa_race": "🏁 FFA & Race (Lobbies / Corrida)"
+        }
+        embed = discord.Embed(
+            title="⚙️ Assistente de Criação de Torneio",
+            description="Configure as opções abaixo nos menus suspensos e clique em **📝 Abrir Formulário** para concluir a criação:",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="📊 Bracket", value=f"**{tipo_labels.get(self.selected_tipo, self.selected_tipo)}**", inline=True)
+        embed.add_field(name="⚔️ Formação", value=f"**{self.selected_format.upper()}**", inline=True)
+        embed.add_field(name="👥 Vagas", value=f"**{self.selected_vagas} Participantes**", inline=True)
+        embed.add_field(name="🎯 Série", value=f"**MD{self.selected_best_of} (Melhor de {self.selected_best_of})**", inline=True)
+        await interaction.response.edit_message(embed=embed, view=self)
 
 
 class MatchScoreModal(discord.ui.Modal):
@@ -770,37 +914,20 @@ class TournamentCommands(app_commands.Group):
     @app_commands.command(name="criar", description="Cria um novo torneio com embed e botões de inscrição")
     @app_commands.describe(
         nome="Nome do torneio (ex: Copa Rocket League BMIA)",
-        jogo="Jogo do torneio (ex: Rocket League, Uno, Fall Guys, Disney Speedstorm)",
-        formato="Formato de disputa (1v1, 2v2, 3v3, 5v5)",
-        vagas="Quantidade total de vagas/participantes",
+        jogo="Jogo do torneio (ex: Rocket League, Brawl Stars, Fall Guys, Disney Speedstorm)",
+        formato="Formação da equipe (1v1, 2v2, 3v3, 5v5)",
+        vagas="Quantidade total de vagas/participantes (2 a 32)",
         tipo="Tipo de bracket (Mata-Mata, Eliminação Dupla, Liga, Suíço, Grupos, FFA)",
+        best_of="Formato da série (MD1, MD3, MD5, MD7)",
         premio="Premiação do torneio (ex: 5.000 pontos + Cargo Campeão)",
         inicio="Data e hora de início (ex: Sábado às 20:00)",
-        regras="Regras do campeonato ou formato de disputa",
-        best_of="Formato da série (ex: 1 para MD1, 3 para MD3, 5 para MD5)"
+        regras="Regras do campeonato ou formato de disputa"
     )
     @app_commands.choices(
-        formato=[
-            app_commands.Choice(name="1v1 (Individual)", value="1v1"),
-            app_commands.Choice(name="2v2 (Duplas)", value="2v2"),
-            app_commands.Choice(name="3v3 (Trios)", value="3v3"),
-            app_commands.Choice(name="5v5 (Equipes)", value="5v5"),
-        ],
-        vagas=[
-            app_commands.Choice(name="2 Participantes (Final Direta em 1v1)", value=2),
-            app_commands.Choice(name="4 Participantes (Final em 2v2 / Semis em 1v1)", value=4),
-            app_commands.Choice(name="8 Participantes (Semis em 2v2 / Quartas em 1v1)", value=8),
-            app_commands.Choice(name="16 Participantes (Quartas em 2v2 / Oitavas em 1v1)", value=16),
-            app_commands.Choice(name="32 Participantes", value=32),
-        ],
-        tipo=[
-            app_commands.Choice(name="Single Elimination (Mata-Mata Simples)", value="single_elimination"),
-            app_commands.Choice(name="Double Elimination (Eliminação Dupla)", value="double_elimination"),
-            app_commands.Choice(name="Round Robin (Pontos Corridos / Liga)", value="round_robin"),
-            app_commands.Choice(name="Swiss System (Sistema Suíço)", value="swiss"),
-            app_commands.Choice(name="Group Stages (Fase de Grupos + Playoffs)", value="group_stages"),
-            app_commands.Choice(name="FFA & Race (Lobbies / Baterias de Corrida)", value="ffa_race"),
-        ]
+        formato=FORMATO_CHOICES,
+        vagas=VAGAS_CHOICES,
+        tipo=TIPO_CHOICES,
+        best_of=BEST_OF_CHOICES
     )
     @app_commands.checks.has_permissions(manage_events=True)
     async def criar_torneio(
@@ -811,18 +938,19 @@ class TournamentCommands(app_commands.Group):
         formato: app_commands.Choice[str],
         vagas: app_commands.Choice[int],
         tipo: Optional[app_commands.Choice[str]] = None,
+        best_of: Optional[app_commands.Choice[int]] = None,
         premio: Optional[str] = None,
         inicio: Optional[str] = None,
-        regras: Optional[str] = None,
-        best_of: Optional[int] = 1
+        regras: Optional[str] = None
     ):
         await interaction.response.defer()
         try:
             vagas_val = vagas.value if isinstance(vagas, app_commands.Choice) else int(vagas)
             formato_val = formato.value if isinstance(formato, app_commands.Choice) else str(formato)
             tipo_val = tipo.value if isinstance(tipo, app_commands.Choice) else (str(tipo) if tipo else "single_elimination")
+            bo_val = best_of.value if isinstance(best_of, app_commands.Choice) else (int(best_of) if best_of else 1)
             vagas_val = max(2, min(vagas_val, 32))
-            bo_val = max(1, min(best_of or 1, 9))
+            bo_val = max(1, min(bo_val, 9))
 
             tourney_id = await self.db.create_tournament(
                 guild_id=interaction.guild.id,
@@ -899,41 +1027,60 @@ class TournamentCommands(app_commands.Group):
             await interaction.followup.send("❌ Ocorreu um erro ao criar o torneio. Verifique os parâmetros e tente novamente.")
 
     @app_commands.command(name="formulario", description="Abre o assistente com formulário (Modal) para criar um torneio")
-    @app_commands.describe(tipo="Tipo de bracket desejado (opcional, abre o formulário direto se escolhido)")
+    @app_commands.describe(
+        tipo="Tipo de bracket desejado",
+        formato="Formação da equipe (1v1, 2v2, 3v3, 5v5)",
+        vagas="Quantidade total de vagas/participantes",
+        best_of="Formato da série (MD1, MD3, MD5, MD7)"
+    )
     @app_commands.choices(
-        tipo=[
-            app_commands.Choice(name="Single Elimination (Mata-Mata Simples)", value="single_elimination"),
-            app_commands.Choice(name="Double Elimination (Eliminação Dupla)", value="double_elimination"),
-            app_commands.Choice(name="Round Robin (Pontos Corridos / Liga)", value="round_robin"),
-            app_commands.Choice(name="Swiss System (Sistema Suíço)", value="swiss"),
-            app_commands.Choice(name="Group Stages (Fase de Grupos + Playoffs)", value="group_stages"),
-            app_commands.Choice(name="FFA & Race (Lobbies / Corrida)", value="ffa_race"),
-        ]
+        tipo=TIPO_CHOICES,
+        formato=FORMATO_CHOICES,
+        vagas=VAGAS_CHOICES,
+        best_of=BEST_OF_CHOICES
     )
     @app_commands.checks.has_permissions(manage_events=True)
-    async def formulario_torneio(self, interaction: discord.Interaction, tipo: Optional[app_commands.Choice[str]] = None):
-        if tipo:
-            tipo_val = tipo.value if isinstance(tipo, app_commands.Choice) else str(tipo)
-            modal = TournamentCreateModal(self.db, self.points_manager, preset_type=tipo_val)
+    async def formulario_torneio(
+        self,
+        interaction: discord.Interaction,
+        tipo: Optional[app_commands.Choice[str]] = None,
+        formato: Optional[app_commands.Choice[str]] = None,
+        vagas: Optional[app_commands.Choice[int]] = None,
+        best_of: Optional[app_commands.Choice[int]] = None
+    ):
+        tipo_val = tipo.value if isinstance(tipo, app_commands.Choice) else (str(tipo) if tipo else None)
+        formato_val = formato.value if isinstance(formato, app_commands.Choice) else (str(formato) if formato else None)
+        vagas_val = vagas.value if isinstance(vagas, app_commands.Choice) else (int(vagas) if vagas else None)
+        bo_val = best_of.value if isinstance(best_of, app_commands.Choice) else (int(best_of) if best_of else None)
+
+        if any(x is not None for x in [tipo_val, formato_val, vagas_val, bo_val]):
+            modal = TournamentCreateModal(
+                db=self.db,
+                points_manager=self.points_manager,
+                preset_type=tipo_val or "single_elimination",
+                preset_format=formato_val or "1v1",
+                preset_vagas=vagas_val or 16,
+                preset_best_of=bo_val or 1
+            )
             await interaction.response.send_modal(modal)
         else:
+            tipo_labels = {
+                "single_elimination": "🏆 Single Elimination (Mata-Mata Simples)",
+                "double_elimination": "🔁 Double Elimination (Eliminação Dupla)",
+                "round_robin": "⚡ Round Robin (Pontos Corridos / Liga)",
+                "swiss": "🇨🇭 Swiss System (Sistema Suíço)",
+                "group_stages": "🌐 Group Stages (Grupos + Playoffs)",
+                "ffa_race": "🏁 FFA & Race (Lobbies / Corrida)"
+            }
             embed = discord.Embed(
                 title="⚙️ Assistente de Criação de Torneio",
-                description="Selecione abaixo no menu o **Tipo de Bracket / Chaveamento** para abrir o formulário:",
+                description="Configure as opções abaixo nos menus suspensos e clique em **📝 Abrir Formulário** para concluir a criação:",
                 color=discord.Color.gold()
             )
-            embed.add_field(
-                name="📋 Formatos Disponíveis",
-                value=(
-                    "• 🏆 **Single Elimination**: Mata-Mata clássico direto\n"
-                    "• 🔁 **Double Elimination**: Chaves Winners & Losers (com repescagem)\n"
-                    "• ⚡ **Round Robin**: Pontos Corridos / Liga com tabela\n"
-                    "• 🇨🇭 **Swiss System**: Sistema Suíço baseado em pontuações\n"
-                    "• 🌐 **Group Stages**: Fase de Grupos + Playoffs\n"
-                    "• 🏁 **FFA & Race**: Baterias de Corrida / Lobbies (Fall Guys, Speedstorm, Uno)"
-                ),
-                inline=False
-            )
+            embed.add_field(name="📊 Bracket", value="**🏆 Single Elimination (Mata-Mata Simples)**", inline=True)
+            embed.add_field(name="⚔️ Formação", value="**1V1 (Individual)**", inline=True)
+            embed.add_field(name="👥 Vagas", value="**16 Participantes**", inline=True)
+            embed.add_field(name="🎯 Série", value="**MD1 (Melhor de 1 partida)**", inline=True)
             view = TournamentCreationSetupView(self.db, self.points_manager)
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
