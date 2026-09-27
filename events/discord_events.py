@@ -8,10 +8,13 @@ O módulo expõe `register_events(client, ctx)` que registra todos os handlers.
 import re
 import logging
 from datetime import datetime, timezone
-
 import discord
 
-from config import DEFAULT_ALLOWED_CHANNELS
+from config import (
+    DEFAULT_ALLOWED_CHANNELS,
+    DEFAULT_IGNORED_VOICE_CHANNELS,
+    DEFAULT_DYNAMIC_ROLES_CONFIG,
+)
 from utils.ai_tools import AIToolkit
 from utils.giphy_client import to_direct_gif_url
 

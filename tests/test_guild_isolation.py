@@ -131,3 +131,47 @@ async def test_config_commands_add_and_remove_allowed_channel_isolation(mock_db)
     assert 1003 in allowed_a
     assert allowed_b == [3001]
 
+
+@pytest.mark.asyncio
+async def test_config_commands_ignored_voice_isolation(mock_db):
+    ctx = BotContext()
+    ctx.db = mock_db
+    config_cmds = ConfigCommands(mock_db, ctx)
+
+    guild_a = MagicMock()
+    guild_a.id = 1327836427915886643
+    guild_a.name = "Servidor A"
+    member_a = MagicMock()
+    member_a.guild_permissions.administrator = True
+    guild_a.get_member.return_value = member_a
+
+    # Adiciona canal de voz 2002 no Servidor A
+    new_voice = MagicMock(id=2002)
+    new_voice.mention = "<#2002>"
+
+    interaction = AsyncMock()
+    interaction.guild = guild_a
+    interaction.user.id = 999
+
+    await config_cmds.add_ignored_voice.callback(config_cmds, interaction, new_voice)
+
+    ignored_a = await ctx.get_ignored_voice_channels(1327836427915886643)
+    ignored_b = await ctx.get_ignored_voice_channels(1444182856489500723)
+
+    assert 2002 in ignored_a
+    assert 2002 not in ignored_b
+
+
+@pytest.mark.asyncio
+async def test_bot_context_fallbacks():
+    ctx = BotContext()
+    # Sem banco de dados configurado, deve retornar defaults sem lançar NameError
+    allowed = await ctx.get_allowed_channels(999999)
+    ignored = await ctx.get_ignored_voice_channels(999999)
+    dyn_roles = await ctx.get_dynamic_roles_config(999999)
+
+    assert isinstance(allowed, list)
+    assert isinstance(ignored, list)
+    assert isinstance(dyn_roles, dict)
+
+
