@@ -218,6 +218,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             3. Fatos e Proibição de Alucinações: NUNCA invente números, horas jogadas ou posições de ranking que não estejam no contexto ou no resultado das ferramentas.
                             4. Proibição de Templates/Placeholders: NUNCA use marcações entre colchetes como '[Nome do usuário]' ou '[inserir número]'. Se não houver dados, diga a verdade de forma bem-humorada.
                             5. Conciso e Coloquial: Mantenha as respostas concisas e use o contexto/memórias do servidor para personalizar a interação.
+                            6. Dança do BMIA: Você possui um GIF oficial dançando animado e engraçado (https://media.giphy.com/media/EU5BbihTxT1TyTfehh/giphy.gif). Use a tool 'buscar_gif' com tema 'bmia danca' ou mencione quando pedirem para você dançar ou em celebrações especiais!
                             """
 
                         # Contexto de reply se a mensagem for uma resposta a outra
@@ -284,8 +285,8 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                         logger.error("Erro no ChatHandler: %s", exc)
                         await message.reply("Desculpe, tive um problema ao tentar responder.")
 
-        # Pontos por mensagem (canais permitidos)
-        allowed = ctx.allowed_channels
+        # Pontos por mensagem (canais permitidos no servidor atual)
+        allowed = await ctx.get_allowed_channels(message.guild.id) if message.guild else ctx.allowed_channels
         if ctx.points_manager and message.channel.id in allowed:
             points = 1
             interaction_type = "message"
@@ -423,7 +424,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
         if payload.member and payload.member.bot:
             return
 
-        allowed = ctx.allowed_channels
+        allowed = await ctx.get_allowed_channels(payload.guild_id) if payload.guild_id else ctx.allowed_channels
         if ctx.points_manager and payload.channel_id in allowed:
             user_reactor = payload.member or client.get_user(payload.user_id)
             if user_reactor and payload.guild_id:
@@ -534,6 +535,7 @@ class BotContext:
         "dynamic_roles_config",
         "rawg_client",
         "gg_deals_client",
+        "_guild_configs",
     )
 
     def __init__(self) -> None:
@@ -561,3 +563,43 @@ class BotContext:
         self.allowed_channels: list[int] = list(DEFAULT_ALLOWED_CHANNELS)
         self.ignored_voice_channels: list[int] = []
         self.dynamic_roles_config: dict = {}
+        self._guild_configs: dict[int, dict] = {}
+
+    async def get_guild_config(self, guild_id: int, refresh: bool = False) -> dict:
+        """Retorna as configurações do servidor a partir do cache ou do banco."""
+        if not refresh and guild_id in self._guild_configs:
+            return self._guild_configs[guild_id]
+        if self.db:
+            cfg = await self.db.get_guild_config(guild_id)
+            self._guild_configs[guild_id] = cfg
+            return cfg
+        return {}
+
+    def invalidate_guild_config(self, guild_id: int) -> None:
+        """Invalida o cache de configurações do servidor para recarga."""
+        self._guild_configs.pop(guild_id, None)
+
+    async def get_allowed_channels(self, guild_id: int) -> list[int]:
+        """Retorna os canais de texto permitidos para pontuação neste servidor."""
+        cfg = await self.get_guild_config(guild_id)
+        channels = cfg.get("allowed_channels")
+        if channels is not None and len(channels) > 0:
+            return channels
+        return list(DEFAULT_ALLOWED_CHANNELS)
+
+    async def get_ignored_voice_channels(self, guild_id: int) -> list[int]:
+        """Retorna os canais de voz ignorados para pontuação neste servidor."""
+        cfg = await self.get_guild_config(guild_id)
+        channels = cfg.get("ignored_voice_channels")
+        if channels is not None and len(channels) > 0:
+            return channels
+        return list(DEFAULT_IGNORED_VOICE_CHANNELS)
+
+    async def get_dynamic_roles_config(self, guild_id: int) -> dict:
+        """Retorna a configuração de cargos dinâmicos para este servidor."""
+        cfg = await self.get_guild_config(guild_id)
+        roles = cfg.get("dynamic_roles_config")
+        if roles is not None and len(roles) > 0:
+            return roles
+        return dict(DEFAULT_DYNAMIC_ROLES_CONFIG)
+

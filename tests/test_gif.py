@@ -125,6 +125,14 @@ class TestAIToolkitGif:
 
             assert "Nenhum GIF encontrado" in res["mensagem"]
 
+    @pytest.mark.asyncio
+    async def test_buscar_gif_bmia_dance(self, mock_db, gif_client):
+        toolkit = AIToolkit(db=mock_db, guild_id=123, gif_client=gif_client)
+        res = await toolkit.buscar_gif("bmia dança")
+        assert "EU5BbihTxT1TyTfehh" in res["gif_url"]
+        assert "dança do BMIA" in res["instrucao"]
+
+
     def test_get_tool_callables_includes_buscar_gif(self, mock_db):
         toolkit = AIToolkit(db=mock_db, guild_id=123)
         callables = toolkit.get_tool_callables()
@@ -135,19 +143,20 @@ class TestGifSlashCommand:
     @pytest.mark.asyncio
     async def test_setup_and_execute_slash_command(self, gif_client):
         tree = MagicMock()
-        registered_command = None
+        commands_dict = {}
 
         def mock_command(**kwargs):
+            name = kwargs.get("name")
             def decorator(func):
-                nonlocal registered_command
-                registered_command = func
+                commands_dict[name] = func
                 return func
             return decorator
 
         tree.command = mock_command
 
         setup_gif_slash_command(tree, gif_client)
-        assert registered_command is not None
+        assert "gif" in commands_dict
+        assert "danca" in commands_dict
 
         # Test valid search
         interaction = AsyncMock()
@@ -159,19 +168,37 @@ class TestGifSlashCommand:
             "search_gif_url",
             new=AsyncMock(return_value="https://giphy.com/gifs/dance-123"),
         ):
-            await registered_command(interaction, busca="dance")
+            await commands_dict["gif"](interaction, busca="dance")
             interaction.response.defer.assert_awaited_once_with(thinking=False)
             interaction.followup.send.assert_awaited_once()
             embed_sent = interaction.followup.send.call_args[1].get("embed")
             assert embed_sent is not None
             assert "media.giphy.com" in embed_sent.image.url or "123" in embed_sent.image.url
 
+        # Test BMIA dance search in /gif
+        interaction_bmia = AsyncMock()
+        interaction_bmia.response.defer = AsyncMock()
+        interaction_bmia.followup.send = AsyncMock()
+        await commands_dict["gif"](interaction_bmia, busca="bmia danca")
+        embed_bmia = interaction_bmia.followup.send.call_args[1].get("embed")
+        assert "EU5BbihTxT1TyTfehh" in embed_bmia.image.url
+
+        # Test /danca slash command
+        interaction_danca = AsyncMock()
+        interaction_danca.response.defer = AsyncMock()
+        interaction_danca.followup.send = AsyncMock()
+        await commands_dict["danca"](interaction_danca)
+        embed_danca = interaction_danca.followup.send.call_args[1].get("embed")
+        assert "EU5BbihTxT1TyTfehh" in embed_danca.image.url
+        assert "Dança do BMIA" in embed_danca.title
+
         # Test empty search
         interaction_empty = AsyncMock()
         interaction_empty.response.send_message = AsyncMock()
-        await registered_command(interaction_empty, busca="   ")
+        await commands_dict["gif"](interaction_empty, busca="   ")
         interaction_empty.response.send_message.assert_awaited_once()
         assert "❌ Digite um termo" in interaction_empty.response.send_message.call_args[0][0]
+
 
 
 class TestExtractAndCleanGif:

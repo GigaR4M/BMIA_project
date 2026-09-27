@@ -55,6 +55,10 @@ DEFAULT_IGNORED_VOICE_CHANNELS: list[int] = (
 DEFAULT_DYNAMIC_ROLES_CONFIG: dict[str, int] = {}
 
 
+# Mídias e GIFs Oficiais do BMIA
+BMIA_DANCE_GIF_URL: str = "https://media.giphy.com/media/EU5BbihTxT1TyTfehh/giphy.gif"
+BMIA_DANCE_MP4_URL: str = "https://images-ext-1.discordapp.net/external/Tp_-cKoVhMP4S7TgVOxgT7cbSkqDkJG-ZVimFKXHUSM/https/i.giphy.com/media/EU5BbihTxT1TyTfehh/giphy.mp4"
+
 # ── 2. Constantes de moderação ─────────────────────────────────────────────────
 INTERVALO_ANALISE: int = 60          # segundos entre processamentos de lote
 TAMANHO_LOTE_MINIMO: int = 10        # mínimo de mensagens por lote

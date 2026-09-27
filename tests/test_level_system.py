@@ -81,6 +81,7 @@ class TestLevelUpDetection:
         embed = call_kwargs["embed"]
         assert "LEVEL UP" in embed.title
         assert "Nível 2" in embed.description
+        assert call_kwargs.get("delete_after") == 15
 
 
 class TestPodiumBuilder:

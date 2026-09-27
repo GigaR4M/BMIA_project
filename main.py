@@ -147,24 +147,9 @@ async def on_ready() -> None:
         ctx.giphy_client = GiphyClient(api_key=GIPHY_API_KEY)
         ctx.gg_deals_client = GGDealsClient()
 
-        # Carrega configuração de canais/cargos do banco (se existir)
+        # Pré-carrega cache de configuração para cada servidor conectado
         for guild in client.guilds:
-            guild_config = await ctx.db.get_guild_config(guild.id)
-            if guild_config:
-                if guild_config.get("allowed_channels"):
-                    ctx.allowed_channels = guild_config["allowed_channels"]
-                if guild_config.get("ignored_voice_channels"):
-                    ctx.ignored_voice_channels = guild_config["ignored_voice_channels"]
-                if guild_config.get("dynamic_roles_config"):
-                    ctx.dynamic_roles_config = guild_config["dynamic_roles_config"]
-
-        # Fallback para defaults se banco não tiver configuração
-        if not ctx.allowed_channels:
-            ctx.allowed_channels = list(DEFAULT_ALLOWED_CHANNELS)
-        if not ctx.ignored_voice_channels:
-            ctx.ignored_voice_channels = list(DEFAULT_IGNORED_VOICE_CHANNELS)
-        if not ctx.dynamic_roles_config:
-            ctx.dynamic_roles_config = dict(DEFAULT_DYNAMIC_ROLES_CONFIG)
+            await ctx.get_guild_config(guild.id, refresh=True)
 
         # Associa ctx ao client para handlers e views acessarem
         client.ctx = ctx

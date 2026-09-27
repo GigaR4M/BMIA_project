@@ -93,6 +93,13 @@ class TestEnvDefaults:
         from config import DEFAULT_DYNAMIC_ROLES_CONFIG
         assert isinstance(DEFAULT_DYNAMIC_ROLES_CONFIG, dict)
 
+    def test_bmia_dance_media_urls(self):
+        """BMIA_DANCE_GIF_URL e BMIA_DANCE_MP4_URL devem estar configurados."""
+        from config import BMIA_DANCE_GIF_URL, BMIA_DANCE_MP4_URL
+        assert "EU5BbihTxT1TyTfehh" in BMIA_DANCE_GIF_URL
+        assert "EU5BbihTxT1TyTfehh" in BMIA_DANCE_MP4_URL
+
+
 
 class TestSetupLogging:
     """Testa que setup_logging() não lança exceções."""

@@ -227,9 +227,22 @@ class AIToolkit:
         """Busca um GIF animado no GIPHY para reagir a uma conversa, piada, vitória, derrota, comemoração ou momento engraçado.
 
         Args:
-            tema: Termo de busca em português ou inglês para encontrar o GIF (ex: 'risada meme', 'comemorando', 'facepalm', 'anime dançando', 'gato chocado').
+            tema: Termo de busca em português ou inglês para encontrar o GIF (ex: 'risada meme', 'comemorando', 'facepalm', 'anime dançando', 'gato chocado', 'bmia dança').
         """
         try:
+            tema_clean = (tema or "").strip().lower()
+            if any(k in tema_clean for k in ["bmia", "danca do bmia", "dança do bmia", "dança bmia", "danca bmia"]):
+                from config import BMIA_DANCE_GIF_URL
+                self.last_gif_url = BMIA_DANCE_GIF_URL
+                return {
+                    "gif_url": BMIA_DANCE_GIF_URL,
+                    "tema": tema,
+                    "instrucao": (
+                        "O GIF oficial da dança do BMIA foi selecionado e será anexado visualmente à sua resposta pelo sistema! "
+                        "Comemore com simpatia, entusiasmo e bom humor. NÃO escreva links, URLs ou colchetes markdown []() na sua resposta de texto."
+                    )
+                }
+
             client = self.gif_client
             if client is None:
                 from utils.giphy_client import GiphyClient

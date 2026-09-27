@@ -38,12 +38,15 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
             return
 
-        if canal.id in self.ctx.allowed_channels:
-            await interaction.response.send_message(f"ℹ️ {canal.mention} já está na lista.", ephemeral=True)
+        guild_id = interaction.guild.id
+        current_allowed = list(await self.ctx.get_allowed_channels(guild_id))
+        if canal.id in current_allowed:
+            await interaction.response.send_message(f"ℹ️ {canal.mention} já está na lista deste servidor.", ephemeral=True)
             return
 
-        self.ctx.allowed_channels.append(canal.id)
-        await self.db.set_allowed_channels(interaction.guild.id, self.ctx.allowed_channels)
+        current_allowed.append(canal.id)
+        await self.db.set_allowed_channels(guild_id, current_allowed)
+        self.ctx.invalidate_guild_config(guild_id)
         await interaction.response.send_message(f"✅ {canal.mention} adicionado aos canais com pontos.", ephemeral=True)
         logger.info("Canal %s adicionado aos canais permitidos de %s", canal.name, interaction.guild.name)
 
@@ -56,12 +59,15 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
             return
 
-        if canal.id not in self.ctx.allowed_channels:
-            await interaction.response.send_message(f"ℹ️ {canal.mention} não está na lista.", ephemeral=True)
+        guild_id = interaction.guild.id
+        current_allowed = list(await self.ctx.get_allowed_channels(guild_id))
+        if canal.id not in current_allowed:
+            await interaction.response.send_message(f"ℹ️ {canal.mention} não está na lista deste servidor.", ephemeral=True)
             return
 
-        self.ctx.allowed_channels.remove(canal.id)
-        await self.db.set_allowed_channels(interaction.guild.id, self.ctx.allowed_channels)
+        current_allowed = [cid for cid in current_allowed if cid != canal.id]
+        await self.db.set_allowed_channels(guild_id, current_allowed)
+        self.ctx.invalidate_guild_config(guild_id)
         await interaction.response.send_message(f"✅ {canal.mention} removido dos canais com pontos.", ephemeral=True)
 
     @app_commands.command(name="canais-pontos-listar", description="Lista os canais que dão pontos neste servidor.")
@@ -70,17 +76,25 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
             return
 
-        if not self.ctx.allowed_channels:
-            await interaction.response.send_message("Nenhum canal configurado.", ephemeral=True)
+        guild_id = interaction.guild.id
+        allowed = await self.ctx.get_allowed_channels(guild_id)
+        
+        # Filtra apenas os canais pertencentes a este servidor
+        guild_channel_ids = {ch.id for ch in interaction.guild.channels}
+        server_allowed = [ch_id for ch_id in allowed if ch_id in guild_channel_ids or interaction.guild.get_channel(ch_id)]
+
+        if not server_allowed:
+            await interaction.response.send_message("Nenhum canal configurado para este servidor.", ephemeral=True)
             return
 
-        mentions = [f"<#{ch_id}>" for ch_id in self.ctx.allowed_channels]
+        mentions = [f"<#{ch_id}>" for ch_id in server_allowed]
 
         embed = discord.Embed(
             title="📋 Canais com Pontos",
             description="\n".join(mentions),
             color=discord.Color.blue(),
         )
+        embed.set_footer(text=f"Servidor: {interaction.guild.name}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ── Canais de Voz Ignorados ────────────────────────────────────────────────
@@ -93,12 +107,15 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
             return
 
-        if canal.id in self.ctx.ignored_voice_channels:
-            await interaction.response.send_message(f"ℹ️ {canal.mention} já está ignorado.", ephemeral=True)
+        guild_id = interaction.guild.id
+        current_ignored = list(await self.ctx.get_ignored_voice_channels(guild_id))
+        if canal.id in current_ignored:
+            await interaction.response.send_message(f"ℹ️ {canal.mention} já está ignorado neste servidor.", ephemeral=True)
             return
 
-        self.ctx.ignored_voice_channels.append(canal.id)
-        await self.db.set_ignored_voice_channels(interaction.guild.id, self.ctx.ignored_voice_channels)
+        current_ignored.append(canal.id)
+        await self.db.set_ignored_voice_channels(guild_id, current_ignored)
+        self.ctx.invalidate_guild_config(guild_id)
         await interaction.response.send_message(f"✅ {canal.mention} adicionado aos canais de voz ignorados.", ephemeral=True)
 
     @app_commands.command(name="voz-ignorar-remover", description="Remove canal de voz da lista de ignorados.")
@@ -110,12 +127,15 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
             return
 
-        if canal.id not in self.ctx.ignored_voice_channels:
-            await interaction.response.send_message(f"ℹ️ {canal.mention} não está na lista de ignorados.", ephemeral=True)
+        guild_id = interaction.guild.id
+        current_ignored = list(await self.ctx.get_ignored_voice_channels(guild_id))
+        if canal.id not in current_ignored:
+            await interaction.response.send_message(f"ℹ️ {canal.mention} não está na lista de ignorados deste servidor.", ephemeral=True)
             return
 
-        self.ctx.ignored_voice_channels.remove(canal.id)
-        await self.db.set_ignored_voice_channels(interaction.guild.id, self.ctx.ignored_voice_channels)
+        current_ignored = [cid for cid in current_ignored if cid != canal.id]
+        await self.db.set_ignored_voice_channels(guild_id, current_ignored)
+        self.ctx.invalidate_guild_config(guild_id)
         await interaction.response.send_message(f"✅ {canal.mention} reativado (dará pontos agora).", ephemeral=True)
 
     # ── Moderação IA ───────────────────────────────────────────────────────────
@@ -127,6 +147,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             return
 
         await self.db.set_ai_moderation(interaction.guild.id, ativar)
+        self.ctx.invalidate_guild_config(interaction.guild.id)
         status = "✅ ativada" if ativar else "⏸️ desativada"
         await interaction.response.send_message(
             f"Moderação por IA {status} para **{interaction.guild.name}**.", ephemeral=True
@@ -143,6 +164,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             return
 
         await self.db.set_announcement_channel(interaction.guild.id, canal.id)
+        self.ctx.invalidate_guild_config(interaction.guild.id)
         await interaction.response.send_message(
             f"✅ Canal de alertas de moderação e denúncias definido para {canal.mention}.",
             ephemeral=True
@@ -183,3 +205,4 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             inline=False,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+

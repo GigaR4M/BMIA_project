@@ -64,7 +64,8 @@ class PointsManager:
                             if avatar_url:
                                 embed.set_thumbnail(url=avatar_url)
                             embed.set_footer(text=f"XP Total: {current_total:,} XP")
-                            await channel.send(embed=embed)
+                            # Envia mensagem temporária (15 segundos) para não poluir o chat
+                            await channel.send(embed=embed, delete_after=15)
                         except Exception as ann_err:
                             logger.debug(f"Não foi possível enviar anúncio de level up no canal: {ann_err}")
             
@@ -96,9 +97,18 @@ class PointsManager:
         """
         try:
             for guild in guilds:
+                ignored = []
+                if hasattr(self, "client") and self.client and hasattr(self.client, "ctx") and self.client.ctx:
+                    ignored = await self.client.ctx.get_ignored_voice_channels(guild.id)
+                elif self.db:
+                    cfg = await self.db.get_guild_config(guild.id)
+                    ignored = cfg.get("ignored_voice_channels", [])
+                if not ignored:
+                    ignored = self.ignored_channels
+
                 for channel in guild.voice_channels:
                     # Verifica se canal está na lista de ignorados
-                    if channel.id in self.ignored_channels:
+                    if channel.id in ignored:
                         continue
 
                     # Filtra membros válidos no canal (não bots)
