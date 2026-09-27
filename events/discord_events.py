@@ -533,6 +533,7 @@ class BotContext:
         "ignored_voice_channels",
         "dynamic_roles_config",
         "rawg_client",
+        "gg_deals_client",
     )
 
     def __init__(self) -> None:
@@ -555,6 +556,7 @@ class BotContext:
         self.tenor_client = None
         self.telegram = None
         self.rawg_client = None
+        self.gg_deals_client = None
         self.buffer_mensagens: list = []
         self.allowed_channels: list[int] = list(DEFAULT_ALLOWED_CHANNELS)
         self.ignored_voice_channels: list[int] = []
