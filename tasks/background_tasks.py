@@ -359,7 +359,6 @@ async def check_voice_points_periodically(
 # ── Promoções e Eventos Sazonais da Steam ──────────────────────────────────────
 async def check_steam_seasonal_events_periodically(client: discord.Client, db) -> None:
     """Verifica e notifica o início de grandes promoções e festivais da Steam às 14:00 BRT."""
-    from utils.gg_deals_client import BRT if hasattr(__import__('utils.gg_deals_client'), 'BRT') else zoneinfo.ZoneInfo("America/Sao_Paulo")
     import zoneinfo
     brt_zone = zoneinfo.ZoneInfo("America/Sao_Paulo")
 
