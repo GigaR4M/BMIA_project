@@ -130,11 +130,33 @@ class ReportActionView(ui.View):
             reason=f"Denúncia #{self.report_id} confirmada e aprovada pela moderação."
         )
 
+        # Se houver mensagem denunciada vinculada, apaga a mensagem original
+        deleted_notice = ""
+        try:
+            report_data = await self.db.get_report(self.report_id)
+            if report_data and report_data.get("channel_id") and report_data.get("message_id"):
+                ch_id = report_data["channel_id"]
+                msg_id = report_data["message_id"]
+                target_channel = interaction.guild.get_channel(ch_id) if interaction.guild else None
+                if target_channel:
+                    try:
+                        target_msg = await target_channel.fetch_message(msg_id)
+                        if target_msg:
+                            await target_msg.delete()
+                            deleted_notice = f" (A mensagem original no canal {target_channel.mention} foi apagada automaticamente)"
+                            logger.info(f"🗑️ Mensagem {msg_id} apagada após aprovação da denúncia #{self.report_id}")
+                    except discord.NotFound:
+                        pass
+                    except Exception as del_err:
+                        logger.warning(f"Não foi possível apagar a mensagem {msg_id}: {del_err}")
+        except Exception as e:
+            logger.warning(f"Erro ao tentar apagar mensagem denunciada #{self.report_id}: {e}")
+
         for child in self.children:
             child.disabled = True
         button.label = "✅ Denúncia Aprovada"
         await interaction.response.edit_message(view=self)
-        await interaction.followup.send(f"🛡️ Denúncia #{self.report_id} foi **APROVADA** por {interaction.user.mention}.", ephemeral=False)
+        await interaction.followup.send(f"🛡️ Denúncia #{self.report_id} foi **APROVADA** por {interaction.user.mention}.{deleted_notice}", ephemeral=False)
 
     @ui.button(label="❌ Descartar / Rejeitar", style=discord.ButtonStyle.secondary, custom_id="report_reject")
     async def reject_report(self, interaction: discord.Interaction, button: ui.Button):

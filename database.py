@@ -3991,6 +3991,18 @@ class Database:
             """, guild_id, target_user_id)
             return [dict(r) for r in rows]
 
+    async def get_report(self, report_id: int) -> Optional[Dict[str, Any]]:
+        """Busca uma denúncia específica pelo ID."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT r.*, rep.username as reporter_username, t.username as target_username
+                FROM user_reports r
+                LEFT JOIN users rep ON rep.user_id = r.reporter_user_id
+                LEFT JOIN users t ON t.user_id = r.target_user_id
+                WHERE r.id = $1
+            """, report_id)
+            return dict(row) if row else None
+
     async def update_report_status(self, report_id: int, status: str, handled_by: int) -> bool:
         """Atualiza o status de uma denúncia (approved/rejected)."""
         async with self.pool.acquire() as conn:

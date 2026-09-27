@@ -131,15 +131,18 @@ def _should_moderate(result: dict) -> bool:
 
 async def analisar_lote_com_ia(
     lista_de_mensagens: list[discord.Message],
-) -> list[str]:
+) -> list[dict]:
     """
     Analisa um lote de mensagens com Gemini.
-    Retorna lista de "SIM" / "NÃO" na mesma ordem das mensagens recebidas.
+    Retorna lista de dicts com {'moderate': bool, 'motivo': str, 'confianca': float}
+    na mesma ordem das mensagens recebidas.
     """
     if not lista_de_mensagens:
         return []
 
     logger.info("-> Analisando lote de %d mensagens...", len(lista_de_mensagens))
+
+    safe_default = [{"moderate": False, "motivo": "", "confianca": 0.0} for _ in lista_de_mensagens]
 
     try:
         prompt = _build_prompt(lista_de_mensagens)
@@ -152,33 +155,41 @@ async def analisar_lote_com_ia(
         # Monta dicionário id → resultado (id começa em 1)
         result_map: dict[int, dict] = {r["id"]: r for r in parsed}
 
-        vereditos: list[str] = []
+        decisoes: list[dict] = []
         for i in range(1, len(lista_de_mensagens) + 1):
             result = result_map.get(i, {})
+            motivo = result.get("motivo", "sem motivo")
+            confianca = float(result.get("confianca", 0.0))
             if _should_moderate(result):
-                motivo = result.get("motivo", "sem motivo")
-                confianca = result.get("confianca", 0.0)
                 logger.info(
                     "🚨 Mensagem %d classificada como ofensiva "
                     "(confiança=%.2f, motivo=%s)",
                     i, confianca, motivo,
                 )
-                vereditos.append("SIM")
+                decisoes.append({
+                    "moderate": True,
+                    "motivo": motivo,
+                    "confianca": confianca,
+                })
             else:
-                vereditos.append("NÃO")
+                decisoes.append({
+                    "moderate": False,
+                    "motivo": motivo,
+                    "confianca": confianca,
+                })
 
-        return vereditos
+        return decisoes
 
     except ResourceExhausted:
         logger.warning(
             "⚠️ Cota da API Gemini excedida. Ignorando lote de %d mensagens.",
             len(lista_de_mensagens),
         )
-        return ["NÃO"] * len(lista_de_mensagens)
+        return safe_default
     except Exception:
         logger.error("Erro inesperado na análise em lote:")
         traceback.print_exc()
-        return ["NÃO"] * len(lista_de_mensagens)
+        return safe_default
 
 
 # ---------------------------------------------------------------------------
@@ -226,10 +237,12 @@ async def processador_em_lote(
         if not mensagens_filtradas:
             continue
 
-        vereditos = await analisar_lote_com_ia(mensagens_filtradas)
+        resultados = await analisar_lote_com_ia(mensagens_filtradas)
 
-        for msg, veredito in zip(mensagens_filtradas, vereditos):
-            if veredito == "SIM":
+        for msg, info in zip(mensagens_filtradas, resultados):
+            if info.get("moderate"):
+                motivo = info.get("motivo") or "Linguagem imprópria detectada pela IA"
+                confianca = info.get("confianca", 0.0)
                 try:
                     await msg.delete()
                     await msg.channel.send(
@@ -240,6 +253,46 @@ async def processador_em_lote(
                     if db:
                         await db.update_message_moderation_status(msg.id, True)
 
+                        # Registra infração no histórico do usuário
+                        try:
+                            await db.add_user_infraction(
+                                guild_id=msg.guild.id,
+                                user_id=msg.author.id,
+                                moderator_id=0,
+                                action_type="ai_moderation",
+                                reason=f"Moderação por IA: {motivo} (confiança: {int(confianca * 100)}%)",
+                            )
+                        except Exception as inf_err:
+                            logger.warning(f"Erro ao registrar infração de IA no banco: {inf_err}")
+
+                        # Notifica canal de moderação/administração configurado
+                        try:
+                            guild_config = await db.get_guild_config(msg.guild.id)
+                            ann_channel_id = guild_config.get("announcement_channel_id")
+                            if ann_channel_id:
+                                mod_channel = msg.guild.get_channel(ann_channel_id)
+                                if mod_channel:
+                                    embed = discord.Embed(
+                                        title="🛡️ Mensagem Moderada por IA",
+                                        description=(
+                                            f"**Autor:** {msg.author.mention} (`{msg.author.name}` - ID: `{msg.author.id}`)\n"
+                                            f"**Canal:** {msg.channel.mention} (`#{msg.channel.name}`)\n"
+                                            f"**Motivo:** {motivo}\n"
+                                            f"**Confiança:** `{int(confianca * 100)}%`"
+                                        ),
+                                        color=0xEF4444,
+                                        timestamp=discord.utils.utcnow(),
+                                    )
+                                    if msg.content:
+                                        embed.add_field(
+                                            name="💬 Conteúdo da Mensagem",
+                                            value=msg.content[:1000] if len(msg.content) <= 1000 else msg.content[:997] + "...",
+                                            inline=False,
+                                        )
+                                    await mod_channel.send(embed=embed)
+                        except Exception as notify_err:
+                            logger.warning(f"Erro ao enviar alerta de moderação IA no canal: {notify_err}")
+
                     # Notifica Telegram
                     if telegram:
                         await telegram.log_message_deleted(
@@ -247,7 +300,7 @@ async def processador_em_lote(
                             channel=msg.channel,
                             author=msg.author,
                             content=msg.content,
-                            reason="Moderação por IA",
+                            reason=f"Moderação por IA: {motivo}",
                         )
 
                     # Remove pontos do usuário
