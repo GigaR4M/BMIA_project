@@ -30,9 +30,10 @@ class Database:
         try:
             self.pool = await asyncpg.create_pool(
                 self.database_url,
-                min_size=2,
-                max_size=10,
+                min_size=3,
+                max_size=20,          # 13 tasks + picos de comandos slash concorrentes
                 command_timeout=60,
+                max_inactive_connection_lifetime=300,  # Recicla conexões inativas a cada 5min
                 statement_cache_size=0  # Desabilita prepared statements para compatibilidade com pgbouncer
             )
             logger.info("✅ Conectado ao banco de dados PostgreSQL")
