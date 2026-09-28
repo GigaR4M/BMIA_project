@@ -201,27 +201,29 @@ class GamesCommands(app_commands.Group):
                 )
                 return
             
-            # Agrupa por jogo
+            # Agrupa por jogo de forma case-insensitive
             games_data = {}
             for activity in activities:
                 name = activity['activity_name']
-                if name not in games_data:
-                    games_data[name] = {
+                key = name.strip().lower()
+                if key not in games_data:
+                    games_data[key] = {
+                        'name': name,
                         'total_seconds': 0,
                         'unique_users': set(),
                         'session_count': 0,
                         'months': set()
                     }
                 
-                games_data[name]['total_seconds'] += activity['total_seconds']
-                games_data[name]['unique_users'].add(activity['unique_users'])
-                games_data[name]['session_count'] += activity['session_count']
-                games_data[name]['months'].add(activity['month'])
+                games_data[key]['total_seconds'] += activity['total_seconds']
+                games_data[key]['unique_users'].add(activity['unique_users'])
+                games_data[key]['session_count'] += activity['session_count']
+                games_data[key]['months'].add(activity['month'])
             
             # Ordena por tempo total
             sorted_games = sorted(
-                games_data.items(),
-                key=lambda x: x[1]['total_seconds'],
+                games_data.values(),
+                key=lambda x: x['total_seconds'],
                 reverse=True
             )
             
@@ -233,7 +235,7 @@ class GamesCommands(app_commands.Group):
             
             # Estatísticas gerais
             total_games = len(sorted_games)
-            total_hours = sum(g[1]['total_seconds'] for g in sorted_games) // 3600
+            total_hours = sum(g['total_seconds'] for g in sorted_games) // 3600
             
             embed.add_field(
                 name="📊 Resumo do Ano",
@@ -245,7 +247,8 @@ class GamesCommands(app_commands.Group):
             )
             
             # Top 10 jogos do ano
-            for i, (name, data) in enumerate(sorted_games[:10], 1):
+            for i, data in enumerate(sorted_games[:10], 1):
+                name = data['name']
                 hours = data['total_seconds'] // 3600
                 months_played = len(data['months'])
                 

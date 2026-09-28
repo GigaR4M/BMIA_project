@@ -252,9 +252,12 @@ class PointsManager:
                     for m in valid_members:
                         for act in m.activities:
                             if act.type == discord.ActivityType.playing and act.name:
-                                if act.name not in channel_games[channel.id]:
-                                    channel_games[channel.id][act.name] = set()
-                                channel_games[channel.id][act.name].add(m.id)
+                                game_key = act.name.strip().lower()
+                                if game_key in ("hang status", "spotify"):
+                                    continue
+                                if game_key not in channel_games[channel.id]:
+                                    channel_games[channel.id][game_key] = set()
+                                channel_games[channel.id][game_key].add(m.id)
 
                 for member in guild.members:
                     if member.bot:
@@ -290,7 +293,8 @@ class PointsManager:
                         if channel_id in channel_games:
                             for act in member.activities:
                                 if act.type == discord.ActivityType.playing and act.name:
-                                    if len(channel_games[channel_id].get(act.name, set())) >= 2:
+                                    game_key = act.name.strip().lower()
+                                    if len(channel_games[channel_id].get(game_key, set())) >= 2:
                                         has_synergy = True
                                         break
                         if has_synergy:

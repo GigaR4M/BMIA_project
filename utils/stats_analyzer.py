@@ -63,12 +63,17 @@ class StatsAnalyzer:
                 # We use DISTINCT ON (user_id) to get only the top 1 per user
                 recent_games = await conn.fetch("""
                     WITH UserGameStats AS (
-                        SELECT user_id, activity_name, SUM(duration_seconds) as total_duration
+                        SELECT 
+                            user_id, 
+                            MODE() WITHIN GROUP (ORDER BY activity_name) as activity_name, 
+                            SUM(duration_seconds) as total_duration
                         FROM user_activities
                         WHERE guild_id = $1
                           AND started_at >= NOW() - INTERVAL '30 days'
                           AND activity_type = 'playing'
-                        GROUP BY user_id, activity_name
+                          AND activity_name NOT ILIKE 'Hang Status'
+                          AND activity_name NOT ILIKE 'Spotify'
+                        GROUP BY user_id, LOWER(TRIM(activity_name))
                     )
                     SELECT DISTINCT ON (user_id) 
                         user_id, activity_name, total_duration

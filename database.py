@@ -801,6 +801,239 @@ class Database:
                         LIMIT p_limit;
                     END;
                     $$;
+
+                    CREATE OR REPLACE FUNCTION get_top_activities(
+                        p_guild_id BIGINT,
+                        p_days INT DEFAULT 30,
+                        p_limit INT DEFAULT 10,
+                        p_timezone TEXT DEFAULT 'America/Sao_Paulo'
+                    )
+                    RETURNS TABLE (
+                        activity_name TEXT,
+                        unique_users BIGINT,
+                        session_count BIGINT,
+                        total_seconds BIGINT,
+                        avg_seconds NUMERIC,
+                        total_hours NUMERIC
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            MODE() WITHIN GROUP (ORDER BY ua.activity_name)::TEXT AS activity_name,
+                            COUNT(DISTINCT ua.user_id)::BIGINT AS unique_users,
+                            COUNT(*)::BIGINT AS session_count,
+                            COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS total_seconds,
+                            COALESCE(AVG(ua.duration_seconds), 0)::NUMERIC AS avg_seconds,
+                            ROUND((COALESCE(SUM(ua.duration_seconds), 0)::NUMERIC / 3600.0), 2) AS total_hours
+                        FROM user_activities ua
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.started_at >= (NOW() - (p_days || ' days')::INTERVAL)
+                          AND ua.duration_seconds IS NOT NULL
+                          AND ua.activity_type = 'playing'
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                        GROUP BY LOWER(TRIM(ua.activity_name))
+                        ORDER BY total_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    CREATE OR REPLACE FUNCTION get_daily_activity_stats(
+                        p_guild_id BIGINT,
+                        p_days INT DEFAULT 30,
+                        p_timezone TEXT DEFAULT 'America/Sao_Paulo'
+                    )
+                    RETURNS TABLE (
+                        date TEXT,
+                        total_sessions BIGINT,
+                        unique_users BIGINT,
+                        total_hours NUMERIC,
+                        avg_session_minutes NUMERIC
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            TO_CHAR(ua.started_at AT TIME ZONE p_timezone, 'YYYY-MM-DD') AS date,
+                            COUNT(*)::BIGINT AS total_sessions,
+                            COUNT(DISTINCT ua.user_id)::BIGINT AS unique_users,
+                            ROUND((COALESCE(SUM(ua.duration_seconds), 0)::NUMERIC / 3600.0), 2) AS total_hours,
+                            ROUND((COALESCE(AVG(ua.duration_seconds), 0)::NUMERIC / 60.0), 2) AS avg_session_minutes
+                        FROM user_activities ua
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.started_at >= (NOW() - (p_days || ' days')::INTERVAL)
+                          AND ua.duration_seconds IS NOT NULL
+                          AND ua.activity_type = 'playing'
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                        GROUP BY TO_CHAR(ua.started_at AT TIME ZONE p_timezone, 'YYYY-MM-DD')
+                        ORDER BY date ASC;
+                    END;
+                    $$;
+
+                    CREATE OR REPLACE FUNCTION get_top_users_by_activity(
+                        p_guild_id BIGINT,
+                        p_activity_name TEXT DEFAULT NULL,
+                        p_days INT DEFAULT 30,
+                        p_limit INT DEFAULT 10
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        discriminator TEXT,
+                        session_count BIGINT,
+                        total_seconds BIGINT,
+                        total_hours NUMERIC,
+                        avg_session_minutes NUMERIC
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Desconhecido')::TEXT,
+                            COALESCE(u.discriminator, '0000')::TEXT,
+                            COUNT(*)::BIGINT AS session_count,
+                            COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS total_seconds,
+                            ROUND((COALESCE(SUM(ua.duration_seconds), 0)::NUMERIC / 3600.0), 2) AS total_hours,
+                            ROUND((COALESCE(AVG(ua.duration_seconds), 0)::NUMERIC / 60.0), 2) AS avg_session_minutes
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND (p_activity_name IS NULL OR ua.activity_name ILIKE p_activity_name)
+                          AND ua.started_at >= (NOW() - (p_days || ' days')::INTERVAL)
+                          AND ua.duration_seconds IS NOT NULL
+                          AND ua.activity_type = 'playing'
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.discriminator
+                        ORDER BY total_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    CREATE OR REPLACE FUNCTION get_activity_type_distribution(
+                        p_guild_id BIGINT,
+                        p_days INT DEFAULT 30
+                    )
+                    RETURNS TABLE (
+                        activity_type TEXT,
+                        session_count BIGINT,
+                        unique_users BIGINT,
+                        total_hours NUMERIC
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            ua.activity_type::TEXT,
+                            COUNT(*)::BIGINT AS session_count,
+                            COUNT(DISTINCT ua.user_id)::BIGINT AS unique_users,
+                            ROUND((COALESCE(SUM(ua.duration_seconds), 0)::NUMERIC / 3600.0), 2) AS total_hours
+                        FROM user_activities ua
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.started_at >= (NOW() - (p_days || ' days')::INTERVAL)
+                          AND ua.duration_seconds IS NOT NULL
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                        GROUP BY ua.activity_type
+                        ORDER BY session_count DESC;
+                    END;
+                    $$;
+
+                    CREATE OR REPLACE FUNCTION get_highlight_game_of_the_year(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        activity_name TEXT,
+                        value_seconds BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            MODE() WITHIN GROUP (ORDER BY ua.activity_name)::TEXT AS activity_name,
+                            COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS value_seconds,
+                            RANK() OVER (ORDER BY COALESCE(SUM(ua.duration_seconds), 0) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.activity_type = 'playing'
+                          AND EXTRACT(YEAR FROM ua.started_at) = EXTRACT(YEAR FROM NOW())
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                        GROUP BY LOWER(TRIM(ua.activity_name))
+                        ORDER BY value_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    CREATE OR REPLACE FUNCTION get_highlight_most_distinct_games(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Desconhecido')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(DISTINCT LOWER(TRIM(ua.activity_name)))::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(DISTINCT LOWER(TRIM(ua.activity_name))) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.activity_type = 'playing'
+                          AND EXTRACT(YEAR FROM ua.started_at) = EXTRACT(YEAR FROM NOW())
+                          AND ua.duration_seconds > 60
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    CREATE OR REPLACE FUNCTION get_highlight_demo_king(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Desconhecido')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(DISTINCT LOWER(TRIM(ua.activity_name)))::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(DISTINCT LOWER(TRIM(ua.activity_name))) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.activity_type = 'playing'
+                          AND EXTRACT(YEAR FROM ua.started_at) = EXTRACT(YEAR FROM NOW())
+                          AND ua.duration_seconds > 60
+                          AND ua.activity_name ILIKE '%demo%'
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
                 """)
             except Exception as e:
                 logger.warning(f"⚠️ Erro ao criar funções RPC para o dashboard: {e}")
@@ -1073,7 +1306,7 @@ class Database:
                 SELECT 
                     u.user_id,
                     u.username,
-                    a.activity_name,
+                    MODE() WITHIN GROUP (ORDER BY a.activity_name) as activity_name,
                     COALESCE(SUM(a.duration_seconds), 0) as total_seconds,
                     COUNT(*) as session_count
                 FROM user_activities a
@@ -1083,8 +1316,10 @@ class Database:
                   AND a.started_at >= $3
                   AND a.duration_seconds IS NOT NULL
                   AND a.activity_type = 'playing'
+                  AND a.activity_name NOT ILIKE 'Hang Status'
+                  AND a.activity_name NOT ILIKE 'Spotify'
                   AND u.is_bot = FALSE
-                GROUP BY u.user_id, u.username, a.activity_name
+                GROUP BY u.user_id, u.username
                 ORDER BY total_seconds DESC
                 LIMIT $4
             """, guild_id, f"%{game_name.strip()}%", cutoff_date, limit)
@@ -1278,11 +1513,13 @@ class Database:
 
             # 8. Atividade Favorita
             top_activities = await conn.fetch("""
-                SELECT activity_name, COALESCE(SUM(duration_seconds), 0)/60 as minutes
+                SELECT MODE() WITHIN GROUP (ORDER BY activity_name) as activity_name, COALESCE(SUM(duration_seconds), 0)/60 as minutes
                 FROM user_activities
                 WHERE user_id = $1 AND guild_id = $2 AND started_at >= $3
                   AND activity_type = 'playing'
-                GROUP BY activity_name
+                  AND activity_name NOT ILIKE 'Hang Status'
+                  AND activity_name NOT ILIKE 'Spotify'
+                GROUP BY LOWER(TRIM(activity_name))
                 ORDER BY minutes DESC
                 LIMIT 3
             """, user_id, guild_id, cutoff_date)
@@ -1646,12 +1883,14 @@ class Database:
             
             rows = await conn.fetch("""
                 WITH UserDistinct AS (
-                    SELECT user_id, COUNT(DISTINCT activity_name) as distinct_count
+                    SELECT user_id, COUNT(DISTINCT LOWER(TRIM(activity_name))) as distinct_count
                     FROM user_activities
                     WHERE guild_id = $1 
                       AND activity_type = 'playing'
                       AND started_at >= $2 AND started_at < $3
                       AND duration_seconds > 60 -- Ignora jogos abertos por menos de 1 minuto
+                      AND activity_name NOT ILIKE 'Hang Status'
+                      AND activity_name NOT ILIKE 'Spotify'
                     GROUP BY user_id
                 ),
                 MaxDistinct AS (
@@ -1671,13 +1910,15 @@ class Database:
             
             rows = await conn.fetch("""
                 WITH UserDemo AS (
-                    SELECT user_id, COUNT(DISTINCT activity_name) as demo_count
+                    SELECT user_id, COUNT(DISTINCT LOWER(TRIM(activity_name))) as demo_count
                     FROM user_activities
                     WHERE guild_id = $1 
                       AND activity_type = 'playing'
                       AND started_at >= $2 AND started_at < $3
                       AND duration_seconds > 60 -- Ignora jogos abertos por menos de 1 minuto
                       AND activity_name ILIKE '%demo%'
+                      AND activity_name NOT ILIKE 'Hang Status'
+                      AND activity_name NOT ILIKE 'Spotify'
                     GROUP BY user_id
                 ),
                 MaxDemo AS (
@@ -2041,7 +2282,7 @@ class Database:
             
             rows = await conn.fetch("""
                 SELECT 
-                    activity_name,
+                    MODE() WITHIN GROUP (ORDER BY activity_name) as activity_name,
                     COUNT(DISTINCT user_id) as unique_users,
                     COUNT(*) as session_count,
                     SUM(duration_seconds) as total_seconds,
@@ -2051,7 +2292,9 @@ class Database:
                   AND started_at >= $2
                   AND duration_seconds IS NOT NULL
                   AND activity_type = 'playing'
-                GROUP BY activity_name
+                  AND activity_name NOT ILIKE 'Hang Status'
+                  AND activity_name NOT ILIKE 'Spotify'
+                GROUP BY LOWER(TRIM(activity_name))
                 ORDER BY total_seconds DESC
                 LIMIT $3
             """, guild_id, cutoff_date, limit)
@@ -2066,7 +2309,7 @@ class Database:
             
             rows = await conn.fetch("""
                 SELECT 
-                    activity_name,
+                    MODE() WITHIN GROUP (ORDER BY activity_name) as activity_name,
                     COUNT(*) as session_count,
                     SUM(duration_seconds) as total_seconds,
                     AVG(duration_seconds) as avg_seconds
@@ -2076,7 +2319,9 @@ class Database:
                   AND started_at >= $3
                   AND duration_seconds IS NOT NULL
                   AND activity_type = 'playing'
-                GROUP BY activity_name
+                  AND activity_name NOT ILIKE 'Hang Status'
+                  AND activity_name NOT ILIKE 'Spotify'
+                GROUP BY LOWER(TRIM(activity_name))
                 ORDER BY total_seconds DESC
             """, user_id, guild_id, cutoff_date)
             
@@ -2087,7 +2332,7 @@ class Database:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT 
-                    activity_name,
+                    MODE() WITHIN GROUP (ORDER BY activity_name) as activity_name,
                     COUNT(DISTINCT user_id) as unique_users,
                     COUNT(*) as session_count,
                     SUM(duration_seconds) as total_seconds,
@@ -2097,7 +2342,9 @@ class Database:
                   AND EXTRACT(YEAR FROM (started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')) = $2
                   AND duration_seconds IS NOT NULL
                   AND activity_type = 'playing'
-                GROUP BY activity_name, month
+                  AND activity_name NOT ILIKE 'Hang Status'
+                  AND activity_name NOT ILIKE 'Spotify'
+                GROUP BY LOWER(TRIM(activity_name)), month
                 ORDER BY total_seconds DESC
             """, guild_id, year)
             
@@ -3694,13 +3941,15 @@ class Database:
             try:
                 rows = await conn.fetch("""
                     SELECT 
-                        ua.activity_name,
+                        MODE() WITHIN GROUP (ORDER BY ua.activity_name) as activity_name,
                         COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS value_seconds
                     FROM user_activities ua
                     WHERE ua.guild_id = $1
                       AND ua.activity_type = 'playing'
                       AND EXTRACT(YEAR FROM ua.started_at) = $2
-                    GROUP BY ua.activity_name
+                      AND ua.activity_name NOT ILIKE 'Hang Status'
+                      AND ua.activity_name NOT ILIKE 'Spotify'
+                    GROUP BY LOWER(TRIM(ua.activity_name))
                     ORDER BY value_seconds DESC
                     LIMIT 5
                 """, guild_id, year)
@@ -3716,13 +3965,15 @@ class Database:
                         ua.user_id,
                         u.username,
                         u.avatar_url,
-                        COUNT(DISTINCT ua.activity_name)::BIGINT AS value
+                        COUNT(DISTINCT LOWER(TRIM(ua.activity_name)))::BIGINT AS value
                     FROM user_activities ua
                     JOIN users u ON u.user_id = ua.user_id
                     WHERE ua.guild_id = $1
                       AND ua.activity_type = 'playing'
                       AND EXTRACT(YEAR FROM ua.started_at) = $2
                       AND ua.duration_seconds > 60
+                      AND ua.activity_name NOT ILIKE 'Hang Status'
+                      AND ua.activity_name NOT ILIKE 'Spotify'
                       AND u.is_bot = FALSE
                     GROUP BY ua.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
@@ -3853,7 +4104,7 @@ class Database:
                         ua.user_id,
                         u.username,
                         u.avatar_url,
-                        COUNT(DISTINCT ua.activity_name)::BIGINT AS count
+                        COUNT(DISTINCT LOWER(TRIM(ua.activity_name)))::BIGINT AS count
                     FROM user_activities ua
                     JOIN users u ON u.user_id = ua.user_id
                     WHERE ua.guild_id = $1
@@ -3861,6 +4112,8 @@ class Database:
                       AND EXTRACT(YEAR FROM ua.started_at) = $2
                       AND ua.duration_seconds > 60
                       AND ua.activity_name ILIKE '%demo%'
+                      AND ua.activity_name NOT ILIKE 'Hang Status'
+                      AND ua.activity_name NOT ILIKE 'Spotify'
                       AND u.is_bot = FALSE
                     GROUP BY ua.user_id, u.username, u.avatar_url
                     ORDER BY count DESC

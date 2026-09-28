@@ -8,6 +8,44 @@ from typing import Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def normalize_game_name(name: str) -> str:
+    """Normaliza o nome do jogo/atividade para evitar duplicações por case sensitivity."""
+    if not name:
+        return ""
+    clean = " ".join(name.strip().split())
+    lowered = clean.lower()
+
+    # Mapeamento para jogos populares com variações frequentes de capitalização
+    KNOWN_GAMES = {
+        "roblox": "Roblox",
+        "ea sports fc 24": "EA Sports FC 24",
+        "ea sports fc 25": "EA Sports FC 25",
+        "ea sports fc 26": "EA Sports FC 26",
+        "valorant": "VALORANT",
+        "counter-strike 2": "Counter-Strike 2",
+        "cs2": "Counter-Strike 2",
+        "league of legends": "League of Legends",
+        "rocket league": "Rocket League",
+        "dead by daylight": "Dead by Daylight",
+        "visual studio code": "Visual Studio Code",
+        "tlauncher": "TLauncher",
+        "curseforge": "CurseForge",
+        "no man's sky": "No Man's Sky",
+        "project zomboid": "Project Zomboid",
+        "valheim": "Valheim",
+        "gta v": "Grand Theft Auto V",
+        "grand theft auto v": "Grand Theft Auto V",
+        "minecraft": "Minecraft",
+        "fortnite": "Fortnite",
+        "overwatch 2": "Overwatch 2",
+        "dota 2": "Dota 2",
+        "apex legends": "Apex Legends",
+        "rainbow six siege": "Tom Clancy's Rainbow Six Siege",
+    }
+
+    return KNOWN_GAMES.get(lowered, clean)
+
+
 class ActivityTracker:
     """Rastreador de atividades e jogos dos usuários."""
     
@@ -19,8 +57,8 @@ class ActivityTracker:
             db: Instância do gerenciador de banco de dados
         """
         self.db = db
-        # Cache de atividades em andamento: {(user_id, guild_id, activity_name): activity_id}
-        self.active_activities: Dict[tuple, int] = {}
+        # Cache de atividades em andamento: {(user_id, guild_id, normalized_lower_name): (activity_id, display_name)}
+        self.active_activities: Dict[tuple, tuple] = {}
     
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
         """
@@ -58,34 +96,36 @@ class ActivityTracker:
             return
         
         try:
-            # Extrai atividades antes e depois
+            # Extrai atividades antes e depois (retorna dict {key_lower: (display_name, activity_type)})
             before_activities = self._extract_activities(before)
             after_activities = self._extract_activities(after)
             
-            # Atividades que terminaram
-            ended_activities = before_activities - after_activities
-            for activity_name, activity_type in ended_activities:
-                await self._end_activity(after, activity_name)
+            # Chaves que terminaram
+            ended_keys = set(before_activities.keys()) - set(after_activities.keys())
+            for key in ended_keys:
+                display_name, _ = before_activities[key]
+                await self._end_activity(after, display_name)
             
-            # Atividades que começaram
-            started_activities = after_activities - before_activities
-            for activity_name, activity_type in started_activities:
-                await self._start_activity(after, activity_name, activity_type)
+            # Chaves que começaram
+            started_keys = set(after_activities.keys()) - set(before_activities.keys())
+            for key in started_keys:
+                display_name, activity_type = after_activities[key]
+                await self._start_activity(after, display_name, activity_type)
                 
         except Exception as e:
             logger.error(f"❌ Erro ao processar atualização de presença: {e}")
     
-    def _extract_activities(self, member: discord.Member) -> set:
+    def _extract_activities(self, member: discord.Member) -> Dict[str, tuple]:
         """
-        Extrai atividades de um membro.
+        Extrai atividades de um membro de forma case-insensitive.
         
         Args:
             member: Membro do Discord
             
         Returns:
-            Set de tuplas (activity_name, activity_type)
+            Dict de {activity_name_lower: (normalized_display_name, activity_type)}
         """
-        activities = set()
+        activities = {}
         
         if not member.activities:
             return activities
@@ -95,26 +135,30 @@ class ActivityTracker:
             if isinstance(activity, discord.CustomActivity):
                 continue
             
-            # Ignora Spotify (pode ser adicionado depois se quiser)
+            # Ignora Spotify
             if isinstance(activity, discord.Spotify):
                 continue
             
             # Ignora hang status (ícones automáticos como "chilling", "gaming" nos canais de voz)
-            # Discord ActivityType.hanging tem valor 6 em versões mais recentes
             if hasattr(activity, 'type') and getattr(activity.type, 'value', None) == 6:
                 continue
             
-            activity_name = None
+            raw_name = getattr(activity, 'name', None)
+            if not raw_name:
+                continue
+            
+            # Ignora nomes que são status de voz ou tocadores
+            if raw_name.strip().lower() in ("hang status", "spotify"):
+                continue
+            
+            activity_name = normalize_game_name(raw_name)
             activity_type = "unknown"
             
             if isinstance(activity, discord.Game):
-                activity_name = activity.name
                 activity_type = "playing"
             elif isinstance(activity, discord.Streaming):
-                activity_name = activity.name
                 activity_type = "streaming"
             elif isinstance(activity, discord.Activity):
-                activity_name = activity.name
                 if activity.type == discord.ActivityType.playing:
                     activity_type = "playing"
                 elif activity.type == discord.ActivityType.streaming:
@@ -127,11 +171,10 @@ class ActivityTracker:
                     continue  # Ignora custom status que não seja CustomActivity
             
             if activity_name:
-                activities.add((activity_name, activity_type))
+                key = activity_name.strip().lower()
+                activities[key] = (activity_name, activity_type)
         
         return activities
-    
-
     
     async def _start_activity(self, member: discord.Member, activity_name: str, 
                              activity_type: str):
@@ -144,8 +187,8 @@ class ActivityTracker:
             activity_type: Tipo da atividade
         """
         try:
-            # Verifica se já está rastreando esta atividade
-            cache_key = (member.id, member.guild.id, activity_name)
+            normalized_name = normalize_game_name(activity_name)
+            cache_key = (member.id, member.guild.id, normalized_name.strip().lower())
             
             if cache_key in self.active_activities:
                 return  # Já está sendo rastreada
@@ -154,14 +197,14 @@ class ActivityTracker:
             activity_id = await self.db.start_activity(
                 user_id=member.id,
                 guild_id=member.guild.id,
-                activity_name=activity_name,
+                activity_name=normalized_name,
                 activity_type=activity_type
             )
             
             # Adiciona ao cache
-            self.active_activities[cache_key] = activity_id
+            self.active_activities[cache_key] = (activity_id, normalized_name)
             
-            logger.debug(f"🎮 {member.name} começou: {activity_name} ({activity_type})")
+            logger.debug(f"🎮 {member.name} começou: {normalized_name} ({activity_type})")
             
         except Exception as e:
             logger.error(f"❌ Erro ao iniciar rastreamento de atividade: {e}")
@@ -175,13 +218,16 @@ class ActivityTracker:
             activity_name: Nome da atividade
         """
         try:
-            cache_key = (member.id, member.guild.id, activity_name)
+            normalized_name = normalize_game_name(activity_name)
+            cache_key = (member.id, member.guild.id, normalized_name.strip().lower())
             
             # Busca no cache
-            activity_id = self.active_activities.get(cache_key)
+            cached_data = self.active_activities.get(cache_key)
             
-            if not activity_id:
+            if not cached_data:
                 return  # Não estava sendo rastreada
+            
+            activity_id = cached_data[0] if isinstance(cached_data, tuple) else cached_data
             
             # Finaliza no banco de dados
             await self.db.end_activity(activity_id)
@@ -189,7 +235,7 @@ class ActivityTracker:
             # Remove do cache
             del self.active_activities[cache_key]
             
-            logger.debug(f"🎮 {member.name} parou: {activity_name}")
+            logger.debug(f"🎮 {member.name} parou: {normalized_name}")
             
         except Exception as e:
             logger.error(f"❌ Erro ao finalizar rastreamento de atividade: {e}")
@@ -210,7 +256,8 @@ class ActivityTracker:
             
             # Finaliza cada uma
             for key in keys_to_remove:
-                activity_id = self.active_activities[key]
+                cached_data = self.active_activities[key]
+                activity_id = cached_data[0] if isinstance(cached_data, tuple) else cached_data
                 await self.db.end_activity(activity_id)
                 del self.active_activities[key]
             
