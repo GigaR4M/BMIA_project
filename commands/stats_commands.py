@@ -485,6 +485,51 @@ class StatsCommands(app_commands.Group):
         """Comando slash para exibir a Retrospectiva e Destaques do Ano."""
         await handle_highlights_gallery(self.db, interaction, ano)
 
+    @app_commands.command(
+        name="podio_mensal_teste",
+        description="[ADMIN/TEMPORÁRIO] Gera e exibe o pódio mensal com dados em tempo real até o momento (BRT UTC-3)"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def podio_mensal_teste(self, interaction: discord.Interaction):
+        """Comando administrativo temporário para testar o pódio mensal em tempo real com Pillow."""
+        await interaction.response.defer(thinking=True)
+        try:
+            from utils.image_generator import PodiumBuilder
+            from config import now_brt
+
+            now = now_brt()
+            monthly_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            monthly_end = now
+
+            month_names = {
+                1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL",
+                5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
+                9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO",
+            }
+            month_name = month_names.get(now.month, "MÊS")
+            period_text = f"{month_name} {now.year} (ATÉ O MOMENTO)"
+
+            top_users = await self.db.get_top_users_date_range(interaction.guild.id, monthly_start, monthly_end, limit=10)
+            if not top_users:
+                days = (now - monthly_start).days + 1
+                top_users = await self.db.get_leaderboard(10, days, interaction.guild.id)
+
+            if not top_users:
+                await interaction.followup.send("⚠️ Nenhum dado de atividade registrado para o mês atual até o momento.", ephemeral=True)
+                return
+
+            builder = PodiumBuilder()
+            image_bio = await builder.generate_podium(interaction.guild, top_users, period_text=period_text)
+            file = discord.File(fp=image_bio, filename=f"podio_mensal_{now.year}_{now.month:02d}_teste.png")
+
+            await interaction.followup.send(
+                content=f"🏆 **PÓDIO MENSAL EM TEMPO REAL — {period_text}**\n*(Comando administrativo temporário de avaliação)*",
+                file=file
+            )
+        except Exception as e:
+            logger.error("Erro ao gerar pódio mensal de teste: %s", e, exc_info=True)
+            await interaction.followup.send(f"❌ Erro ao gerar pódio mensal de teste: {e}", ephemeral=True)
+
     @user_stats.error
     async def user_stats_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         """Handler de erro para comando que requer permissões."""
