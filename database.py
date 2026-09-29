@@ -961,6 +961,71 @@ class Database:
 
                     -- ==================== 16 RPCs DE DESTAQUES COM ISOLAMENTO STRICT POR GUILD ====================
 
+                    -- Drop versões anteriores para permitir alteração de schema de retorno (RETURNS TABLE)
+                    DROP FUNCTION IF EXISTS get_highlight_highest_score(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_highest_score(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_highest_score;
+
+                    DROP FUNCTION IF EXISTS get_highlight_most_messages(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_most_messages(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_most_messages;
+
+                    DROP FUNCTION IF EXISTS get_highlight_most_voice_time(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_most_voice_time(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_most_voice_time;
+
+                    DROP FUNCTION IF EXISTS get_highlight_most_offensive(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_most_offensive(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_most_offensive;
+
+                    DROP FUNCTION IF EXISTS get_highlight_most_activity_time(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_most_activity_time(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_most_activity_time;
+
+                    DROP FUNCTION IF EXISTS get_highlight_longest_streaming(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_longest_streaming(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_longest_streaming;
+
+                    DROP FUNCTION IF EXISTS get_highlight_most_events(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_most_events(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_most_events;
+
+                    DROP FUNCTION IF EXISTS get_highlight_top_gamers(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_top_gamers(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_top_gamers;
+
+                    DROP FUNCTION IF EXISTS get_highlight_most_reactions_received(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_most_reactions_received(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_most_reactions_received;
+
+                    DROP FUNCTION IF EXISTS get_highlight_demo_king(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_demo_king(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_demo_king;
+
+                    DROP FUNCTION IF EXISTS get_highlight_most_distinct_games(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_most_distinct_games(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_most_distinct_games;
+
+                    DROP FUNCTION IF EXISTS get_highlight_longest_session(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_longest_session(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_longest_session;
+
+                    DROP FUNCTION IF EXISTS get_highlight_game_of_the_year(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_game_of_the_year(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_game_of_the_year;
+
+                    DROP FUNCTION IF EXISTS get_highlight_night_owl(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_night_owl(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_night_owl;
+
+                    DROP FUNCTION IF EXISTS get_highlight_media_king(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_media_king(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_media_king;
+
+                    DROP FUNCTION IF EXISTS get_highlight_omnipresent(bigint, integer);
+                    DROP FUNCTION IF EXISTS get_highlight_omnipresent(bigint);
+                    DROP FUNCTION IF EXISTS get_highlight_omnipresent;
+
                     -- 1. Maior Total de XP (MVP)
                     CREATE OR REPLACE FUNCTION get_highlight_highest_score(
                         p_guild_id BIGINT,
