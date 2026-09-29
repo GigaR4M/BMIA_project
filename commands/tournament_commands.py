@@ -1249,7 +1249,7 @@ class TournamentCommands(app_commands.Group):
         local: Optional[str] = None,
         canal_voz: Optional[discord.VoiceChannel] = None
     ):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         try:
             tourney = await self.db.get_tournament(id)
             if not tourney or tourney["guild_id"] != interaction.guild.id:
