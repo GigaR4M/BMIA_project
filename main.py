@@ -88,7 +88,31 @@ class BMIAClient(discord.Client):
         super().__init__(*args, **kwargs)
         self.tree = discord.app_commands.CommandTree(self)
         self.ctx = BotContext()
-        self.ctx.telegram = TelegramNotifier()
+        self.ctx.telegram = TelegramNotifier()
+        self.tree.on_error = self.on_tree_error
+
+    async def on_tree_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError) -> None:
+        """Trata erros globais dos comandos de barra da Tree."""
+        if isinstance(error, discord.app_commands.CommandInvokeError):
+            original = error.original
+            if isinstance(original, discord.NotFound) and getattr(original, "code", None) == 10062:
+                cmd_name = interaction.command.name if interaction.command else "desconhecido"
+                logger.warning("Interação do comando '%s' expirou antes do defer/resposta (10062 Unknown Interaction).", cmd_name)
+                return
+            if isinstance(original, discord.InteractionResponded):
+                cmd_name = interaction.command.name if interaction.command else "desconhecido"
+                logger.debug("Interação do comando '%s' já havia sido respondida.", cmd_name)
+                return
+
+        cmd_name = interaction.command.name if interaction.command else "desconhecido"
+        logger.error("Erro não tratado no comando '%s': %s", cmd_name, error, exc_info=error)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ Ocorreu um erro ao processar este comando.", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ Ocorreu um erro ao processar este comando.", ephemeral=True)
+        except Exception:
+            pass
 
     # setup_hook e chamado UMA VEZ antes do gateway (correto para registrar commands e tasks)
     async def setup_hook(self) -> None:
