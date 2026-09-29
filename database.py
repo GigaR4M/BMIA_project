@@ -237,11 +237,28 @@ class Database:
                 CREATE TABLE IF NOT EXISTS interaction_points (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL REFERENCES users(user_id),
+                    guild_id BIGINT,
                     points INTEGER NOT NULL,
                     interaction_type TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT NOW()
                 )
             """)
+            try:
+                await conn.execute("ALTER TABLE interaction_points ADD COLUMN IF NOT EXISTS guild_id BIGINT")
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_interaction_points_guild ON interaction_points(guild_id)")
+                await conn.execute("""
+                    UPDATE interaction_points ip
+                    SET guild_id = (
+                        SELECT mjd.guild_id 
+                        FROM member_join_dates mjd 
+                        WHERE mjd.user_id = ip.user_id 
+                        ORDER BY mjd.joined_at ASC 
+                        LIMIT 1
+                    )
+                    WHERE ip.guild_id IS NULL
+                """)
+            except Exception as ip_mig_err:
+                logger.debug("Migração guild_id em interaction_points: %s", ip_mig_err)
             
             # Tabela de configuração do leaderboard persistente
             await conn.execute("""
@@ -773,7 +790,8 @@ class Database:
                                 p.user_id,
                                 COALESCE(SUM(p.points), 0)::BIGINT AS pts
                             FROM interaction_points p
-                            WHERE (p.guild_id = p_guild_id OR p.guild_id IS NULL)
+                            JOIN member_join_dates mjd ON mjd.user_id = p.user_id AND mjd.guild_id = p_guild_id
+                            WHERE p.guild_id = p_guild_id
                               AND (p_start_date IS NULL OR p.created_at >= p_start_date)
                               AND (p_days IS NULL OR p_start_date IS NOT NULL OR p.created_at >= (NOW() - (p_days || ' days')::INTERVAL))
                             GROUP BY p.user_id
@@ -783,7 +801,8 @@ class Database:
                                 p.user_id,
                                 COALESCE(SUM(p.points), 0)::BIGINT AS total_pts
                             FROM interaction_points p
-                            WHERE (p.guild_id = p_guild_id OR p.guild_id IS NULL)
+                            JOIN member_join_dates mjd ON mjd.user_id = p.user_id AND mjd.guild_id = p_guild_id
+                            WHERE p.guild_id = p_guild_id
                             GROUP BY p.user_id
                         )
                         SELECT 
@@ -940,6 +959,405 @@ class Database:
                     END;
                     $$;
 
+                    -- ==================== 16 RPCs DE DESTAQUES COM ISOLAMENTO STRICT POR GUILD ====================
+
+                    -- 1. Maior Total de XP (MVP)
+                    CREATE OR REPLACE FUNCTION get_highlight_highest_score(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COALESCE(SUM(ip.points), 0)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COALESCE(SUM(ip.points), 0) DESC)::BIGINT AS rank
+                        FROM interaction_points ip
+                        JOIN users u ON ip.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE ip.guild_id = p_guild_id
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 2. Mais Mensagens de Texto (Tagarela)
+                    CREATE OR REPLACE FUNCTION get_highlight_most_messages(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(m.message_id)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(m.message_id) DESC)::BIGINT AS rank
+                        FROM messages m
+                        JOIN users u ON m.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE m.guild_id = p_guild_id
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 3. Mais Tempo em Voz (Rei da Call)
+                    CREATE OR REPLACE FUNCTION get_highlight_most_voice_time(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value_seconds BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COALESCE(SUM(va.duration_seconds), 0)::BIGINT AS value_seconds,
+                            RANK() OVER (ORDER BY COALESCE(SUM(va.duration_seconds), 0) DESC)::BIGINT AS rank
+                        FROM voice_activity va
+                        JOIN users u ON va.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE va.guild_id = p_guild_id
+                          AND va.duration_seconds IS NOT NULL
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 4. Mais Mensagens Ofensivas / Moderadas
+                    CREATE OR REPLACE FUNCTION get_highlight_most_offensive(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(m.message_id)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(m.message_id) DESC)::BIGINT AS rank
+                        FROM messages m
+                        JOIN users u ON m.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE m.guild_id = p_guild_id
+                          AND m.was_moderated = TRUE
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 5. Mais Tempo em Atividade
+                    CREATE OR REPLACE FUNCTION get_highlight_most_activity_time(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value_seconds BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS value_seconds,
+                            RANK() OVER (ORDER BY COALESCE(SUM(ua.duration_seconds), 0) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.duration_seconds IS NOT NULL
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 6. Maior Tempo em Live / Streaming
+                    CREATE OR REPLACE FUNCTION get_highlight_longest_streaming(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value_seconds BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS value_seconds,
+                            RANK() OVER (ORDER BY COALESCE(SUM(ua.duration_seconds), 0) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.activity_type = 'streaming'
+                          AND ua.duration_seconds IS NOT NULL
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 7. Mais Eventos Participados
+                    CREATE OR REPLACE FUNCTION get_highlight_most_events(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(DISTINCT ep.event_id)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(DISTINCT ep.event_id) DESC)::BIGINT AS rank
+                        FROM event_participants ep
+                        JOIN scheduled_events se ON ep.event_id = se.event_id
+                        JOIN users u ON ep.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE se.guild_id = p_guild_id
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 8. Top Gamers (Tempo em Jogo)
+                    CREATE OR REPLACE FUNCTION get_highlight_top_gamers(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value_seconds BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS value_seconds,
+                            RANK() OVER (ORDER BY COALESCE(SUM(ua.duration_seconds), 0) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.activity_type = 'playing'
+                          AND ua.duration_seconds IS NOT NULL
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 9. Ímã da Galera (Reações Recebidas)
+                    CREATE OR REPLACE FUNCTION get_highlight_most_reactions_received(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, mh.username, 'Membro')::TEXT,
+                            COALESCE(u.avatar_url, mh.avatar_url)::TEXT,
+                            COALESCE(SUM(mh.reaction_count), 0)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COALESCE(SUM(mh.reaction_count), 0) DESC)::BIGINT AS rank
+                        FROM media_highlights mh
+                        JOIN users u ON mh.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE mh.guild_id = p_guild_id
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, mh.username, u.avatar_url, mh.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 10. Rei das Demos
+                    CREATE OR REPLACE FUNCTION get_highlight_demo_king(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(DISTINCT LOWER(TRIM(ua.activity_name)))::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(DISTINCT LOWER(TRIM(ua.activity_name))) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.activity_type = 'playing'
+                          AND ua.duration_seconds > 60
+                          AND ua.activity_name ILIKE '%demo%'
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 11. Gamer Eclético (Jogos Distintos)
+                    CREATE OR REPLACE FUNCTION get_highlight_most_distinct_games(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(DISTINCT LOWER(TRIM(ua.activity_name)))::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(DISTINCT LOWER(TRIM(ua.activity_name))) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.activity_type = 'playing'
+                          AND ua.duration_seconds > 60
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 12. O Maratonista (Maior Sessão Contínua)
+                    CREATE OR REPLACE FUNCTION get_highlight_longest_session(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value_seconds BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COALESCE(MAX(ua.duration_seconds), 0)::BIGINT AS value_seconds,
+                            RANK() OVER (ORDER BY COALESCE(MAX(ua.duration_seconds), 0) DESC)::BIGINT AS rank
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND ua.duration_seconds IS NOT NULL
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 13. Jogo do Ano (Atividades Mais Jogadas)
                     CREATE OR REPLACE FUNCTION get_highlight_game_of_the_year(
                         p_guild_id BIGINT,
                         p_limit INT DEFAULT 5
@@ -958,7 +1376,6 @@ class Database:
                         FROM user_activities ua
                         WHERE ua.guild_id = p_guild_id
                           AND ua.activity_type = 'playing'
-                          AND EXTRACT(YEAR FROM ua.started_at) = EXTRACT(YEAR FROM NOW())
                           AND ua.activity_name NOT ILIKE 'Hang Status'
                           AND ua.activity_name NOT ILIKE 'Spotify'
                         GROUP BY LOWER(TRIM(ua.activity_name))
@@ -967,7 +1384,8 @@ class Database:
                     END;
                     $$;
 
-                    CREATE OR REPLACE FUNCTION get_highlight_most_distinct_games(
+                    -- 14. O Corujão (Madrugada: 00h às 05h)
+                    CREATE OR REPLACE FUNCTION get_highlight_night_owl(
                         p_guild_id BIGINT,
                         p_limit INT DEFAULT 5
                     )
@@ -982,18 +1400,15 @@ class Database:
                         RETURN QUERY
                         SELECT 
                             u.user_id::TEXT,
-                            COALESCE(u.username, 'Desconhecido')::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
                             u.avatar_url::TEXT,
-                            COUNT(DISTINCT LOWER(TRIM(ua.activity_name)))::BIGINT AS value,
-                            RANK() OVER (ORDER BY COUNT(DISTINCT LOWER(TRIM(ua.activity_name))) DESC)::BIGINT AS rank
-                        FROM user_activities ua
-                        JOIN users u ON ua.user_id = u.user_id
-                        WHERE ua.guild_id = p_guild_id
-                          AND ua.activity_type = 'playing'
-                          AND EXTRACT(YEAR FROM ua.started_at) = EXTRACT(YEAR FROM NOW())
-                          AND ua.duration_seconds > 60
-                          AND ua.activity_name NOT ILIKE 'Hang Status'
-                          AND ua.activity_name NOT ILIKE 'Spotify'
+                            COUNT(m.message_id)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(m.message_id) DESC)::BIGINT AS rank
+                        FROM messages m
+                        JOIN users u ON m.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE m.guild_id = p_guild_id
+                          AND EXTRACT(HOUR FROM (m.created_at AT TIME ZONE 'America/Sao_Paulo')) BETWEEN 0 AND 5
                           AND u.is_bot = FALSE
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
@@ -1001,7 +1416,8 @@ class Database:
                     END;
                     $$;
 
-                    CREATE OR REPLACE FUNCTION get_highlight_demo_king(
+                    -- 15. Rei da Mídia (Mais Imagens/Vídeos Anexados)
+                    CREATE OR REPLACE FUNCTION get_highlight_media_king(
                         p_guild_id BIGINT,
                         p_limit INT DEFAULT 5
                     )
@@ -1016,19 +1432,46 @@ class Database:
                         RETURN QUERY
                         SELECT 
                             u.user_id::TEXT,
-                            COALESCE(u.username, 'Desconhecido')::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
                             u.avatar_url::TEXT,
-                            COUNT(DISTINCT LOWER(TRIM(ua.activity_name)))::BIGINT AS value,
-                            RANK() OVER (ORDER BY COUNT(DISTINCT LOWER(TRIM(ua.activity_name))) DESC)::BIGINT AS rank
-                        FROM user_activities ua
-                        JOIN users u ON ua.user_id = u.user_id
-                        WHERE ua.guild_id = p_guild_id
-                          AND ua.activity_type = 'playing'
-                          AND EXTRACT(YEAR FROM ua.started_at) = EXTRACT(YEAR FROM NOW())
-                          AND ua.duration_seconds > 60
-                          AND ua.activity_name ILIKE '%demo%'
-                          AND ua.activity_name NOT ILIKE 'Hang Status'
-                          AND ua.activity_name NOT ILIKE 'Spotify'
+                            COUNT(m.message_id)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(m.message_id) DESC)::BIGINT AS rank
+                        FROM messages m
+                        JOIN users u ON m.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE m.guild_id = p_guild_id
+                          AND m.has_attachments = TRUE
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.avatar_url
+                        ORDER BY value DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
+
+                    -- 16. Onipresente (Mensagens em Mais Canais Distintos)
+                    CREATE OR REPLACE FUNCTION get_highlight_omnipresent(
+                        p_guild_id BIGINT,
+                        p_limit INT DEFAULT 5
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        avatar_url TEXT,
+                        value BIGINT,
+                        rank BIGINT
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(DISTINCT m.channel_id)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(DISTINCT m.channel_id) DESC)::BIGINT AS rank
+                        FROM messages m
+                        JOIN users u ON m.user_id = u.user_id
+                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
+                        WHERE m.guild_id = p_guild_id
                           AND u.is_bot = FALSE
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC

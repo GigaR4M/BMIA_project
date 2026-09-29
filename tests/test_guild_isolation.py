@@ -175,3 +175,59 @@ async def test_bot_context_fallbacks():
     assert isinstance(dyn_roles, dict)
 
 
+@pytest.mark.asyncio
+async def test_annual_highlights_strict_guild_isolation():
+    """Garante que a coleta de destaques anuais filtra estritamente por guild_id."""
+    from database import Database
+    db = Database("postgresql://fake:fake@localhost:5432/fake")
+    mock_conn = AsyncMock()
+
+    guild_a = 111111111111111111
+    guild_b = 222222222222222222
+
+    # Configura retorno simulado para guild_a
+    mock_conn.fetch.side_effect = [
+        # 1. MVP
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value": 5000}],
+        # 2. Tagarela
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value": 120}],
+        # 3. Rei da Call
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value_seconds": 3600}],
+        # 4. Corujao
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value": 15}],
+        # 5. Rei da Midia
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value": 8}],
+        # 6. Top Gamer
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value_seconds": 7200}],
+        # 7. Gamer Ecletico
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value": 5}],
+        # 8. Rei das Demos
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value": 2}],
+        # 9. O Maratonista
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value_seconds": 3600}],
+        # 10. Jogo do Ano
+        [{"activity_name": "VALORANT", "value_seconds": 15000}],
+        # 11. Imã da Galera
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value": 20}],
+        # 12. Onipresente
+        [{"user_id": 101, "username": "player_a", "avatar_url": None, "value": 4}],
+    ]
+
+    mock_pool = MagicMock()
+    mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+    mock_pool.acquire.return_value.__aexit__.return_value = None
+    db.pool = mock_pool
+
+    res = await db.get_annual_highlights_data(guild_a, 2026)
+
+    # Verifica se os parâmetros das chamadas SQL incluíram estritamente guild_a
+    for call in mock_conn.fetch.call_args_list:
+        args = call[0]
+        # O primeiro parâmetro posicional após a query é o guild_id
+        assert args[1] == guild_a
+        assert args[1] != guild_b
+
+    assert res["mvp"][0]["username"] == "player_a"
+    assert res["mvp"][0]["value"] == 5000
+
+
