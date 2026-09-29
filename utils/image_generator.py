@@ -22,6 +22,50 @@ _FONT_CACHE: Dict[Tuple[int, bool, bool], ImageFont.ImageFont] = {}
 CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache", "tournaments")
 
 
+async def fetch_image_from_dashboard(payload_type: str, payload_data: dict, timeout_seconds: float = 20.0) -> Optional[BytesIO]:
+    """
+    Dispara a renderização pesada (HTML5/CSS3) para o microsserviço serverless na Vercel (bmia-dashboard).
+    Economiza 100% de memória RAM na VPS. Retorna BytesIO da imagem PNG pronta.
+    Retorna None caso a URL não esteja configurada ou ocorra falha de rede (permitindo fallback seguro).
+    """
+    try:
+        from config import DASHBOARD_RENDER_URL, INTERNAL_RENDER_SECRET
+    except ImportError:
+        DASHBOARD_RENDER_URL = os.getenv("DASHBOARD_RENDER_URL", os.getenv("DASHBOARD_URL", "")).rstrip("/")
+        if DASHBOARD_RENDER_URL and not DASHBOARD_RENDER_URL.endswith("/api/render"):
+            DASHBOARD_RENDER_URL = f"{DASHBOARD_RENDER_URL}/api/render"
+        INTERNAL_RENDER_SECRET = os.getenv("INTERNAL_RENDER_SECRET", os.getenv("NEXTAUTH_SECRET", ""))
+
+    if not DASHBOARD_RENDER_URL:
+        return None
+
+    headers = {
+        "Content-Type": "application/json",
+    }
+    if INTERNAL_RENDER_SECRET:
+        headers["Authorization"] = f"Bearer {INTERNAL_RENDER_SECRET}"
+
+    json_payload = {
+        "type": payload_type,
+        "data": payload_data
+    }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(DASHBOARD_RENDER_URL, json=json_payload, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    if data and data.startswith(b"\x89PNG"):
+                        buf = BytesIO(data)
+                        buf.seek(0)
+                        return buf
+    except Exception:
+        pass
+
+    return None
+
+
 def _get_font(size: int, bold: bool = False, mono: bool = False) -> ImageFont.ImageFont:
     """Carrega fontes de alta qualidade com fallback seguro e cache em memória."""
     key = (size, bold, mono)
@@ -1054,6 +1098,19 @@ class PodiumBuilder:
             else:
                 others.append(item)
 
+        # 1. Tenta delegar a renderização para a Vercel Serverless (0 MB de RAM na VPS)
+        remote_payload = {
+            "guild_name": guild_name,
+            "period_text": period_text,
+            "guild_icon_uri": guild_icon_uri,
+            "top_3_data": top_3,
+            "others_data": others
+        }
+        remote_buf = await fetch_image_from_dashboard("podium", remote_payload)
+        if remote_buf is not None:
+            return remote_buf
+
+        # 2. Fallback Local via Playwright se a Vercel estiver offline/não configurada
         html_code = self._build_html_template(
             guild_name=guild_name,
             guild_icon_uri=guild_icon_uri,
@@ -2674,7 +2731,50 @@ class HighlightsBuilder:
             from commands.stats_commands import HIGHLIGHTS_CATEGORIES
             categories = HIGHLIGHTS_CATEGORIES
 
-        # 1. Constrói todo o HTML assincronamente em paralelo (downloads de avatar / formatações)
+        # 1. Tenta delegar a renderização dos slides para a Vercel Serverless (0 MB de RAM na VPS)
+        try:
+            async def fetch_slide_remote(cat: Dict[str, Any], idx: int) -> Optional[discord.File]:
+                cat_id = cat["id"]
+                title = cat.get("title", cat.get("label", ""))
+                subtitle = cat.get("subtitle", cat.get("description", ""))
+                icon = cat.get("icon", "🏆")
+                color = cat.get("color", "#00f0ff")
+                winners_raw = highlights_data.get(cat_id, [])
+
+                winners_fmt = []
+                for w in winners_raw:
+                    val = w.get("value") or w.get("value_seconds") or 0
+                    unit = cat.get("unit", "")
+                    score_str = f"{val:,} {unit}".strip() if val else ""
+                    winners_fmt.append({
+                        "name": w.get("username") or w.get("name") or "Destaque",
+                        "value": val,
+                        "score_formatted": score_str
+                    })
+
+                payload = {
+                    "year": year,
+                    "category_id": cat_id,
+                    "category_title": title,
+                    "category_subtitle": subtitle,
+                    "category_icon": icon,
+                    "theme_color": color,
+                    "winners": winners_fmt,
+                    "guild_name": guild.name if guild else "BMIA Community"
+                }
+                buf = await fetch_image_from_dashboard("wrapped", payload)
+                if buf:
+                    return discord.File(fp=buf, filename=f"destaques_{idx+1:02d}_{cat_id}.png")
+                return None
+
+            remote_tasks = [fetch_slide_remote(cat, i) for i, cat in enumerate(categories)]
+            remote_files = await asyncio.gather(*remote_tasks)
+            if all(f is not None for f in remote_files):
+                return [f for f in remote_files if f is not None]
+        except Exception:
+            pass
+
+        # 2. Fallback Local via Playwright se a Vercel estiver offline/não configurada
         async def build_html_task(cat: Dict[str, Any]):
             cat_id = cat["id"]
             if cat_id == "cover":

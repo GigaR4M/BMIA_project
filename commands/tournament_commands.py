@@ -1566,7 +1566,7 @@ class TournamentCommands(app_commands.Group):
                 podium_embed.set_thumbnail(url=vencedor.avatar.url)
             podium_embed.set_footer(text=f"Torneio #{tourney['id']} • Parabéns a todos os participantes!")
 
-            # Gera a imagem oficial do bracket ou classificação para incorporar no embed final
+            # Gera a imagem oficial do campeão (via Vercel/Supabase Storage) ou chaveamento local
             final_file = None
             try:
                 tourney["status"] = "completed"
@@ -1574,28 +1574,50 @@ class TournamentCommands(app_commands.Group):
                 tourney["final_score"] = final_placar_display
                 t_type = tourney.get("tournament_type") or "bracket"
                 matches = await self.db.get_tournament_matches(id)
-                if t_type == "round_robin":
-                    standings = await self.db.get_tournament_standings(id)
-                    if standings:
-                        builder = LeagueTableBuilder()
-                        img_buf = await builder.generate_table(
+
+                # 1. Tenta gerar arte oficial final na Vercel (salvando no Supabase Storage)
+                try:
+                    from utils.image_generator import fetch_image_from_dashboard
+                    remote_payload = {
+                        "tournament_id": id,
+                        "name": tourney["name"],
+                        "game_name": tourney["game_name"],
+                        "format": tourney.get("format", "1v1"),
+                        "prize": tourney.get("prize", "Premiação Oficial"),
+                        "winner_name": vencedor.display_name if vencedor else "Grande Campeão",
+                        "winner_avatar_url": str(vencedor.display_avatar.url) if (vencedor and hasattr(vencedor, "display_avatar")) else None
+                    }
+                    remote_buf = await fetch_image_from_dashboard("tournament", remote_payload)
+                    if remote_buf is not None:
+                        final_file = discord.File(fp=remote_buf, filename="arte_campeao.png")
+                        podium_embed.set_image(url="attachment://arte_campeao.png")
+                except Exception as r_err:
+                    logger.debug("Renderização remota de torneio ignorada/offline: %s", r_err)
+
+                # 2. Fallback para bracket / tabela local caso a API remota não esteja configurada
+                if not final_file:
+                    if t_type == "round_robin":
+                        standings = await self.db.get_tournament_standings(id)
+                        if standings:
+                            builder = LeagueTableBuilder()
+                            img_buf = await builder.generate_table(
+                                guild=interaction.guild,
+                                tournament=tourney,
+                                standings=standings,
+                                matches=matches
+                            )
+                            final_file = discord.File(fp=img_buf, filename="classificacao_final.png")
+                            podium_embed.set_image(url="attachment://classificacao_final.png")
+                    else:
+                        builder = BracketBuilder()
+                        img_buf = await builder.generate_bracket(
                             guild=interaction.guild,
                             tournament=tourney,
-                            standings=standings,
+                            participants=participants,
                             matches=matches
                         )
-                        final_file = discord.File(fp=img_buf, filename="classificacao_final.png")
-                        podium_embed.set_image(url="attachment://classificacao_final.png")
-                else:
-                    builder = BracketBuilder()
-                    img_buf = await builder.generate_bracket(
-                        guild=interaction.guild,
-                        tournament=tourney,
-                        participants=participants,
-                        matches=matches
-                    )
-                    final_file = discord.File(fp=img_buf, filename="chaveamento_final.png")
-                    podium_embed.set_image(url="attachment://chaveamento_final.png")
+                        final_file = discord.File(fp=img_buf, filename="chaveamento_final.png")
+                        podium_embed.set_image(url="attachment://chaveamento_final.png")
             except Exception as img_err:
                 logger.debug(f"Não foi possível gerar imagem de encerramento do torneio {id}: {img_err}")
 

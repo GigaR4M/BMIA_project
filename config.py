@@ -59,6 +59,15 @@ DEFAULT_DYNAMIC_ROLES_CONFIG: dict[str, int] = {}
 BMIA_DANCE_GIF_URL: str = "https://media.giphy.com/media/EU5BbihTxT1TyTfehh/giphy.gif"
 BMIA_DANCE_MP4_URL: str = "https://images-ext-1.discordapp.net/external/Tp_-cKoVhMP4S7TgVOxgT7cbSkqDkJG-ZVimFKXHUSM/https/i.giphy.com/media/EU5BbihTxT1TyTfehh/giphy.mp4"
 
+# Dashboard & Render Microservice (Vercel Serverless)
+_raw_render_url = os.getenv("DASHBOARD_RENDER_URL", os.getenv("DASHBOARD_URL", "")).rstrip("/")
+if _raw_render_url and not _raw_render_url.endswith("/api/render"):
+    DASHBOARD_RENDER_URL: str = f"{_raw_render_url}/api/render"
+else:
+    DASHBOARD_RENDER_URL: str = _raw_render_url
+
+INTERNAL_RENDER_SECRET: str = os.getenv("INTERNAL_RENDER_SECRET", os.getenv("NEXTAUTH_SECRET", ""))
+
 # ── 2. Constantes de moderação ─────────────────────────────────────────────────
 INTERVALO_ANALISE: int = 60          # segundos entre processamentos de lote
 TAMANHO_LOTE_MINIMO: int = 10        # mínimo de mensagens por lote
