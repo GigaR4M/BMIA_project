@@ -701,10 +701,10 @@ class TestTournamentAdminAndModals:
 
     def test_parse_event_datetime(self):
         from commands.tournament_commands import _parse_event_datetime
-        # 28/09/2026 20:00 no fuso de Brasília (UTC-3) -> 23:00 UTC
-        dt1 = _parse_event_datetime("28/09/2026 20:00")
+        # 28/09/2030 20:00 no fuso de Brasília (UTC-3) -> 23:00 UTC
+        dt1 = _parse_event_datetime("28/09/2030 20:00")
         assert dt1 is not None
-        assert dt1.day == 28 and dt1.month == 9 and dt1.year == 2026 and dt1.hour == 23
+        assert dt1.day == 28 and dt1.month == 9 and dt1.year == 2030 and dt1.hour == 23
 
         dt2 = _parse_event_datetime("20:00")
         assert dt2 is not None
@@ -730,7 +730,7 @@ class TestTournamentAdminAndModals:
         interaction.response.defer = AsyncMock()
         interaction.followup.send = AsyncMock()
 
-        await cmd.evento_vincular_cmd.callback(cmd, interaction, id=1, data_hora="28/09/2026 20:00")
+        await cmd.evento_vincular_cmd.callback(cmd, interaction, id=1, data_hora="28/09/2030 20:00")
 
         mock_db.update_tournament_event_id.assert_awaited_once_with(1, 8888)
         interaction.followup.send.assert_awaited_once()
