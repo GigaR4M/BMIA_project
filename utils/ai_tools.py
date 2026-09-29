@@ -7,12 +7,15 @@ logger = logging.getLogger(__name__)
 
 
 class AIToolkit:
-    """Conjunto de ferramentas do agente BMIA para consultar dados do servidor."""
+    """Conjunto de ferramentas do agente BMIA para consultar dados e executar ações no servidor."""
 
-    def __init__(self, db, guild_id: int, gif_client=None, tenor_client=None):
+    def __init__(self, db, guild_id: int, gif_client=None, tenor_client=None, current_message=None, client=None, telegram=None):
         self.db = db
         self.guild_id = guild_id
         self.gif_client = gif_client or tenor_client
+        self.current_message = current_message
+        self.client = client
+        self.telegram = telegram
         self.last_gif_url: Optional[str] = None
 
     async def get_top_games(self, days: int = 30, limit: int = 5) -> List[Dict[str, Any]]:
@@ -224,10 +227,11 @@ class AIToolkit:
             return [{"erro": "Falha ao consultar Hall da Fama de torneios."}]
 
     async def buscar_gif(self, tema: str) -> Dict[str, Any]:
-        """Busca um GIF animado no GIPHY para reagir a uma conversa, piada, vitória, derrota, comemoração ou momento engraçado.
+        """Busca um GIF animado no GIPHY para reagir a uma conversa, piada, vitória, derrota, comemoração, ironia ou momento engraçado.
+        Como você é uma IA/robô, dê preferência a pesquisar termos que tragam robôs, andróides ou IAs expressando reações (ex: 'robot i robot reaction', 'robot laughing', 'sonny i robot', 'robot confused', 'robot shocked', 'terminator thumbs up', 'glitch robot', 'cyborg facepalm', etc.), ou outros memes relevantes.
 
         Args:
-            tema: Termo de busca em português ou inglês para encontrar o GIF (ex: 'risada meme', 'comemorando', 'facepalm', 'anime dançando', 'gato chocado', 'bmia dança').
+            tema: Termo de busca em português ou inglês para encontrar o GIF (ex: 'robot i robot', 'robot laughing', 'risada meme', 'terminator thumbs up', 'bmia dança').
         """
         try:
             tema_clean = (tema or "").strip().lower()
@@ -263,6 +267,108 @@ class AIToolkit:
             logger.error(f"Erro ao executar tool buscar_gif: {e}")
             return {"erro": "Falha ao buscar GIF no GIPHY."}
 
+    async def reportar_mensagem(
+        self,
+        usuario_alvo_id: int,
+        motivo: str,
+        categoria: str = "comportamento_inadequado",
+        conteudo_mensagem: Optional[str] = None,
+        mensagem_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Reporta/denuncia uma mensagem ou usuário à moderação humana do servidor quando há ofensa, assédio, toxicidade extrema, discurso proibido ou quando um usuário solicita ajuda/reclama de uma mensagem que violou as regras.
+
+        Args:
+            usuario_alvo_id: O ID numérico do Discord do usuário que cometeu a infração / autor da mensagem ofensiva.
+            motivo: Descrição clara do motivo da denúncia e resumo do ocorrido para a moderação humana.
+            categoria: Categoria da infração (ex: 'ofensa', 'toxicidade', 'assedio', 'spam', 'comportamento_inadequado').
+            conteudo_mensagem: O texto exato da mensagem ofensiva analisada (se disponível no histórico ou contexto).
+            mensagem_id: O ID numérico da mensagem ofensiva (se disponível no histórico ou contexto).
+        """
+        try:
+            reporter_id = 0
+            channel_id = None
+            if self.current_message:
+                reporter_id = getattr(self.current_message.author, "id", 0)
+                channel_id = getattr(self.current_message.channel, "id", None)
+            if not reporter_id and self.client and self.client.user:
+                reporter_id = self.client.user.id
+
+            target_id = int(usuario_alvo_id)
+            msg_id = int(mensagem_id) if mensagem_id else None
+
+            report_id = await self.db.create_user_report(
+                guild_id=self.guild_id,
+                target_user_id=target_id,
+                reporter_user_id=reporter_id,
+                category=(categoria or "comportamento_inadequado").strip().lower(),
+                reason=motivo.strip() if motivo else "Denúncia encaminhada via BMIA",
+                message_content=conteudo_mensagem,
+                message_id=msg_id,
+                channel_id=channel_id,
+                attachment_urls=[]
+            )
+
+            # Notificar canal de moderação / anúncios se configurado
+            try:
+                import discord
+                from datetime import datetime, timezone
+                from commands.reputation_commands import ReportActionView
+
+                guild_config = await self.db.get_guild_config(self.guild_id)
+                ann_channel_id = guild_config.get("announcement_channel_id") if guild_config else None
+                guild = None
+                if self.current_message and getattr(self.current_message, "guild", None):
+                    guild = self.current_message.guild
+                elif self.client:
+                    guild = self.client.get_guild(self.guild_id)
+
+                if ann_channel_id and guild:
+                    mod_channel = guild.get_channel(ann_channel_id)
+                    if mod_channel:
+                        target_member = guild.get_member(target_id)
+                        target_tag = f"<@{target_id}> (`{target_member.name}`)" if target_member else f"<@{target_id}> (`ID: {target_id}`)"
+                        reporter_tag = f"<@{reporter_id}>" if reporter_id else "🤖 BMIA Auto"
+
+                        embed = discord.Embed(
+                            title=f"🚨 Denúncia Encaminhada por BMIA — #{report_id}",
+                            description=f"**Acusado:** {target_tag}\n"
+                                        f"**Origem/Denunciante:** {reporter_tag}\n"
+                                        f"**Categoria:** `{categoria}`\n\n"
+                                        f"**Motivo:**\n{motivo}",
+                            color=0xEF4444,
+                            timestamp=datetime.now(timezone.utc)
+                        )
+                        if conteudo_mensagem:
+                            embed.add_field(name="💬 Mensagem Denunciada", value=conteudo_mensagem[:500], inline=False)
+
+                        view = ReportActionView(self.db, report_id, target_id)
+                        await mod_channel.send(embed=embed, view=view)
+            except Exception as notify_err:
+                logger.warning(f"Não foi possível enviar alerta de denúncia no canal de moderação: {notify_err}")
+
+            # Notificar Telegram se configurado
+            if self.telegram:
+                try:
+                    await self.telegram.log_report_created(
+                        guild_id=self.guild_id,
+                        report_id=report_id,
+                        target_user_id=target_id,
+                        reporter_user_id=reporter_id,
+                        category=categoria,
+                        reason=motivo
+                    )
+                except Exception as tg_err:
+                    logger.warning(f"Não foi possível enviar notificação Telegram da denúncia #{report_id}: {tg_err}")
+
+            return {
+                "sucesso": True,
+                "report_id": report_id,
+                "mensagem": f"Denúncia #{report_id} criada e encaminhada com sucesso para a moderação humana."
+            }
+        except Exception as e:
+            logger.error(f"Erro ao executar tool reportar_mensagem: {e}")
+            return {"erro": f"Falha ao registrar denúncia: {e}"}
+
     def get_tool_callables(self) -> List[Any]:
         """Retorna a lista de métodos que podem ser passados diretamente para o Gemini como tools."""
         return [
@@ -274,4 +380,5 @@ class AIToolkit:
             self.get_tournament_history,
             self.get_tournament_hall_of_fame,
             self.buscar_gif,
+            self.reportar_mensagem,
         ]

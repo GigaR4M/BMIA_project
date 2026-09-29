@@ -81,9 +81,35 @@ class TestAIToolkit:
         assert res["horas_em_voz"] == 5.0
         assert res["horas_em_jogos"] == 10.0
 
+    @pytest.mark.asyncio
+    async def test_reportar_mensagem(self, toolkit, mock_db):
+        mock_db.create_user_report = AsyncMock(return_value=42)
+        mock_db.get_guild_config = AsyncMock(return_value={"announcement_channel_id": 9999})
+        
+        res = await toolkit.reportar_mensagem(
+            usuario_alvo_id=777,
+            motivo="Discurso ofensivo contra outro membro",
+            categoria="ofensa",
+            conteudo_mensagem="mensagem feia",
+            mensagem_id=111222333
+        )
+        assert res["sucesso"] is True
+        assert res["report_id"] == 42
+        mock_db.create_user_report.assert_awaited_once_with(
+            guild_id=123456789,
+            target_user_id=777,
+            reporter_user_id=0,
+            category="ofensa",
+            reason="Discurso ofensivo contra outro membro",
+            message_content="mensagem feia",
+            message_id=111222333,
+            channel_id=None,
+            attachment_urls=[]
+        )
+
     def test_get_tool_callables(self, toolkit):
         callables = toolkit.get_tool_callables()
-        assert len(callables) == 8
+        assert len(callables) == 9
         names = [c.__name__ for c in callables]
         assert "get_top_games" in names
         assert "get_game_leaderboard" in names
@@ -91,6 +117,7 @@ class TestAIToolkit:
         assert "get_tournament_history" in names
         assert "get_tournament_hall_of_fame" in names
         assert "buscar_gif" in names
+        assert "reportar_mensagem" in names
 
 
 class TestChatHandlerWithTools:

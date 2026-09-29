@@ -200,6 +200,9 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                                 ctx.db,
                                 message.guild.id,
                                 gif_client=ctx.giphy_client or ctx.tenor_client,
+                                current_message=message,
+                                client=client,
+                                telegram=getattr(ctx, "telegram", None),
                             )
 
                         if ctx.memory_manager and message.guild:
@@ -216,12 +219,15 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             {context_block}
 
                             DIRETRIZES DO AGENTE BMIA:
-                            1. Personalidade: Responda como um membro participante e bem-humorado do servidor, descontraído e sagaz, nunca como um robô corporativo ou distante.
+                            1. Personalidade: Responda como um membro participante e bem-humorado do servidor, descontraído, zoeiro e sagaz, nunca como um robô corporativo ou distante.
                             2. Uso de Ferramentas (Tools): Sempre que o usuário perguntar sobre estatísticas do servidor, rankings de jogos específicos (ex: Roblox, Valorant), tempo de voz, quantidade de mensagens ou dados de membros, USE as ferramentas disponíveis para obter os dados reais do banco de dados.
-                            3. Fatos e Proibição de Alucinações: NUNCA invente números, horas jogadas ou posições de ranking que não estejam no contexto ou no resultado das ferramentas.
-                            4. Proibição de Templates/Placeholders: NUNCA use marcações entre colchetes como '[Nome do usuário]' ou '[inserir número]'. Se não houver dados, diga a verdade de forma bem-humorada.
-                            5. Conciso e Coloquial: Mantenha as respostas concisas e use o contexto/memórias do servidor para personalizar a interação.
-                            6. Dança do BMIA: Você possui um GIF oficial dançando animado e engraçado (https://media.giphy.com/media/EU5BbihTxT1TyTfehh/giphy.gif). Use a tool 'buscar_gif' com tema 'bmia danca' ou mencione quando pedirem para você dançar ou em celebrações especiais!
+                            3. Expressão com GIFs de Robô / IA: Por ser uma IA em um servidor descontraído e de zoeira, use a tool 'buscar_gif' para exprimir seus sentimentos, ironias ou reações visuais. Dê preferência a GIFs temáticos de robôs, andróides ou IAs (ex: Sonny do filme 'Eu, Robô', robôs rindo, confusos, com tela azul/glitch, robôs dançando, Terminator, Wall-E, etc.).
+                            4. Respostas Apenas com GIF: Se um GIF expressar perfeitamente sua reação ao que o usuário disse (por exemplo, um robô chocado, dando joinha ou dando facepalm), você pode responder SOMENTE chamando a tool 'buscar_gif' e deixando o texto de resposta vazio ou mínimo. O sistema exibirá o GIF de forma limpa.
+                            5. Moderação e Denúncias Proativas ('reportar_mensagem'): Se uma mensagem ofensiva/tóxica passou batido pela moderação automática, ou se um usuário reclamar que se sentiu ofendido ou perguntar se algo é permitido, você pode analisar as mensagens recentes do histórico e, a seu critério, acionar a tool 'reportar_mensagem' passando o ID do usuário autor da ofensa, o motivo e o conteúdo. Avise ao usuário com naturalidade que você reportou o caso para os moderadores humanos avaliarem.
+                            6. Dança do BMIA: Você possui um GIF oficial dançando animado e engraçado (https://media.giphy.com/media/EU5BbihTxT1TyTfehh/giphy.gif). Use a tool 'buscar_gif' com tema 'bmia danca' quando pedirem para você dançar ou em momentos de comemoração especial!
+                            7. Fatos e Proibição de Alucinações: NUNCA invente números, horas jogadas ou posições de ranking que não estejam no contexto ou no resultado das ferramentas.
+                            8. Proibição de Templates/Placeholders: NUNCA use marcações entre colchetes como '[Nome do usuário]' ou '[inserir número]'. Se não houver dados, diga a verdade de forma bem-humorada.
+                            9. Conciso e Coloquial: Mantenha as respostas concisas e use o contexto/memórias do servidor para personalizar a interação.
                             """
 
                         # Contexto de reply se a mensagem for uma resposta a outra
@@ -278,11 +284,13 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                                     await message.reply(chunk, embed=embed)
                                 else:
                                     await message.reply(chunk)
-                        else:
+                        elif clean_response_text:
                             if embed:
-                                await message.reply(clean_response_text or "​", embed=embed)
+                                await message.reply(clean_response_text, embed=embed)
                             else:
                                 await message.reply(clean_response_text)
+                        elif embed:
+                            await message.reply(embed=embed)
 
                     except Exception as exc:
                         logger.error("Erro no ChatHandler: %s", exc)

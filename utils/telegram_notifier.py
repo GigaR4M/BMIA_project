@@ -59,6 +59,19 @@ class TelegramNotifier:
         )
         await self.send(msg)
 
+    async def log_report_created(self, report_id: int, guild_name: str, reporter_name: str, target_name: str, category: str, reason: str):
+        """Notifica quando uma denúncia é registrada."""
+        msg = (
+            f"🚨 <b>Nova Denúncia #{report_id}</b>\n"
+            f"🏠 Servidor: {guild_name}\n"
+            f"👤 Denunciante: {reporter_name}\n"
+            f"🎯 Acusado: {target_name}\n"
+            f"📂 Categoria: {category}\n"
+            f"📋 Motivo: {reason}\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
     async def log_user_warned(self, guild, user, reason: str):
         """Notifica quando um usuário recebe um aviso."""
         msg = (
