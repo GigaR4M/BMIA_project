@@ -24,6 +24,71 @@ HIGHLIGHTS_CATEGORIES = [
 ]
 
 
+def build_retrospective_conclusion(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> tuple[str, Optional[discord.Embed]]:
+    """Gera o texto de encerramento com menção ao MVP e embed de honrarias da Retrospectiva."""
+    mvp = extras.get("mvp")
+    top_media = extras.get("top_media")
+    top_gif = extras.get("top_gif")
+    top_emoji = extras.get("top_emoji")
+    most_active_day = extras.get("most_active_day")
+
+    # Texto principal com menção / ping
+    if mvp:
+        content = (
+            f"👑 **MVP DO ANO {year} • {guild.name}**\n"
+            f"Parabéns a <@{mvp['user_id']}> (`{mvp['username']}`), o membro lendário que mais movimentou o servidor este ano, acumulando incríveis **{mvp['value']:,} pontos** de pura presença e atividade! 🏆✨"
+        )
+    else:
+        content = f"✨ **RETROSPECTIVA DO ANO {year} • {guild.name}**\nParabéns a toda a comunidade por mais um ano inesquecível juntos! 🎮🚀"
+
+    embed = discord.Embed(
+        title=f"🌟 Menções Honrosas & Curiosidades do Ano {year}",
+        color=discord.Color.gold(),
+        description="Confira os momentos mais marcantes e registros históricos da comunidade no ano:"
+    )
+
+    # 1. Print / Clipe do Ano
+    if top_media:
+        jump_link = f"[🔗 Ver Mensagem Original no Discord]({top_media['jump_url']})" if top_media.get("jump_url") else ""
+        media_desc = (
+            f"👤 **Autor:** {top_media.get('username', 'Desconhecido')}\n"
+            f"📊 **Reações:** {top_media.get('reaction_summary', '🔥')}\n"
+            f"{jump_link}"
+        )
+        if top_media.get("content"):
+            media_desc = f"💬 *\"{top_media['content']}\"*\n" + media_desc
+        embed.add_field(name="📸 Print / Clipe do Ano", value=media_desc, inline=False)
+        if top_media.get("media_url"):
+            embed.set_image(url=top_media["media_url"])
+
+    # 2. GIF do Ano
+    if top_gif:
+        gif_text = "O GIF que mais expressou o sentimento da galera"
+        if "count" in top_gif and top_gif["count"]:
+            gif_text += f" ({top_gif['count']}x no chat)"
+        if "jump_url" in top_gif and top_gif["jump_url"]:
+            gif_text += f" • [🔗 Ver Mensagem]({top_gif['jump_url']})"
+        if "gif_url" in top_gif:
+            gif_text += f"\n[🎬 Abrir GIF Original]({top_gif['gif_url']})"
+        embed.add_field(name="🎭 GIF Mais Marcante do Ano", value=gif_text, inline=True)
+
+    # 3. Emoji do Ano
+    if top_emoji:
+        emoji_text = f"**{top_emoji.get('emoji_name', '🔥')}** ({top_emoji.get('count', 0)} reações)"
+        embed.add_field(name="🤣 Emoji do Ano", value=emoji_text, inline=True)
+
+    # 4. Dia Mais Caótico
+    if most_active_day:
+        day_text = (
+            f"📅 **{most_active_day.get('formatted_date', most_active_day.get('date'))}**\n"
+            f"💬 {most_active_day.get('total_messages', 0):,} mensagens • 🎙️ {most_active_day.get('total_voice_minutes', 0):,} min em call"
+        )
+        embed.add_field(name="🔥 O Dia Mais Caótico do Ano", value=day_text, inline=False)
+
+    embed.set_footer(text=f"Retrospectiva Oficial {year} • {guild.name}")
+    return content, embed
+
+
 async def handle_highlights_gallery(db: Database, interaction: discord.Interaction, year: Optional[int] = None):
     """Renderiza e envia a Retrospectiva Anual como uma Galeria de Imagens de Alta Performance."""
     await interaction.response.defer(thinking=True)
@@ -34,7 +99,7 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
     try:
         from utils.image_generator import HighlightsBuilder
 
-        highlights_data = await db.get_annual_highlights_data(interaction.guild.id, year)
+        highlights_data = await db.get_annual_highlights_data(interaction.guild.id, year, is_automatic=False)
 
         files = await HighlightsBuilder.generate_all_slides_files(
             guild=interaction.guild,
@@ -52,6 +117,15 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
             content=f"🌟 **DESTAQUES DO ANO {year} • {interaction.guild.name}**\n*Navegue pelas fotos da galeria em tela cheia abaixo:*",
             files=files
         )
+
+        # Envia a mensagem conclusiva com MVP, Print do Ano, GIF e curiosidades
+        try:
+            extras = await db.get_retrospective_extras(interaction.guild.id, year, is_automatic=False)
+            conclusion_text, conclusion_embed = build_retrospective_conclusion(interaction.guild, year, extras)
+            if interaction.channel:
+                await interaction.channel.send(content=conclusion_text, embed=conclusion_embed)
+        except Exception as ex_err:
+            logger.warning("Erro ao enviar mensagem conclusiva da retrospectiva: %s", ex_err)
 
     except Exception as e:
         logger.error("❌ Erro ao gerar galeria de Destaques do Ano: %s", e, exc_info=True)

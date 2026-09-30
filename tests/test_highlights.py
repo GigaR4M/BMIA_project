@@ -188,3 +188,58 @@ async def test_highlights_builder_single_instance_render():
         assert isinstance(f, discord.File)
         assert f.filename.endswith(".png")
         assert f.fp.getbuffer().nbytes > 1000
+
+
+def test_retrospective_period_approach_c():
+    from database import Database
+    from config import BRT
+
+    # 1. Teste para ano corrente antes de 31/12 (ex: dia 21/12)
+    fake_now = datetime(2026, 12, 21, 12, 0, 0, tzinfo=BRT)
+    start_utc, end_utc = Database.get_retrospective_period(2026, is_automatic=True, now=fake_now)
+    
+    start_brt = start_utc.astimezone(BRT)
+    end_brt = end_utc.astimezone(BRT)
+    
+    assert start_brt.year == 2026 and start_brt.month == 1 and start_brt.day == 1
+    assert end_brt.year == 2026 and end_brt.month == 12 and end_brt.day == 20
+    assert end_brt.hour == 23 and end_brt.minute == 59 and end_brt.second == 59
+
+    # 2. Teste para ano anterior (consulta manual pós virada de ano)
+    fake_jan = datetime(2027, 1, 15, 12, 0, 0, tzinfo=BRT)
+    start_utc_past, end_utc_past = Database.get_retrospective_period(2026, is_automatic=False, now=fake_jan)
+    
+    end_brt_past = end_utc_past.astimezone(BRT)
+    assert end_brt_past.year == 2026 and end_brt_past.month == 12 and end_brt_past.day == 31
+
+
+def test_build_retrospective_conclusion():
+    from commands.stats_commands import build_retrospective_conclusion
+
+    fake_guild = MagicMock(spec=discord.Guild)
+    fake_guild.name = "Barões da Pinadinha"
+
+    extras = {
+        "mvp": {"user_id": 312389956045897731, "username": "Lord PureBone", "value": 15420},
+        "top_media": {
+            "username": "Gato",
+            "content": "SEM O ELDZ NOIS GANHA",
+            "reaction_summary": "🏳️‍🌈 5 💅 5",
+            "jump_url": "https://discord.com/channels/1/2/3",
+            "media_url": "https://cdn.discordapp.com/lol.png"
+        },
+        "top_gif": {"gif_url": "https://tenor.com/view/robot-dance.gif", "count": 14},
+        "top_emoji": {"emoji_name": "🎉", "count": 87},
+        "most_active_day": {"formatted_date": "15/07/2026", "total_messages": 450, "total_voice_minutes": 1200}
+    }
+
+    content, embed = build_retrospective_conclusion(fake_guild, 2026, extras)
+    
+    assert "<@312389956045897731>" in content
+    assert "Lord PureBone" in content
+    assert "15,420" in content
+    assert embed is not None
+    assert any("Print / Clipe do Ano" in f.name for f in embed.fields)
+    assert any("GIF Mais Marcante do Ano" in f.name for f in embed.fields)
+    assert any("Emoji do Ano" in f.name for f in embed.fields)
+    assert any("O Dia Mais Caótico do Ano" in f.name for f in embed.fields)

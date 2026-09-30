@@ -7,6 +7,7 @@ O módulo expõe `register_events(client, ctx)` que registra todos os handlers.
 
 import re
 import logging
+import asyncio
 from datetime import datetime, timezone
 import discord
 
@@ -14,6 +15,7 @@ from config import (
     DEFAULT_ALLOWED_CHANNELS,
     DEFAULT_IGNORED_VOICE_CHANNELS,
     DEFAULT_DYNAMIC_ROLES_CONFIG,
+    now_brt,
 )
 from utils.ai_tools import AIToolkit
 from utils.giphy_client import to_direct_gif_url
@@ -429,11 +431,32 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
         if ctx.media_manager:
             await ctx.media_manager.on_message(message)
 
+        # Rastreamento de estatísticas de GIFs para Retrospectiva
+        if message.guild and ctx.db and not message.author.bot:
+            gif_found = None
+            if message.attachments:
+                for att in message.attachments:
+                    if (att.content_type and "gif" in att.content_type) or att.filename.lower().endswith(".gif"):
+                        gif_found = att.url
+                        break
+            if not gif_found and message.content:
+                g_match = re.search(r'(https?://(?:tenor\.com/view/[^\s]+|media\.tenor\.com/[^\s]+|giphy\.com/[^\s]+|media[0-9]*\.giphy\.com/[^\s]+|[^\s]+\.gif(?:\?[^\s]*)?))', message.content, re.IGNORECASE)
+                if g_match:
+                    gif_found = g_match.group(0)
+            if gif_found:
+                asyncio.create_task(ctx.db.increment_gif_usage(message.guild.id, gif_found, now_brt().year))
+
     # ── Reações ────────────────────────────────────────────────────────────────
     @client.event
     async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
         if payload.member and payload.member.bot:
             return
+
+        # Rastreamento global de emojis para Retrospectiva Anual
+        if payload.guild_id and ctx.db:
+            emoji_str = str(payload.emoji)
+            is_custom = payload.emoji.is_custom_emoji()
+            asyncio.create_task(ctx.db.increment_emoji_usage(payload.guild_id, emoji_str, is_custom, now_brt().year))
 
         allowed = await ctx.get_allowed_channels(payload.guild_id) if payload.guild_id else ctx.allowed_channels
         if ctx.points_manager and payload.channel_id in allowed:

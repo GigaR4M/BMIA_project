@@ -3,7 +3,7 @@
 import asyncpg
 import os
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Union
 import json
 import logging
@@ -476,6 +476,31 @@ class Database:
                 )
             """)
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_media_highlights_guild_created ON media_highlights (guild_id, created_at, popularity_score DESC)")
+
+            # Tabela de estatísticas de uso de emojis (Retrospectiva Anual)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS emoji_usage_stats (
+                    guild_id BIGINT NOT NULL,
+                    emoji_name TEXT NOT NULL,
+                    is_custom BOOLEAN DEFAULT FALSE,
+                    count INTEGER DEFAULT 1,
+                    year INTEGER NOT NULL,
+                    PRIMARY KEY (guild_id, emoji_name, year)
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_emoji_usage_guild_year ON emoji_usage_stats(guild_id, year, count DESC)")
+
+            # Tabela de estatísticas de uso de GIFs (Retrospectiva Anual)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS gif_usage_stats (
+                    guild_id BIGINT NOT NULL,
+                    gif_url TEXT NOT NULL,
+                    count INTEGER DEFAULT 1,
+                    year INTEGER NOT NULL,
+                    PRIMARY KEY (guild_id, gif_url, year)
+                )
+            """)
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_gif_usage_guild_year ON gif_usage_stats(guild_id, year, count DESC)")
 
             # Tabela de Jogos Monitorados (Wishlist & Sugestões)
             await conn.execute("""
@@ -961,75 +986,124 @@ class Database:
 
                     -- ==================== 16 RPCs DE DESTAQUES COM ISOLAMENTO STRICT POR GUILD ====================
 
-                    -- Drop versões anteriores para permitir alteração de schema de retorno (RETURNS TABLE)
+                    DROP FUNCTION IF EXISTS get_top_users_by_activity(bigint, text, integer, integer, timestamp without time zone);
+                    DROP FUNCTION IF EXISTS get_top_users_by_activity(bigint, text, integer, integer);
+                    DROP FUNCTION IF EXISTS get_top_users_by_activity(bigint, integer, integer);
+                    DROP FUNCTION IF EXISTS get_top_users_by_activity(bigint, text, integer);
+                    DROP FUNCTION IF EXISTS get_top_users_by_activity(bigint, text);
+                    DROP FUNCTION IF EXISTS get_top_users_by_activity(bigint);
+
+                    DROP FUNCTION IF EXISTS get_highlight_highest_score(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_highest_score(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_highest_score(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_highest_score;
 
+                    DROP FUNCTION IF EXISTS get_highlight_most_messages(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_messages(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_messages(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_most_messages;
 
+                    DROP FUNCTION IF EXISTS get_highlight_most_voice_time(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_voice_time(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_voice_time(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_most_voice_time;
 
+                    DROP FUNCTION IF EXISTS get_highlight_most_offensive(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_offensive(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_offensive(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_most_offensive;
 
+                    DROP FUNCTION IF EXISTS get_highlight_most_activity_time(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_activity_time(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_activity_time(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_most_activity_time;
 
+                    DROP FUNCTION IF EXISTS get_highlight_longest_streaming(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_longest_streaming(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_longest_streaming(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_longest_streaming;
 
+                    DROP FUNCTION IF EXISTS get_highlight_most_events(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_events(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_events(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_most_events;
 
+                    DROP FUNCTION IF EXISTS get_highlight_top_gamers(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_top_gamers(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_top_gamers(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_top_gamers;
 
+                    DROP FUNCTION IF EXISTS get_highlight_most_reactions_received(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_reactions_received(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_reactions_received(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_most_reactions_received;
 
+                    DROP FUNCTION IF EXISTS get_highlight_demo_king(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_demo_king(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_demo_king(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_demo_king;
 
+                    DROP FUNCTION IF EXISTS get_highlight_most_distinct_games(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_distinct_games(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_most_distinct_games(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_most_distinct_games;
 
+                    DROP FUNCTION IF EXISTS get_highlight_longest_session(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_longest_session(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_longest_session(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_longest_session;
 
+                    DROP FUNCTION IF EXISTS get_highlight_game_of_the_year(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_game_of_the_year(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_game_of_the_year(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_game_of_the_year;
 
+                    DROP FUNCTION IF EXISTS get_highlight_night_owl(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_night_owl(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_night_owl(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_night_owl;
 
+                    DROP FUNCTION IF EXISTS get_highlight_media_king(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_media_king(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_media_king(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_media_king;
 
+                    DROP FUNCTION IF EXISTS get_highlight_omnipresent(bigint, integer, integer);
                     DROP FUNCTION IF EXISTS get_highlight_omnipresent(bigint, integer);
                     DROP FUNCTION IF EXISTS get_highlight_omnipresent(bigint);
-                    DROP FUNCTION IF EXISTS get_highlight_omnipresent;
+
+                    -- 0. Top Users by Activity
+                    CREATE OR REPLACE FUNCTION get_top_users_by_activity(
+                        p_guild_id BIGINT,
+                        p_activity_name TEXT DEFAULT NULL,
+                        p_days INT DEFAULT 30,
+                        p_limit INT DEFAULT 10
+                    )
+                    RETURNS TABLE (
+                        user_id TEXT,
+                        username TEXT,
+                        discriminator TEXT,
+                        session_count BIGINT,
+                        total_seconds BIGINT,
+                        total_hours NUMERIC,
+                        avg_session_minutes NUMERIC
+                    ) LANGUAGE plpgsql AS $$
+                    BEGIN
+                        RETURN QUERY
+                        SELECT 
+                            u.user_id::TEXT,
+                            COALESCE(u.username, 'Desconhecido')::TEXT,
+                            COALESCE(u.discriminator, '0000')::TEXT,
+                            COUNT(*)::BIGINT AS session_count,
+                            COALESCE(SUM(ua.duration_seconds), 0)::BIGINT AS total_seconds,
+                            ROUND((COALESCE(SUM(ua.duration_seconds), 0)::NUMERIC / 3600.0), 2) AS total_hours,
+                            ROUND((COALESCE(AVG(ua.duration_seconds), 0)::NUMERIC / 60.0), 2) AS avg_session_minutes
+                        FROM user_activities ua
+                        JOIN users u ON ua.user_id = u.user_id
+                        WHERE ua.guild_id = p_guild_id
+                          AND (p_activity_name IS NULL OR ua.activity_name ILIKE p_activity_name)
+                          AND (p_days IS NULL OR ua.started_at >= (NOW() - (p_days || ' days')::INTERVAL))
+                          AND ua.duration_seconds IS NOT NULL
+                          AND ua.activity_type = 'playing'
+                          AND ua.activity_name NOT ILIKE 'Hang Status'
+                          AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND u.is_bot = FALSE
+                        GROUP BY u.user_id, u.username, u.discriminator
+                        ORDER BY total_seconds DESC
+                        LIMIT p_limit;
+                    END;
+                    $$;
 
                     -- 1. Maior Total de XP (MVP)
                     CREATE OR REPLACE FUNCTION get_highlight_highest_score(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1048,9 +1122,9 @@ class Database:
                             RANK() OVER (ORDER BY COALESCE(SUM(ip.points), 0) DESC)::BIGINT AS rank
                         FROM interaction_points ip
                         JOIN users u ON ip.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE ip.guild_id = p_guild_id
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (ip.created_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
@@ -1060,7 +1134,8 @@ class Database:
                     -- 2. Mais Mensagens de Texto (Tagarela)
                     CREATE OR REPLACE FUNCTION get_highlight_most_messages(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1079,9 +1154,9 @@ class Database:
                             RANK() OVER (ORDER BY COUNT(m.message_id) DESC)::BIGINT AS rank
                         FROM messages m
                         JOIN users u ON m.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE m.guild_id = p_guild_id
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (m.created_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
@@ -1091,7 +1166,8 @@ class Database:
                     -- 3. Mais Tempo em Voz (Rei da Call)
                     CREATE OR REPLACE FUNCTION get_highlight_most_voice_time(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1110,20 +1186,21 @@ class Database:
                             RANK() OVER (ORDER BY COALESCE(SUM(va.duration_seconds), 0) DESC)::BIGINT AS rank
                         FROM voice_activity va
                         JOIN users u ON va.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE va.guild_id = p_guild_id
                           AND va.duration_seconds IS NOT NULL
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (va.joined_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value_seconds DESC
                         LIMIT p_limit;
                     END;
                     $$;
 
-                    -- 4. Mais Mensagens Ofensivas / Moderadas
+                    -- 4. Mais Mensagens Ofensivas / Moderadas (Boca Suja)
                     CREATE OR REPLACE FUNCTION get_highlight_most_offensive(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1142,10 +1219,10 @@ class Database:
                             RANK() OVER (ORDER BY COUNT(m.message_id) DESC)::BIGINT AS rank
                         FROM messages m
                         JOIN users u ON m.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE m.guild_id = p_guild_id
                           AND m.was_moderated = TRUE
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (m.created_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
@@ -1155,7 +1232,8 @@ class Database:
                     -- 5. Mais Tempo em Atividade
                     CREATE OR REPLACE FUNCTION get_highlight_most_activity_time(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1174,12 +1252,12 @@ class Database:
                             RANK() OVER (ORDER BY COALESCE(SUM(ua.duration_seconds), 0) DESC)::BIGINT AS rank
                         FROM user_activities ua
                         JOIN users u ON ua.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE ua.guild_id = p_guild_id
                           AND ua.duration_seconds IS NOT NULL
                           AND ua.activity_name NOT ILIKE 'Hang Status'
                           AND ua.activity_name NOT ILIKE 'Spotify'
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (ua.started_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value_seconds DESC
                         LIMIT p_limit;
@@ -1189,7 +1267,8 @@ class Database:
                     -- 6. Maior Tempo em Live / Streaming
                     CREATE OR REPLACE FUNCTION get_highlight_longest_streaming(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1208,11 +1287,11 @@ class Database:
                             RANK() OVER (ORDER BY COALESCE(SUM(ua.duration_seconds), 0) DESC)::BIGINT AS rank
                         FROM user_activities ua
                         JOIN users u ON ua.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE ua.guild_id = p_guild_id
-                          AND ua.activity_type = 'streaming'
+                          AND ua.activity_type IN ('streaming', 'screen_share')
                           AND ua.duration_seconds IS NOT NULL
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (ua.started_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value_seconds DESC
                         LIMIT p_limit;
@@ -1222,7 +1301,8 @@ class Database:
                     -- 7. Mais Eventos Participados
                     CREATE OR REPLACE FUNCTION get_highlight_most_events(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1242,9 +1322,9 @@ class Database:
                         FROM event_participants ep
                         JOIN scheduled_events se ON ep.event_id = se.event_id
                         JOIN users u ON ep.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE se.guild_id = p_guild_id
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (se.start_time AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
@@ -1254,7 +1334,8 @@ class Database:
                     -- 8. Top Gamers (Tempo em Jogo)
                     CREATE OR REPLACE FUNCTION get_highlight_top_gamers(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1273,13 +1354,13 @@ class Database:
                             RANK() OVER (ORDER BY COALESCE(SUM(ua.duration_seconds), 0) DESC)::BIGINT AS rank
                         FROM user_activities ua
                         JOIN users u ON ua.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE ua.guild_id = p_guild_id
                           AND ua.activity_type = 'playing'
                           AND ua.duration_seconds IS NOT NULL
                           AND ua.activity_name NOT ILIKE 'Hang Status'
                           AND ua.activity_name NOT ILIKE 'Spotify'
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (ua.started_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value_seconds DESC
                         LIMIT p_limit;
@@ -1289,7 +1370,8 @@ class Database:
                     -- 9. Ímã da Galera (Reações Recebidas)
                     CREATE OR REPLACE FUNCTION get_highlight_most_reactions_received(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1302,16 +1384,17 @@ class Database:
                         RETURN QUERY
                         SELECT 
                             u.user_id::TEXT,
-                            COALESCE(u.username, mh.username, 'Membro')::TEXT,
-                            COALESCE(u.avatar_url, mh.avatar_url)::TEXT,
-                            COALESCE(SUM(mh.reaction_count), 0)::BIGINT AS value,
-                            RANK() OVER (ORDER BY COALESCE(SUM(mh.reaction_count), 0) DESC)::BIGINT AS rank
-                        FROM media_highlights mh
-                        JOIN users u ON mh.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
-                        WHERE mh.guild_id = p_guild_id
+                            COALESCE(u.username, 'Membro')::TEXT,
+                            u.avatar_url::TEXT,
+                            COUNT(ip.id)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(ip.id) DESC)::BIGINT AS rank
+                        FROM interaction_points ip
+                        JOIN users u ON ip.user_id = u.user_id
+                        WHERE ip.guild_id = p_guild_id
+                          AND ip.interaction_type = 'reaction_received'
                           AND u.is_bot = FALSE
-                        GROUP BY u.user_id, u.username, mh.username, u.avatar_url, mh.avatar_url
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (ip.created_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
+                        GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
                     END;
@@ -1320,7 +1403,8 @@ class Database:
                     -- 10. Rei das Demos
                     CREATE OR REPLACE FUNCTION get_highlight_demo_king(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1339,7 +1423,6 @@ class Database:
                             RANK() OVER (ORDER BY COUNT(DISTINCT LOWER(TRIM(ua.activity_name))) DESC)::BIGINT AS rank
                         FROM user_activities ua
                         JOIN users u ON ua.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE ua.guild_id = p_guild_id
                           AND ua.activity_type = 'playing'
                           AND ua.duration_seconds > 60
@@ -1347,6 +1430,7 @@ class Database:
                           AND ua.activity_name NOT ILIKE 'Hang Status'
                           AND ua.activity_name NOT ILIKE 'Spotify'
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (ua.started_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
@@ -1356,7 +1440,8 @@ class Database:
                     -- 11. Gamer Eclético (Jogos Distintos)
                     CREATE OR REPLACE FUNCTION get_highlight_most_distinct_games(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1375,23 +1460,24 @@ class Database:
                             RANK() OVER (ORDER BY COUNT(DISTINCT LOWER(TRIM(ua.activity_name))) DESC)::BIGINT AS rank
                         FROM user_activities ua
                         JOIN users u ON ua.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE ua.guild_id = p_guild_id
                           AND ua.activity_type = 'playing'
                           AND ua.duration_seconds > 60
                           AND ua.activity_name NOT ILIKE 'Hang Status'
                           AND ua.activity_name NOT ILIKE 'Spotify'
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (ua.started_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
                     END;
                     $$;
 
-                    -- 12. O Maratonista (Maior Sessão Contínua)
+                    -- 12. O Maratonista (Maior Sessão Contínua de Voz)
                     CREATE OR REPLACE FUNCTION get_highlight_longest_session(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1406,16 +1492,14 @@ class Database:
                             u.user_id::TEXT,
                             COALESCE(u.username, 'Membro')::TEXT,
                             u.avatar_url::TEXT,
-                            COALESCE(MAX(ua.duration_seconds), 0)::BIGINT AS value_seconds,
-                            RANK() OVER (ORDER BY COALESCE(MAX(ua.duration_seconds), 0) DESC)::BIGINT AS rank
-                        FROM user_activities ua
-                        JOIN users u ON ua.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
-                        WHERE ua.guild_id = p_guild_id
-                          AND ua.duration_seconds IS NOT NULL
-                          AND ua.activity_name NOT ILIKE 'Hang Status'
-                          AND ua.activity_name NOT ILIKE 'Spotify'
+                            COALESCE(MAX(va.duration_seconds), 0)::BIGINT AS value_seconds,
+                            RANK() OVER (ORDER BY COALESCE(MAX(va.duration_seconds), 0) DESC)::BIGINT AS rank
+                        FROM voice_activity va
+                        JOIN users u ON va.user_id = u.user_id
+                        WHERE va.guild_id = p_guild_id
+                          AND va.duration_seconds IS NOT NULL
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (va.joined_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value_seconds DESC
                         LIMIT p_limit;
@@ -1425,7 +1509,8 @@ class Database:
                     -- 13. Jogo do Ano (Atividades Mais Jogadas)
                     CREATE OR REPLACE FUNCTION get_highlight_game_of_the_year(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         activity_name TEXT,
@@ -1443,22 +1528,24 @@ class Database:
                           AND ua.activity_type = 'playing'
                           AND ua.activity_name NOT ILIKE 'Hang Status'
                           AND ua.activity_name NOT ILIKE 'Spotify'
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (ua.started_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY LOWER(TRIM(ua.activity_name))
                         ORDER BY value_seconds DESC
                         LIMIT p_limit;
                     END;
                     $$;
 
-                    -- 14. O Corujão (Madrugada: 00h às 05h)
+                    -- 14. O Corujão (Madrugada: Tempo de Voz das 00h às 05h BRT)
                     CREATE OR REPLACE FUNCTION get_highlight_night_owl(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
                         username TEXT,
                         avatar_url TEXT,
-                        value BIGINT,
+                        value_seconds BIGINT,
                         rank BIGINT
                     ) LANGUAGE plpgsql AS $$
                     BEGIN
@@ -1467,16 +1554,17 @@ class Database:
                             u.user_id::TEXT,
                             COALESCE(u.username, 'Membro')::TEXT,
                             u.avatar_url::TEXT,
-                            COUNT(m.message_id)::BIGINT AS value,
-                            RANK() OVER (ORDER BY COUNT(m.message_id) DESC)::BIGINT AS rank
-                        FROM messages m
-                        JOIN users u ON m.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
-                        WHERE m.guild_id = p_guild_id
-                          AND EXTRACT(HOUR FROM (m.created_at AT TIME ZONE 'America/Sao_Paulo')) BETWEEN 0 AND 5
+                            COALESCE(SUM(va.duration_seconds), 0)::BIGINT AS value_seconds,
+                            RANK() OVER (ORDER BY COALESCE(SUM(va.duration_seconds), 0) DESC)::BIGINT AS rank
+                        FROM voice_activity va
+                        JOIN users u ON va.user_id = u.user_id
+                        WHERE va.guild_id = p_guild_id
+                          AND va.duration_seconds IS NOT NULL
+                          AND EXTRACT(HOUR FROM (va.joined_at AT TIME ZONE 'America/Sao_Paulo')) BETWEEN 0 AND 5
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (va.joined_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
-                        ORDER BY value DESC
+                        ORDER BY value_seconds DESC
                         LIMIT p_limit;
                     END;
                     $$;
@@ -1484,7 +1572,8 @@ class Database:
                     -- 15. Rei da Mídia (Mais Imagens/Vídeos Anexados)
                     CREATE OR REPLACE FUNCTION get_highlight_media_king(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1503,20 +1592,21 @@ class Database:
                             RANK() OVER (ORDER BY COUNT(m.message_id) DESC)::BIGINT AS rank
                         FROM messages m
                         JOIN users u ON m.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
                         WHERE m.guild_id = p_guild_id
                           AND m.has_attachments = TRUE
                           AND u.is_bot = FALSE
+                          AND (p_year IS NULL OR EXTRACT(YEAR FROM (m.created_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
                     END;
                     $$;
 
-                    -- 16. Onipresente (Mensagens em Mais Canais Distintos)
+                    -- 16. Onipresente (Dias Ativos no Servidor - Mensagens ou Voz)
                     CREATE OR REPLACE FUNCTION get_highlight_omnipresent(
                         p_guild_id BIGINT,
-                        p_limit INT DEFAULT 5
+                        p_limit INT DEFAULT 5,
+                        p_year INT DEFAULT 2026
                     )
                     RETURNS TABLE (
                         user_id TEXT,
@@ -1531,13 +1621,21 @@ class Database:
                             u.user_id::TEXT,
                             COALESCE(u.username, 'Membro')::TEXT,
                             u.avatar_url::TEXT,
-                            COUNT(DISTINCT m.channel_id)::BIGINT AS value,
-                            RANK() OVER (ORDER BY COUNT(DISTINCT m.channel_id) DESC)::BIGINT AS rank
-                        FROM messages m
-                        JOIN users u ON m.user_id = u.user_id
-                        JOIN member_join_dates mjd ON mjd.user_id = u.user_id AND mjd.guild_id = p_guild_id
-                        WHERE m.guild_id = p_guild_id
-                          AND u.is_bot = FALSE
+                            COUNT(DISTINCT d.dt)::BIGINT AS value,
+                            RANK() OVER (ORDER BY COUNT(DISTINCT d.dt) DESC)::BIGINT AS rank
+                        FROM (
+                            SELECT m.user_id AS uid, (m.created_at AT TIME ZONE 'America/Sao_Paulo')::DATE as dt
+                            FROM messages m
+                            WHERE m.guild_id = p_guild_id
+                              AND (p_year IS NULL OR EXTRACT(YEAR FROM (m.created_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
+                            UNION
+                            SELECT va.user_id AS uid, (va.joined_at AT TIME ZONE 'America/Sao_Paulo')::DATE as dt
+                            FROM voice_activity va
+                            WHERE va.guild_id = p_guild_id
+                              AND (p_year IS NULL OR EXTRACT(YEAR FROM (va.joined_at AT TIME ZONE 'America/Sao_Paulo')) = p_year)
+                        ) d
+                        JOIN users u ON d.uid = u.user_id
+                        WHERE u.is_bot = FALSE
                         GROUP BY u.user_id, u.username, u.avatar_url
                         ORDER BY value DESC
                         LIMIT p_limit;
@@ -4400,11 +4498,65 @@ class Database:
                 results.append(item)
             return results
 
-    async def get_annual_highlights_data(self, guild_id: int, year: int) -> Dict[str, Any]:
+    @staticmethod
+    def get_retrospective_period(year: int, is_automatic: bool = False, now: Optional[datetime] = None) -> tuple[datetime, datetime]:
+        """
+        Retorna a tupla (start_dt, end_dt) em UTC correspondente ao período da retrospectiva (Abordagem C).
+        - Para o ano corrente (ou disparo automático): 01/01/{ano} 00:00:00 BRT até 20/12/{ano} 23:59:59 BRT.
+        - Para anos anteriores (consulta manual pós-ano): 01/01/{ano} 00:00:00 BRT até 31/12/{ano} 23:59:59 BRT.
+        """
+        from config import BRT
+        if now is None:
+            now = datetime.now(BRT)
+        
+        current_year = now.year
+        start_brt = datetime(year, 1, 1, 0, 0, 0, tzinfo=BRT)
+        
+        # Abordagem C: se for disparo automático ou ano corrente antes do fim de ano, corta em 20/12
+        if is_automatic or (year == current_year and now < datetime(year, 12, 31, 23, 59, 59, tzinfo=BRT)):
+            end_brt = datetime(year, 12, 20, 23, 59, 59, tzinfo=BRT)
+        else:
+            end_brt = datetime(year, 12, 31, 23, 59, 59, tzinfo=BRT)
+            
+        start_utc = start_brt.astimezone(timezone.utc)
+        end_utc = end_brt.astimezone(timezone.utc)
+        return start_utc, end_utc
+
+    async def increment_emoji_usage(self, guild_id: int, emoji_name: str, is_custom: bool, year: int) -> None:
+        """Incrementa o contador de uso de um emoji na guilda para o ano."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO emoji_usage_stats (guild_id, emoji_name, is_custom, count, year)
+                VALUES ($1, $2, $3, 1, $4)
+                ON CONFLICT (guild_id, emoji_name, year)
+                DO UPDATE SET count = emoji_usage_stats.count + 1
+            """, guild_id, emoji_name, is_custom, year)
+
+    async def increment_gif_usage(self, guild_id: int, gif_url: str, year: int) -> None:
+        """Incrementa o contador de uso de um GIF na guilda para o ano."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO gif_usage_stats (guild_id, gif_url, count, year)
+                VALUES ($1, $2, 1, $3)
+                ON CONFLICT (guild_id, gif_url, year)
+                DO UPDATE SET count = gif_usage_stats.count + 1
+            """, guild_id, gif_url, year)
+
+    async def get_annual_highlights_data(
+        self,
+        guild_id: int,
+        year: int,
+        is_automatic: bool = False,
+        start_dt: Optional[datetime] = None,
+        end_dt: Optional[datetime] = None
+    ) -> Dict[str, Any]:
         """
         Coleta os rankings dos Destaques do Ano para um servidor e ano específicos
-        com consultas SQL diretas e estritamente isoladas por guild_id e ano.
+        com consultas SQL diretas e estritamente isoladas por guild_id e janela temporal (Abordagem C).
         """
+        if not start_dt or not end_dt:
+            start_dt, end_dt = self.get_retrospective_period(year, is_automatic=is_automatic)
+
         highlights = {}
         async with self.pool.acquire() as conn:
             # 1. MVP (Maior Total de XP no Ano para esta Guild)
@@ -4418,12 +4570,12 @@ class Database:
                     FROM interaction_points ip
                     JOIN users u ON u.user_id = ip.user_id
                     WHERE ip.guild_id = $1
-                      AND EXTRACT(YEAR FROM ip.created_at) = $2
+                      AND ip.created_at >= $2 AND ip.created_at <= $3
                       AND u.is_bot = FALSE
                     GROUP BY ip.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["mvp"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta mvp: %s", e)
@@ -4440,12 +4592,12 @@ class Database:
                     FROM messages m
                     JOIN users u ON u.user_id = m.user_id
                     WHERE m.guild_id = $1
-                      AND EXTRACT(YEAR FROM m.created_at) = $2
+                      AND m.created_at >= $2 AND m.created_at <= $3
                       AND u.is_bot = FALSE
                     GROUP BY m.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["tagarela"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta tagarela: %s", e)
@@ -4462,12 +4614,12 @@ class Database:
                     FROM voice_activity va
                     JOIN users u ON u.user_id = va.user_id
                     WHERE va.guild_id = $1
-                      AND EXTRACT(YEAR FROM va.joined_at) = $2
+                      AND va.joined_at >= $2 AND va.joined_at <= $3
                       AND u.is_bot = FALSE
                     GROUP BY va.user_id, u.username, u.avatar_url
                     ORDER BY value_seconds DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["rei_da_call"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta rei_da_call: %s", e)
@@ -4484,14 +4636,14 @@ class Database:
                     FROM voice_activity va
                     JOIN users u ON u.user_id = va.user_id
                     WHERE va.guild_id = $1
-                      AND EXTRACT(YEAR FROM va.joined_at) = $2
+                      AND va.joined_at >= $2 AND va.joined_at <= $3
                       AND EXTRACT(HOUR FROM va.joined_at AT TIME ZONE 'America/Sao_Paulo') >= 1
                       AND EXTRACT(HOUR FROM va.joined_at AT TIME ZONE 'America/Sao_Paulo') < 5
                       AND u.is_bot = FALSE
                     GROUP BY va.user_id, u.username, u.avatar_url
                     ORDER BY value_seconds DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["corujao"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta corujao: %s", e)
@@ -4509,12 +4661,12 @@ class Database:
                     JOIN users u ON u.user_id = ua.user_id
                     WHERE ua.guild_id = $1
                       AND ua.activity_type = 'streaming'
-                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                      AND ua.started_at >= $2 AND ua.started_at <= $3
                       AND u.is_bot = FALSE
                     GROUP BY ua.user_id, u.username, u.avatar_url
                     ORDER BY value_seconds DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["streamer"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta streamer: %s", e)
@@ -4532,12 +4684,12 @@ class Database:
                     JOIN users u ON u.user_id = ua.user_id
                     WHERE ua.guild_id = $1
                       AND ua.activity_type = 'playing'
-                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                      AND ua.started_at >= $2 AND ua.started_at <= $3
                       AND u.is_bot = FALSE
                     GROUP BY ua.user_id, u.username, u.avatar_url
                     ORDER BY value_seconds DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["top_gamers"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta top_gamers: %s", e)
@@ -4552,13 +4704,13 @@ class Database:
                     FROM user_activities ua
                     WHERE ua.guild_id = $1
                       AND ua.activity_type = 'playing'
-                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                      AND ua.started_at >= $2 AND ua.started_at <= $3
                       AND ua.activity_name NOT ILIKE 'Hang Status'
                       AND ua.activity_name NOT ILIKE 'Spotify'
                     GROUP BY LOWER(TRIM(ua.activity_name))
                     ORDER BY value_seconds DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["jogo_do_ano"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta jogo_do_ano: %s", e)
@@ -4576,7 +4728,7 @@ class Database:
                     JOIN users u ON u.user_id = ua.user_id
                     WHERE ua.guild_id = $1
                       AND ua.activity_type = 'playing'
-                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                      AND ua.started_at >= $2 AND ua.started_at <= $3
                       AND ua.duration_seconds > 60
                       AND ua.activity_name NOT ILIKE 'Hang Status'
                       AND ua.activity_name NOT ILIKE 'Spotify'
@@ -4584,7 +4736,7 @@ class Database:
                     GROUP BY ua.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["gamer_variado"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta gamer_variado: %s", e)
@@ -4601,13 +4753,13 @@ class Database:
                     FROM messages m
                     JOIN users u ON u.user_id = m.user_id
                     WHERE m.guild_id = $1
-                      AND EXTRACT(YEAR FROM m.created_at) = $2
+                      AND m.created_at >= $2 AND m.created_at <= $3
                       AND m.has_attachments = TRUE
                       AND u.is_bot = FALSE
                     GROUP BY m.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["o_midia"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta o_midia: %s", e)
@@ -4624,12 +4776,12 @@ class Database:
                     FROM messages m
                     JOIN users u ON u.user_id = m.user_id
                     WHERE m.guild_id = $1
-                      AND EXTRACT(YEAR FROM m.created_at) = $2
+                      AND m.created_at >= $2 AND m.created_at <= $3
                       AND u.is_bot = FALSE
                     GROUP BY m.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["o_onipresente"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta o_onipresente: %s", e)
@@ -4646,13 +4798,13 @@ class Database:
                     FROM interaction_points ip
                     JOIN users u ON u.user_id = ip.user_id
                     WHERE ip.guild_id = $1
-                      AND EXTRACT(YEAR FROM ip.created_at) = $2
+                      AND ip.created_at >= $2 AND ip.created_at <= $3
                       AND ip.interaction_type = 'reaction_received'
                       AND u.is_bot = FALSE
                     GROUP BY ip.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["ima_da_galera"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta ima_da_galera: %s", e)
@@ -4669,13 +4821,13 @@ class Database:
                     FROM messages m
                     JOIN users u ON u.user_id = m.user_id
                     WHERE m.guild_id = $1
-                      AND EXTRACT(YEAR FROM m.created_at) = $2
+                      AND m.created_at >= $2 AND m.created_at <= $3
                       AND m.was_moderated = TRUE
                       AND u.is_bot = FALSE
                     GROUP BY m.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["boca_suja"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta boca_suja: %s", e)
@@ -4692,12 +4844,12 @@ class Database:
                     FROM voice_activity va
                     JOIN users u ON u.user_id = va.user_id
                     WHERE va.guild_id = $1
-                      AND EXTRACT(YEAR FROM va.joined_at) = $2
+                      AND va.joined_at >= $2 AND va.joined_at <= $3
                       AND u.is_bot = FALSE
                     GROUP BY va.user_id, u.username, u.avatar_url
                     ORDER BY value_seconds DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["maratonista"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta maratonista: %s", e)
@@ -4715,7 +4867,7 @@ class Database:
                     JOIN users u ON u.user_id = ua.user_id
                     WHERE ua.guild_id = $1
                       AND ua.activity_type = 'playing'
-                      AND EXTRACT(YEAR FROM ua.started_at) = $2
+                      AND ua.started_at >= $2 AND ua.started_at <= $3
                       AND ua.duration_seconds > 60
                       AND ua.activity_name ILIKE '%demo%'
                       AND ua.activity_name NOT ILIKE 'Hang Status'
@@ -4724,13 +4876,169 @@ class Database:
                     GROUP BY ua.user_id, u.username, u.avatar_url
                     ORDER BY count DESC
                     LIMIT 5
-                """, guild_id, year)
+                """, guild_id, start_dt, end_dt)
                 highlights["rei_das_demos"] = [dict(r) for r in rows]
             except Exception as e:
                 logger.warning("Erro consulta rei_das_demos: %s", e)
                 highlights["rei_das_demos"] = []
 
         return highlights
+
+    async def get_retrospective_extras(
+        self,
+        guild_id: int,
+        year: int,
+        is_automatic: bool = False,
+        start_dt: Optional[datetime] = None,
+        end_dt: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        """
+        Retorna os extras da retrospectiva anual:
+        - mvp: Dados do membro nº 1 do ano
+        - top_media: Print/clipe mais engajado do ano (com jump_url, reações, autor)
+        - top_gif: GIF mais utilizado ou com maior engajamento
+        - top_emoji: Emoji mais reagido do ano
+        - most_active_day: Dia com maior pico de atividade do servidor
+        """
+        if not start_dt or not end_dt:
+            start_dt, end_dt = self.get_retrospective_period(year, is_automatic=is_automatic)
+
+        extras: Dict[str, Any] = {
+            "mvp": None,
+            "top_media": None,
+            "top_gif": None,
+            "top_emoji": None,
+            "most_active_day": None,
+            "year": year
+        }
+
+        async with self.pool.acquire() as conn:
+            # 1. MVP
+            try:
+                mvp_row = await conn.fetchrow("""
+                    SELECT 
+                        ip.user_id,
+                        u.username,
+                        u.avatar_url,
+                        COALESCE(SUM(ip.points), 0)::BIGINT AS value
+                    FROM interaction_points ip
+                    JOIN users u ON u.user_id = ip.user_id
+                    WHERE ip.guild_id = $1
+                      AND ip.created_at >= $2 AND ip.created_at <= $3
+                      AND u.is_bot = FALSE
+                    GROUP BY ip.user_id, u.username, u.avatar_url
+                    ORDER BY value DESC
+                    LIMIT 1
+                """, guild_id, start_dt, end_dt)
+                if mvp_row:
+                    extras["mvp"] = dict(mvp_row)
+            except Exception as e:
+                logger.warning("Erro extras mvp: %s", e)
+
+            # 2. Print / Clipe do Ano (Top Media)
+            try:
+                media_row = await conn.fetchrow("""
+                    SELECT * FROM media_highlights
+                    WHERE guild_id = $1 
+                      AND created_at >= $2 AND created_at <= $3
+                      AND popularity_score > 0
+                    ORDER BY popularity_score DESC, reaction_count DESC, created_at ASC
+                    LIMIT 1
+                """, guild_id, start_dt, end_dt)
+                if media_row:
+                    m_data = dict(media_row)
+                    if isinstance(m_data.get("reactions_json"), str):
+                        try:
+                            m_data["reactions_json"] = json.loads(m_data["reactions_json"])
+                        except Exception:
+                            m_data["reactions_json"] = {}
+                    reactions_dict = m_data.get("reactions_json") or {}
+                    if isinstance(reactions_dict, dict) and reactions_dict:
+                        m_data["reaction_summary"] = " ".join(f"{emoji} {cnt}" for emoji, cnt in list(reactions_dict.items())[:5])
+                    else:
+                        m_data["reaction_summary"] = f"🔥 {m_data.get('reaction_count', 0)}"
+                    extras["top_media"] = m_data
+            except Exception as e:
+                logger.warning("Erro extras top_media: %s", e)
+
+            # 3. GIF do Ano
+            try:
+                gif_row = await conn.fetchrow("""
+                    SELECT gif_url, count FROM gif_usage_stats
+                    WHERE guild_id = $1 AND year = $2
+                    ORDER BY count DESC
+                    LIMIT 1
+                """, guild_id, year)
+                if gif_row:
+                    extras["top_gif"] = dict(gif_row)
+                else:
+                    # Fallback: buscar gif em media_highlights
+                    fb_gif = await conn.fetchrow("""
+                        SELECT media_url, popularity_score, username, jump_url
+                        FROM media_highlights
+                        WHERE guild_id = $1
+                          AND created_at >= $2 AND created_at <= $3
+                          AND (media_url ILIKE '%.gif%' OR media_url ILIKE '%tenor.com%' OR media_url ILIKE '%giphy.com%')
+                        ORDER BY popularity_score DESC
+                        LIMIT 1
+                    """, guild_id, start_dt, end_dt)
+                    if fb_gif:
+                        extras["top_gif"] = {"gif_url": fb_gif["media_url"], "count": fb_gif["popularity_score"], "author": fb_gif["username"], "jump_url": fb_gif["jump_url"]}
+            except Exception as e:
+                logger.warning("Erro extras top_gif: %s", e)
+
+            # 4. Emoji do Ano
+            try:
+                emoji_row = await conn.fetchrow("""
+                    SELECT emoji_name, is_custom, count FROM emoji_usage_stats
+                    WHERE guild_id = $1 AND year = $2
+                    ORDER BY count DESC
+                    LIMIT 1
+                """, guild_id, year)
+                if emoji_row:
+                    extras["top_emoji"] = dict(emoji_row)
+                else:
+                    # Fallback: somar todos os emojis de reactions_json em media_highlights
+                    rows = await conn.fetch("""
+                        SELECT reactions_json FROM media_highlights
+                        WHERE guild_id = $1 AND created_at >= $2 AND created_at <= $3
+                    """, guild_id, start_dt, end_dt)
+                    totals: Dict[str, int] = {}
+                    for r in rows:
+                        rj = r.get("reactions_json")
+                        if isinstance(rj, str):
+                            try:
+                                rj = json.loads(rj)
+                            except Exception:
+                                rj = {}
+                        if isinstance(rj, dict):
+                            for em, count in rj.items():
+                                totals[em] = totals.get(em, 0) + int(count)
+                    if totals:
+                        best_em = max(totals.items(), key=lambda x: x[1])
+                        extras["top_emoji"] = {"emoji_name": best_em[0], "count": best_em[1]}
+            except Exception as e:
+                logger.warning("Erro extras top_emoji: %s", e)
+
+            # 5. Dia Mais Caótico (Maior soma de mensagens e minutos de voz)
+            try:
+                day_row = await conn.fetchrow("""
+                    SELECT date, total_messages, total_voice_minutes,
+                           (total_messages + total_voice_minutes) AS total_activity
+                    FROM daily_stats
+                    WHERE guild_id = $1
+                      AND date >= $2::date AND date <= $3::date
+                    ORDER BY total_activity DESC
+                    LIMIT 1
+                """, guild_id, start_dt.date(), end_dt.date())
+                if day_row and day_row.get("total_activity", 0) > 0:
+                    d = dict(day_row)
+                    d["formatted_date"] = d["date"].strftime("%d/%m/%Y")
+                    extras["most_active_day"] = d
+            except Exception as e:
+                logger.warning("Erro extras most_active_day: %s", e)
+
+        return extras
     
     # ==================== SISTEMA DE REPUTAÇÃO E MODERAÇÃO ====================
 
@@ -5041,17 +5349,27 @@ class Database:
                     data["reactions_json"] = {}
             return data
 
-    async def get_top_media_highlight(self, guild_id: int, year: int) -> Optional[Dict[str, Any]]:
+    async def get_top_media_highlight(
+        self,
+        guild_id: int,
+        year: int,
+        is_automatic: bool = False,
+        start_dt: Optional[datetime] = None,
+        end_dt: Optional[datetime] = None
+    ) -> Optional[Dict[str, Any]]:
         """Busca o clipe/print com maior score de engajamento do ano no servidor."""
+        if not start_dt or not end_dt:
+            start_dt, end_dt = self.get_retrospective_period(year, is_automatic=is_automatic)
+
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT * FROM media_highlights
                 WHERE guild_id = $1 
-                  AND EXTRACT(YEAR FROM created_at) = $2
+                  AND created_at >= $2 AND created_at <= $3
                   AND popularity_score > 0
                 ORDER BY popularity_score DESC, reaction_count DESC, created_at ASC
                 LIMIT 1
-            """, guild_id, year)
+            """, guild_id, start_dt, end_dt)
             if not row:
                 return None
             data = dict(row)

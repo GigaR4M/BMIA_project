@@ -144,44 +144,54 @@ async def check_monthly_podium(
                             await db.log_periodic_leaderboard_sent(guild.id, "MONTHLY", monthly_identifier)
                             logger.info("Sem dados suficientes para pódio mensal em %s", guild.name)
 
-                    # Verifica e envia Pódio Anual e Destaques (se virou o ano)
-                    if now.month == 1:
-                        if not await db.check_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier):
-                            logger.info("Gerando pódio anual e destaques (%s) para %s...", yearly_identifier, guild.name)
-                            top_yearly = await db.get_top_users_date_range(guild.id, yearly_start, yearly_end, limit=10)
+                    # Verifica e envia Pódio Anual, Destaques e Celebração (Abordagem C: a partir de 21/12 ou Janeiro)
+                    should_check_yearly = (now.month == 12 and now.day >= 21) or (now.month == 1)
+                    if should_check_yearly:
+                        retrospective_year = now.year if (now.month == 12) else (now.year - 1)
+                        yearly_target_id = str(retrospective_year)
+                        if not await db.check_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_target_id):
+                            logger.info("Gerando retrospectiva anual de gala (%s) para %s...", yearly_target_id, guild.name)
+                            start_dt, end_dt = db.get_retrospective_period(retrospective_year, is_automatic=True)
+                            top_yearly = await db.get_top_users_date_range(guild.id, start_dt, end_dt, limit=10)
 
                             if top_yearly:
                                 builder = PodiumBuilder()
-                                image_bio = await builder.generate_podium(guild, top_yearly, period_text=yearly_label)
+                                image_bio = await builder.generate_podium(guild, top_yearly, period_text=f"HALL DA FAMA {retrospective_year}")
                                 file = discord.File(fp=image_bio, filename="podium_anual.png")
                                 await target_channel.send(
-                                    f"**{yearly_title}**\nParabéns às lendas do servidor em {prev_year}! 🏆👑",
+                                    f"**👑 HALL DA FAMA • PÓDIO ANUAL DE {retrospective_year} 👑**\nParabéns às lendas do servidor em {retrospective_year}! 🏆👑",
                                     file=file,
                                 )
 
                             # Envia também a galeria de Destaques do Ano
                             try:
                                 from utils.image_generator import HighlightsBuilder
-                                from commands.stats_commands import HIGHLIGHTS_CATEGORIES
+                                from commands.stats_commands import HIGHLIGHTS_CATEGORIES, build_retrospective_conclusion
 
-                                h_data = await db.get_annual_highlights_data(guild.id, prev_year)
+                                h_data = await db.get_annual_highlights_data(guild.id, retrospective_year, is_automatic=True, start_dt=start_dt, end_dt=end_dt)
                                 h_files = await HighlightsBuilder.generate_all_slides_files(
                                     guild=guild,
-                                    year=prev_year,
+                                    year=retrospective_year,
                                     highlights_data=h_data,
                                     top_clip=None,
                                     categories=HIGHLIGHTS_CATEGORIES
                                 )
                                 if h_files:
                                     await target_channel.send(
-                                        f"🌟 **DESTAQUES DO ANO {prev_year} • {guild.name}**\n*Confira os maiores recordes e destaques da comunidade:*",
+                                        f"🌟 **DESTAQUES DO ANO {retrospective_year} • {guild.name}**\n*Confira os maiores recordes e destaques da comunidade:*",
                                         files=h_files
                                     )
+
+                                # Envia a mensagem conclusiva especial com MVP, Print do Ano, GIF e curiosidades
+                                extras = await db.get_retrospective_extras(guild.id, retrospective_year, is_automatic=True, start_dt=start_dt, end_dt=end_dt)
+                                conclusion_text, conclusion_embed = build_retrospective_conclusion(guild, retrospective_year, extras)
+                                await target_channel.send(content=conclusion_text, embed=conclusion_embed)
+
                             except Exception as h_err:
                                 logger.warning("Erro ao enviar galeria de destaques no background: %s", h_err)
 
-                            await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_identifier)
-                            logger.info("✅ Pódio e destaques anuais concluídos para %s", guild.name)
+                            await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_target_id)
+                            logger.info("✅ Retrospectiva de gala e destaques anuais concluídos para %s", guild.name)
 
         except Exception as exc:
             logger.error("❌ Erro no check_monthly_podium: %s", exc)
