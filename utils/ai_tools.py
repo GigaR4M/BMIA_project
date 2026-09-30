@@ -434,6 +434,15 @@ class AIToolkit:
             logger.error(f"Erro ao executar tool reportar_mensagem: {e}")
             return {"erro": f"Falha ao registrar denúncia: {e}"}
 
+    async def get_voice_peak_records(self) -> Dict[str, Any]:
+        """Retorna os recordes históricos de quantidade máxima de usuários simultâneos conectados em canais de voz no servidor (recorde no mesmo canal único e recorde total somando todos os canais)."""
+        try:
+            records = await self.db.get_voice_peak_records(self.guild_id)
+            return records
+        except Exception as e:
+            logger.error(f"Erro ao executar tool get_voice_peak_records: {e}")
+            return {"erro": "Falha ao consultar recordes de usuários em voz."}
+
     def get_tool_callables(self) -> List[Any]:
         """Retorna a lista de métodos que podem ser passados diretamente para o Gemini como tools."""
         return [
@@ -446,4 +455,5 @@ class AIToolkit:
             self.get_tournament_hall_of_fame,
             self.buscar_gif,
             self.reportar_mensagem,
+            self.get_voice_peak_records,
         ]

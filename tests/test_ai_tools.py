@@ -107,9 +107,20 @@ class TestAIToolkit:
             attachment_urls=[]
         )
 
+    @pytest.mark.asyncio
+    async def test_get_voice_peak_records(self, toolkit, mock_db):
+        mock_db.get_voice_peak_records = AsyncMock(return_value={
+            "channel_peak": {"count": 8, "channel_name": "Geral", "channel_id": 123, "peak_time": "29/09/2026 às 20:00"},
+            "server_peak": {"count": 14, "peak_time": "29/09/2026 às 20:00"}
+        })
+        res = await toolkit.get_voice_peak_records()
+        assert res["channel_peak"]["count"] == 8
+        assert res["server_peak"]["count"] == 14
+        mock_db.get_voice_peak_records.assert_awaited_once_with(123456789)
+
     def test_get_tool_callables(self, toolkit):
         callables = toolkit.get_tool_callables()
-        assert len(callables) == 9
+        assert len(callables) == 10
         names = [c.__name__ for c in callables]
         assert "get_top_games" in names
         assert "get_game_leaderboard" in names
@@ -118,6 +129,7 @@ class TestAIToolkit:
         assert "get_tournament_hall_of_fame" in names
         assert "buscar_gif" in names
         assert "reportar_mensagem" in names
+        assert "get_voice_peak_records" in names
 
 
 class TestChatHandlerWithTools:

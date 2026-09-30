@@ -67,6 +67,26 @@ class StatsEmbedBuilder:
                 inline=True
             )
         
+        voice_rec = stats.get('voice_records')
+        if voice_rec:
+            srv_peak = voice_rec.get('server_peak', {})
+            ch_peak = voice_rec.get('channel_peak', {})
+            if srv_peak.get('count', 0) > 0:
+                peak_time_str = f"\n*({srv_peak.get('peak_time')})*" if srv_peak.get('peak_time') else ""
+                embed.add_field(
+                    name="🎙️ Recorde em Voz (Total)",
+                    value=f"**{srv_peak.get('count')}** membros simultâneos{peak_time_str}",
+                    inline=True
+                )
+            if ch_peak.get('count', 0) > 0:
+                ch_name = ch_peak.get('channel_name', 'Geral')
+                peak_time_str = f"\n*({ch_peak.get('peak_time')})*" if ch_peak.get('peak_time') else ""
+                embed.add_field(
+                    name="🔊 Recorde em Canal Único",
+                    value=f"**{ch_peak.get('count')}** membros em `#{ch_name}`{peak_time_str}",
+                    inline=True
+                )
+        
         embed.set_footer(text="Use /stats top para ver os usuários mais ativos")
         
         return embed

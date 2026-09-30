@@ -1725,6 +1725,72 @@ class Database:
     
     # ==================== CONSULTAS DE ESTATÍSTICAS ====================
     
+    async def get_voice_peak_records(self, guild_id: int) -> Dict[str, Any]:
+        """Calcula os recordes históricos de usuários simultâneos em canal de voz (no mesmo canal e total no servidor)."""
+        async with self.pool.acquire() as conn:
+            try:
+                # 1. Recorde em um único canal
+                channel_peak_row = await conn.fetchrow("""
+                    WITH events AS (
+                        SELECT channel_id, joined_at as ts, 1 as val
+                        FROM voice_activity
+                        WHERE guild_id = $1 AND joined_at IS NOT NULL
+                        UNION ALL
+                        SELECT channel_id, COALESCE(left_at, joined_at + (duration_seconds || ' seconds')::INTERVAL, joined_at + INTERVAL '2 hours') as ts, -1 as val
+                        FROM voice_activity
+                        WHERE guild_id = $1 AND joined_at IS NOT NULL
+                    ),
+                    timeline AS (
+                        SELECT channel_id, ts, SUM(val) OVER (PARTITION BY channel_id ORDER BY ts, val DESC) as concurrent_count
+                        FROM events
+                    )
+                    SELECT t.channel_id, c.channel_name, t.ts as peak_time, t.concurrent_count
+                    FROM timeline t
+                    LEFT JOIN channels c ON c.channel_id = t.channel_id
+                    ORDER BY t.concurrent_count DESC, t.ts DESC
+                    LIMIT 1
+                """, guild_id)
+
+                # 2. Recorde somando todos os canais simultâneos do servidor
+                server_peak_row = await conn.fetchrow("""
+                    WITH events AS (
+                        SELECT joined_at as ts, 1 as val
+                        FROM voice_activity
+                        WHERE guild_id = $1 AND joined_at IS NOT NULL
+                        UNION ALL
+                        SELECT COALESCE(left_at, joined_at + (duration_seconds || ' seconds')::INTERVAL, joined_at + INTERVAL '2 hours') as ts, -1 as val
+                        FROM voice_activity
+                        WHERE guild_id = $1 AND joined_at IS NOT NULL
+                    ),
+                    timeline AS (
+                        SELECT ts, SUM(val) OVER (ORDER BY ts, val DESC) as concurrent_count
+                        FROM events
+                    )
+                    SELECT ts as peak_time, concurrent_count
+                    FROM timeline
+                    ORDER BY concurrent_count DESC, ts DESC
+                    LIMIT 1
+                """, guild_id)
+
+                return {
+                    "channel_peak": {
+                        "count": int(channel_peak_row["concurrent_count"]) if channel_peak_row and channel_peak_row["concurrent_count"] else 0,
+                        "channel_name": channel_peak_row["channel_name"] if channel_peak_row and channel_peak_row["channel_name"] else "Nenhum",
+                        "channel_id": channel_peak_row["channel_id"] if channel_peak_row else None,
+                        "peak_time": channel_peak_row["peak_time"].strftime("%d/%m/%Y às %H:%M") if channel_peak_row and channel_peak_row["peak_time"] else None
+                    },
+                    "server_peak": {
+                        "count": int(server_peak_row["concurrent_count"]) if server_peak_row and server_peak_row["concurrent_count"] else 0,
+                        "peak_time": server_peak_row["peak_time"].strftime("%d/%m/%Y às %H:%M") if server_peak_row and server_peak_row["peak_time"] else None
+                    }
+                }
+            except Exception as e:
+                logger.error(f"Erro ao calcular recordes de voz para guild {guild_id}: {e}")
+                return {
+                    "channel_peak": {"count": 0, "channel_name": "Nenhum", "channel_id": None, "peak_time": None},
+                    "server_peak": {"count": 0, "peak_time": None}
+                }
+
     async def get_server_stats(self, guild_id: int, days: int = 30) -> Dict[str, Any]:
         """Retorna estatísticas gerais do servidor."""
         async with self.pool.acquire() as conn:
@@ -1754,11 +1820,14 @@ class Database:
                 WHERE guild_id = $1 AND created_at >= $2 AND was_moderated = TRUE
             """, guild_id, cutoff_date)
             
+            voice_records = await self.get_voice_peak_records(guild_id)
+
             return {
-                'total_messages': total_messages,
-                'active_users': active_users,
-                'active_channels': active_channels,
-                'moderated_messages': moderated_messages,
+                'total_messages': total_messages or 0,
+                'active_users': active_users or 0,
+                'active_channels': active_channels or 0,
+                'moderated_messages': moderated_messages or 0,
+                'voice_records': voice_records,
                 'period_days': days
             }
     
