@@ -411,11 +411,14 @@ class AIToolkit:
             # Notificar Telegram se configurado
             if self.telegram:
                 try:
+                    guild_label = guild.name if guild else f"Servidor {self.guild_id}"
+                    reporter_label = f"<@{reporter_id}>" if reporter_id else "🤖 BMIA Auto"
+                    target_label = f"<@{target_id}>" if target_id else f"ID {usuario_alvo_id}"
                     await self.telegram.log_report_created(
-                        guild_id=self.guild_id,
                         report_id=report_id,
-                        target_user_id=target_id,
-                        reporter_user_id=reporter_id,
+                        guild_name=guild_label,
+                        reporter_name=reporter_label,
+                        target_name=target_label,
                         category=categoria,
                         reason=motivo
                     )
