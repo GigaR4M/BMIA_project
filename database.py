@@ -1726,10 +1726,10 @@ class Database:
     # ==================== CONSULTAS DE ESTATÍSTICAS ====================
     
     async def get_voice_peak_records(self, guild_id: int) -> Dict[str, Any]:
-        """Calcula os recordes históricos de usuários simultâneos em canal de voz (excluindo canais AFK e ignorados)."""
+        """Calcula os recordes históricos de usuários simultâneos em canal de voz (excluindo bots, canais AFK e ignorados)."""
         async with self.pool.acquire() as conn:
             try:
-                # 1. Recorde em um único canal (excluindo AFK e canais ignorados)
+                # 1. Recorde em um único canal (excluindo bots, AFK e canais ignorados)
                 channel_peak_row = await conn.fetchrow("""
                     WITH ignored AS (
                         SELECT UNNEST(ignored_voice_channels) as ch_id 
@@ -1739,9 +1739,11 @@ class Database:
                     valid_voice AS (
                         SELECT va.channel_id, va.joined_at, va.left_at, va.duration_seconds
                         FROM voice_activity va
+                        JOIN users u ON u.user_id = va.user_id
                         LEFT JOIN channels c ON c.channel_id = va.channel_id
                         WHERE va.guild_id = $1 
                           AND va.joined_at IS NOT NULL
+                          AND (u.is_bot IS FALSE OR u.is_bot IS NULL)
                           AND (va.channel_id NOT IN (SELECT ch_id FROM ignored))
                           AND (c.channel_name IS NULL OR c.channel_name NOT ILIKE '%afk%')
                     ),
@@ -1763,7 +1765,7 @@ class Database:
                     LIMIT 1
                 """, guild_id)
 
-                # 2. Recorde somando todos os canais simultâneos do servidor (excluindo AFK e canais ignorados)
+                # 2. Recorde somando todos os canais simultâneos do servidor (excluindo bots, AFK e canais ignorados)
                 server_peak_row = await conn.fetchrow("""
                     WITH ignored AS (
                         SELECT UNNEST(ignored_voice_channels) as ch_id 
@@ -1773,9 +1775,11 @@ class Database:
                     valid_voice AS (
                         SELECT va.joined_at, va.left_at, va.duration_seconds
                         FROM voice_activity va
+                        JOIN users u ON u.user_id = va.user_id
                         LEFT JOIN channels c ON c.channel_id = va.channel_id
                         WHERE va.guild_id = $1 
                           AND va.joined_at IS NOT NULL
+                          AND (u.is_bot IS FALSE OR u.is_bot IS NULL)
                           AND (va.channel_id NOT IN (SELECT ch_id FROM ignored))
                           AND (c.channel_name IS NULL OR c.channel_name NOT ILIKE '%afk%')
                     ),
