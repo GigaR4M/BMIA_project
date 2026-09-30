@@ -269,16 +269,16 @@ class AIToolkit:
 
     async def reportar_mensagem(
         self,
-        usuario_alvo_id: int,
+        usuario_alvo_id: Any,
         motivo: str,
         categoria: str = "comportamento_inadequado",
         conteudo_mensagem: Optional[str] = None,
-        mensagem_id: Optional[int] = None,
+        mensagem_id: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Reporta/denuncia uma mensagem ou usuário à moderação humana do servidor quando há ofensa, assédio, toxicidade extrema, discurso proibido ou quando um usuário solicita ajuda/reclama de uma mensagem que violou as regras.
 
         Args:
-            usuario_alvo_id: O ID numérico do Discord do usuário que cometeu a infração / autor da mensagem ofensiva.
+            usuario_alvo_id: O ID numérico do Discord do usuário que cometeu a infração (ex: 443557642670178334) ou seu nome de usuário.
             motivo: Descrição clara do motivo da denúncia e resumo do ocorrido para a moderação humana.
             categoria: Categoria da infração (ex: 'ofensa', 'toxicidade', 'assedio', 'spam', 'comportamento_inadequado').
             conteudo_mensagem: O texto exato da mensagem ofensiva analisada (se disponível no histórico ou contexto).
@@ -287,14 +287,82 @@ class AIToolkit:
         try:
             reporter_id = 0
             channel_id = None
+            guild = None
             if self.current_message:
                 reporter_id = getattr(self.current_message.author, "id", 0)
                 channel_id = getattr(self.current_message.channel, "id", None)
+                guild = getattr(self.current_message, "guild", None)
             if not reporter_id and self.client and self.client.user:
                 reporter_id = self.client.user.id
+            if not guild and self.client:
+                guild = self.client.get_guild(self.guild_id)
 
-            target_id = int(usuario_alvo_id)
-            msg_id = int(mensagem_id) if mensagem_id else None
+            # Resolução resiliente do ID do usuário alvo
+            target_id = 0
+            try:
+                if isinstance(usuario_alvo_id, int) and usuario_alvo_id > 1:
+                    target_id = usuario_alvo_id
+                elif isinstance(usuario_alvo_id, str) and usuario_alvo_id.strip().isdigit() and int(usuario_alvo_id.strip()) > 1:
+                    target_id = int(usuario_alvo_id.strip())
+            except Exception:
+                pass
+
+            # Resolução resiliente do ID da mensagem
+            msg_id = None
+            try:
+                if isinstance(mensagem_id, int) and mensagem_id > 1:
+                    msg_id = mensagem_id
+                elif isinstance(mensagem_id, str) and mensagem_id.strip().isdigit() and int(mensagem_id.strip()) > 1:
+                    msg_id = int(mensagem_id.strip())
+            except Exception:
+                pass
+
+            # Se target_id ou msg_id não estiverem definidos, buscar no histórico recente do canal
+            target_name = str(usuario_alvo_id or "").strip()
+            if self.current_message and self.current_message.channel:
+                try:
+                    async for hist_msg in self.current_message.channel.history(limit=25):
+                        if hist_msg.id == self.current_message.id:
+                            continue
+                        author = hist_msg.author
+                        if author.bot:
+                            continue
+
+                        # Se target_id já é conhecido e bate com o autor
+                        if target_id and author.id == target_id:
+                            if not msg_id:
+                                msg_id = hist_msg.id
+                            if not conteudo_mensagem:
+                                conteudo_mensagem = hist_msg.content
+                            break
+
+                        # Se target_name bate com o nome ou display_name do autor
+                        author_names = [author.name.lower(), getattr(author, "display_name", "").lower(), str(author).lower()]
+                        if target_name and any(target_name.lower() in an for an in author_names):
+                            target_id = author.id
+                            if not msg_id:
+                                msg_id = hist_msg.id
+                            if not conteudo_mensagem:
+                                conteudo_mensagem = hist_msg.content
+                            break
+
+                        # Se conteudo_mensagem foi fornecido e bate com o conteúdo desta mensagem
+                        if conteudo_mensagem and (hist_msg.content in conteudo_mensagem or conteudo_mensagem in hist_msg.content):
+                            target_id = author.id
+                            msg_id = hist_msg.id
+                            break
+                except Exception as hist_err:
+                    logger.warning(f"Erro ao buscar histórico recente para identificar denúncia: {hist_err}")
+
+            # Se ainda não encontrou target_id, tenta buscar no guild
+            if not target_id and guild and target_name:
+                import discord
+                member = discord.utils.find(
+                    lambda m: target_name.lower() in m.name.lower() or target_name.lower() in getattr(m, "display_name", "").lower(),
+                    guild.members
+                )
+                if member:
+                    target_id = member.id
 
             report_id = await self.db.create_user_report(
                 guild_id=self.guild_id,
@@ -316,12 +384,6 @@ class AIToolkit:
 
                 guild_config = await self.db.get_guild_config(self.guild_id)
                 ann_channel_id = guild_config.get("announcement_channel_id") if guild_config else None
-                guild = None
-                if self.current_message and getattr(self.current_message, "guild", None):
-                    guild = self.current_message.guild
-                elif self.client:
-                    guild = self.client.get_guild(self.guild_id)
-
                 if ann_channel_id and guild:
                     mod_channel = guild.get_channel(ann_channel_id)
                     if mod_channel:

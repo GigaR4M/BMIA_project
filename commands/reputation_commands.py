@@ -130,25 +130,58 @@ class ReportActionView(ui.View):
             reason=f"Denúncia #{self.report_id} confirmada e aprovada pela moderação."
         )
 
-        # Se houver mensagem denunciada vinculada, apaga a mensagem original
+        # Se houver mensagem denunciada vinculada, apaga a(s) mensagem(ns) ofensiva(s) original(is)
         deleted_notice = ""
         try:
+            import re
             report_data = await self.db.get_report(self.report_id)
-            if report_data and report_data.get("channel_id") and report_data.get("message_id"):
+            if report_data and report_data.get("channel_id"):
                 ch_id = report_data["channel_id"]
-                msg_id = report_data["message_id"]
+                msg_id = report_data.get("message_id")
+                target_user_id = report_data.get("target_user_id") or self.target_user_id
                 target_channel = interaction.guild.get_channel(ch_id) if interaction.guild else None
                 if target_channel:
-                    try:
-                        target_msg = await target_channel.fetch_message(msg_id)
-                        if target_msg:
-                            await target_msg.delete()
-                            deleted_notice = f" (A mensagem original no canal {target_channel.mention} foi apagada automaticamente)"
-                            logger.info(f"🗑️ Mensagem {msg_id} apagada após aprovação da denúncia #{self.report_id}")
-                    except discord.NotFound:
-                        pass
-                    except Exception as del_err:
-                        logger.warning(f"Não foi possível apagar a mensagem {msg_id}: {del_err}")
+                    deleted_count = 0
+                    # 1. Tentar apagar pelo message_id específico se presente
+                    if msg_id:
+                        try:
+                            target_msg = await target_channel.fetch_message(msg_id)
+                            if target_msg:
+                                await target_msg.delete()
+                                deleted_count += 1
+                                logger.info(f"🗑️ Mensagem {msg_id} apagada após aprovação da denúncia #{self.report_id}")
+                        except discord.NotFound:
+                            pass
+                        except Exception as del_err:
+                            logger.warning(f"Não foi possível apagar a mensagem {msg_id}: {del_err}")
+
+                    # 2. Apagar mensagens recentes que correspondam ao conteúdo denunciado
+                    raw_content = (report_data.get("message_content") or "").strip()
+                    if raw_content:
+                        # Extrai trechos significativos do conteúdo denunciado (por quebra de linha ou vírgula)
+                        fragments = [
+                            f.strip().lower() for f in re.split(r'[\n,]+', raw_content)
+                            if len(f.strip()) >= 3
+                        ]
+                        try:
+                            async for m in target_channel.history(limit=35):
+                                if m.id == msg_id:
+                                    continue
+                                is_target = (target_user_id and target_user_id > 1 and m.author.id == target_user_id)
+                                m_clean = m.content.strip().lower()
+                                matches_frag = any(frag in m_clean or m_clean in frag for frag in fragments) if fragments else False
+                                if (is_target and matches_frag) or (target_user_id <= 1 and matches_frag and not m.author.bot):
+                                    try:
+                                        await m.delete()
+                                        deleted_count += 1
+                                        logger.info(f"🗑️ Mensagem ofensiva {m.id} de {m.author.name} apagada na aprovação da denúncia #{self.report_id}")
+                                    except (discord.NotFound, discord.HTTPException) as del_err:
+                                        logger.warning(f"Erro ao apagar mensagem {m.id}: {del_err}")
+                        except Exception as hist_err:
+                            logger.warning(f"Erro ao vasculhar mensagens recentes para apagar: {hist_err}")
+
+                    if deleted_count > 0:
+                        deleted_notice = f" ({deleted_count} mensagem(ns) ofensiva(s) apagada(s) automaticamente no canal {target_channel.mention})"
         except Exception as e:
             logger.warning(f"Erro ao tentar apagar mensagem denunciada #{self.report_id}: {e}")
 

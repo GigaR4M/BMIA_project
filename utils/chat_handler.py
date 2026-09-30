@@ -173,7 +173,7 @@ class ChatHandler:
     def format_history(self, discord_messages, bot_user):
         """
         Converts Discord message history to Gemini chat history format,
-        identifying the author of each message to prevent multi-user confusion.
+        identifying the author and message ID of each message to prevent multi-user confusion and enable accurate tool usage.
         discord_messages: list of discord.Message objects
         bot_user: discord.User object (the bot itself)
         """
@@ -188,7 +188,9 @@ class ChatHandler:
             else:
                 role = "user"
                 author_name = getattr(msg.author, "display_name", str(msg.author))
-                content = f"{author_name}: {msg.content}"
+                author_id = getattr(msg.author, "id", "Desconhecido")
+                msg_id = getattr(msg, "id", "Desconhecido")
+                content = f"[Mensagem ID: {msg_id} | Autor: {author_name} | ID_Usuario: {author_id}]: {msg.content}"
 
             formatted_history.append({
                 "role": role,

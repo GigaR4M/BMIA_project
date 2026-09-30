@@ -244,7 +244,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             except Exception as ref_err:
                                 logger.debug("Não foi possível obter mensagem de referência: %s", ref_err)
 
-                        user_prompt = f"{reply_context}{message.author.display_name}: {resolved_content}"
+                        user_prompt = f"{reply_context}[Mensagem ID: {message.id} | Autor: {message.author.display_name} | ID_Usuario: {message.author.id}]: {resolved_content}"
 
                         response_text = await ctx.chat_handler.generate_response(
                             user_prompt,

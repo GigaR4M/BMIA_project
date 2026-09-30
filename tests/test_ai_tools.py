@@ -183,26 +183,31 @@ class TestChatHandlerWithTools:
         
         user_1 = MagicMock()
         user_1.display_name = "Carlos"
+        user_1.id = 101
         user_2 = MagicMock()
         user_2.display_name = "Maria"
+        user_2.id = 102
 
         msg1 = MagicMock()
+        msg1.id = 5001
         msg1.author = user_1
         msg1.content = "E aí galera"
 
         msg2 = MagicMock()
+        msg2.id = 5002
         msg2.author = user_2
         msg2.content = "Alguém joga Roblox?"
 
         msg3 = MagicMock()
+        msg3.id = 5003
         msg3.author = bot_user
         msg3.content = "Eu posso ver quem joga mais!"
 
         history = handler.format_history([msg1, msg2, msg3], bot_user)
         assert len(history) == 3
         assert history[0]["role"] == "user"
-        assert history[0]["parts"][0] == "Carlos: E aí galera"
+        assert history[0]["parts"][0] == "[Mensagem ID: 5001 | Autor: Carlos | ID_Usuario: 101]: E aí galera"
         assert history[1]["role"] == "user"
-        assert history[1]["parts"][0] == "Maria: Alguém joga Roblox?"
+        assert history[1]["parts"][0] == "[Mensagem ID: 5002 | Autor: Maria | ID_Usuario: 102]: Alguém joga Roblox?"
         assert history[2]["role"] == "model"
         assert history[2]["parts"][0] == "Eu posso ver quem joga mais!"
