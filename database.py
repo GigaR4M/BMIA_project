@@ -1726,19 +1726,31 @@ class Database:
     # ==================== CONSULTAS DE ESTATÍSTICAS ====================
     
     async def get_voice_peak_records(self, guild_id: int) -> Dict[str, Any]:
-        """Calcula os recordes históricos de usuários simultâneos em canal de voz (no mesmo canal e total no servidor)."""
+        """Calcula os recordes históricos de usuários simultâneos em canal de voz (excluindo canais AFK e ignorados)."""
         async with self.pool.acquire() as conn:
             try:
-                # 1. Recorde em um único canal
+                # 1. Recorde em um único canal (excluindo AFK e canais ignorados)
                 channel_peak_row = await conn.fetchrow("""
-                    WITH events AS (
+                    WITH ignored AS (
+                        SELECT UNNEST(ignored_voice_channels) as ch_id 
+                        FROM guild_settings 
+                        WHERE guild_id = $1
+                    ),
+                    valid_voice AS (
+                        SELECT va.channel_id, va.joined_at, va.left_at, va.duration_seconds
+                        FROM voice_activity va
+                        LEFT JOIN channels c ON c.channel_id = va.channel_id
+                        WHERE va.guild_id = $1 
+                          AND va.joined_at IS NOT NULL
+                          AND (va.channel_id NOT IN (SELECT ch_id FROM ignored))
+                          AND (c.channel_name IS NULL OR c.channel_name NOT ILIKE '%afk%')
+                    ),
+                    events AS (
                         SELECT channel_id, joined_at as ts, 1 as val
-                        FROM voice_activity
-                        WHERE guild_id = $1 AND joined_at IS NOT NULL
+                        FROM valid_voice
                         UNION ALL
                         SELECT channel_id, COALESCE(left_at, joined_at + (duration_seconds || ' seconds')::INTERVAL, joined_at + INTERVAL '2 hours') as ts, -1 as val
-                        FROM voice_activity
-                        WHERE guild_id = $1 AND joined_at IS NOT NULL
+                        FROM valid_voice
                     ),
                     timeline AS (
                         SELECT channel_id, ts, SUM(val) OVER (PARTITION BY channel_id ORDER BY ts, val DESC) as concurrent_count
@@ -1751,16 +1763,28 @@ class Database:
                     LIMIT 1
                 """, guild_id)
 
-                # 2. Recorde somando todos os canais simultâneos do servidor
+                # 2. Recorde somando todos os canais simultâneos do servidor (excluindo AFK e canais ignorados)
                 server_peak_row = await conn.fetchrow("""
-                    WITH events AS (
+                    WITH ignored AS (
+                        SELECT UNNEST(ignored_voice_channels) as ch_id 
+                        FROM guild_settings 
+                        WHERE guild_id = $1
+                    ),
+                    valid_voice AS (
+                        SELECT va.joined_at, va.left_at, va.duration_seconds
+                        FROM voice_activity va
+                        LEFT JOIN channels c ON c.channel_id = va.channel_id
+                        WHERE va.guild_id = $1 
+                          AND va.joined_at IS NOT NULL
+                          AND (va.channel_id NOT IN (SELECT ch_id FROM ignored))
+                          AND (c.channel_name IS NULL OR c.channel_name NOT ILIKE '%afk%')
+                    ),
+                    events AS (
                         SELECT joined_at as ts, 1 as val
-                        FROM voice_activity
-                        WHERE guild_id = $1 AND joined_at IS NOT NULL
+                        FROM valid_voice
                         UNION ALL
                         SELECT COALESCE(left_at, joined_at + (duration_seconds || ' seconds')::INTERVAL, joined_at + INTERVAL '2 hours') as ts, -1 as val
-                        FROM voice_activity
-                        WHERE guild_id = $1 AND joined_at IS NOT NULL
+                        FROM valid_voice
                     ),
                     timeline AS (
                         SELECT ts, SUM(val) OVER (ORDER BY ts, val DESC) as concurrent_count
