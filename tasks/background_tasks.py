@@ -367,6 +367,58 @@ async def check_voice_points_periodically(
 
 
 # ── Promoções e Eventos Sazonais da Steam ──────────────────────────────────────
+def find_gaming_announcement_channel(guild: discord.Guild, config: Optional[dict] = None) -> Optional[discord.TextChannel]:
+    """
+    Encontra o melhor canal público para anúncios de jogos, eventos e promoções.
+    Nunca envia para canais de moderação, administração, logs ou staff.
+    """
+    if not guild:
+        return None
+
+    # Palavras-chave de canais prioritários para jogos e promoções
+    GAMING_KEYWORDS = [
+        "games-gratis", "gamesgratis", "jogos-gratis", "jogosgratis",
+        "sugestao-de-jogos", "sugestão-de-jogos", "sugestaodejogos", "sugestões-de-jogos",
+        "steam", "promocoes", "promoções", "ofertas",
+        "noticias", "notícias", "anuncios", "anúncios", "novidades"
+    ]
+    
+    # Palavras-chave proibidas para anúncios públicos
+    STAFF_KEYWORDS = ["admin", "adm", "mod", "staff", "log", "audit", "privado", "denuncia", "denúncia", "regras"]
+
+    def is_staff_channel(ch_name: str) -> bool:
+        norm = re.sub(r'[^a-zA-Z0-9]', '', ch_name).lower()
+        return any(k in norm for k in STAFF_KEYWORDS)
+
+    # 1. Procura canais temáticos de games/notícias onde o bot possa enviar
+    for keyword in GAMING_KEYWORDS:
+        for ch in guild.text_channels:
+            if not ch.permissions_for(guild.me).send_messages:
+                continue
+            norm_name = re.sub(r'[^a-zA-Z0-9]', '', ch.name).lower()
+            if keyword in norm_name and not is_staff_channel(ch.name):
+                return ch
+
+    # 2. Procura nos allowed_channels configurados (canais principais de interação)
+    if config:
+        allowed = config.get("allowed_channels", [])
+        for ch_id in allowed:
+            ch = guild.get_channel(ch_id)
+            if ch and hasattr(ch, "permissions_for") and ch.permissions_for(guild.me).send_messages and not is_staff_channel(ch.name):
+                return ch
+
+    # 3. System channel seguro (desde que não seja de moderação/staff)
+    if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages and not is_staff_channel(guild.system_channel.name):
+        return guild.system_channel
+
+    # 4. Qualquer canal público seguro sem ser de moderação/staff
+    for ch in guild.text_channels:
+        if ch.permissions_for(guild.me).send_messages and not is_staff_channel(ch.name):
+            return ch
+
+    return None
+
+
 async def check_steam_seasonal_events_periodically(client: discord.Client, db) -> None:
     """Verifica e notifica o início de grandes promoções e festivais da Steam às 14:00 BRT."""
     import zoneinfo
@@ -405,17 +457,8 @@ async def check_steam_seasonal_events_periodically(client: discord.Client, db) -
                     embed.set_footer(text="Notificação automática de eventos da Steam | BMIA")
 
                     for guild in client.guilds:
-                        channel_to_send = None
                         config = await db.get_guild_config(guild.id)
-                        if config.get("announcement_channel_id"):
-                            channel_to_send = guild.get_channel(config["announcement_channel_id"])
-                        if not channel_to_send:
-                            channel_to_send = guild.system_channel
-                        if not channel_to_send:
-                            for ch in guild.text_channels:
-                                if ch.permissions_for(guild.me).send_messages:
-                                    channel_to_send = ch
-                                    break
+                        channel_to_send = find_gaming_announcement_channel(guild, config)
 
                         if channel_to_send:
                             try:
@@ -483,10 +526,7 @@ async def check_tracked_game_deals_periodically(client: discord.Client, db, gg_c
                             channel = guild.get_channel(game["channel_id"])
                             if not channel:
                                 config = await db.get_guild_config(guild.id)
-                                if config.get("announcement_channel_id"):
-                                    channel = guild.get_channel(config["announcement_channel_id"])
-                            if not channel:
-                                channel = guild.system_channel
+                                channel = find_gaming_announcement_channel(guild, config)
 
                             if channel and channel.permissions_for(guild.me).send_messages:
                                 embed = discord.Embed(
