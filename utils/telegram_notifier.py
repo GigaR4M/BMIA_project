@@ -77,6 +77,55 @@ class TelegramNotifier:
         )
         await self.send(msg)
 
+    async def log_message_edited(
+        self,
+        guild,
+        channel,
+        author,
+        before_content: str,
+        after_content: str,
+        message_url: str = "",
+    ) -> None:
+        """Notifica quando uma mensagem é editada por um usuário no Discord."""
+        safe_before = before_content[:200].replace("<", "&lt;").replace(">", "&gt;")
+        safe_after = after_content[:200].replace("<", "&lt;").replace(">", "&gt;")
+        link_line = f"\n🔗 <a href='{message_url}'>Ver mensagem</a>" if message_url else ""
+        msg = (
+            f"✏️ <b>Mensagem Editada</b>\n"
+            f"🏠 Servidor: {guild.name}\n"
+            f"📢 Canal: #{channel.name}\n"
+            f"👤 Autor: {author} (<code>{author.id}</code>)\n"
+            f"📝 Antes: <code>{safe_before}</code>\n"
+            f"📝 Depois: <code>{safe_after}</code>"
+            f"{link_line}\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
+    async def log_message_deleted_event(
+        self,
+        guild,
+        channel,
+        author,
+        content: str,
+    ) -> None:
+        """
+        Notifica quando uma mensagem de usuário é deletada via evento Discord
+        (on_raw_message_delete). Diferente de log_message_deleted, que é chamada
+        pela moderação por IA com um campo 'reason' explícito.
+        """
+        safe_content = content[:200].replace("<", "&lt;").replace(">", "&gt;") if content else "<i>conteúdo indisponível</i>"
+        author_info = f"{author} (<code>{author.id}</code>)" if author else "<i>autor desconhecido</i>"
+        msg = (
+            f"🗑️ <b>Mensagem Deletada</b>\n"
+            f"🏠 Servidor: {guild.name}\n"
+            f"📢 Canal: #{channel.name}\n"
+            f"👤 Autor: {author_info}\n"
+            f"📝 Conteúdo: <code>{safe_content}</code>\n"
+            f"🕒 {self._now()}"
+        )
+        await self.send(msg)
+
     async def log_user_warned(self, guild, user, reason: str):
         """Notifica quando um usuário recebe um aviso."""
         msg = (

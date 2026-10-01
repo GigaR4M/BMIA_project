@@ -512,7 +512,58 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
             await ctx.media_manager.on_raw_reaction_remove(payload, client)
 
     @client.event
+    async def on_message_edit(before: discord.Message, after: discord.Message) -> None:
+        """Notifica edições de mensagem via Telegram. Ignora bots e edições sem mudança de texto."""
+        # Ignora bots e mudanças sem alteração de conteúdo de texto
+        if before.author.bot:
+            return
+        before_text = before.content or ""
+        after_text = after.content or ""
+        if before_text == after_text:
+            return
+        # Ignora edições com conteúdo vazio em ambos os lados (ex: somente embed)
+        if not before_text and not after_text:
+            return
+
+        if ctx.telegram and after.guild:
+            try:
+                msg_url = after.jump_url  # URL direta para a mensagem no Discord
+                await ctx.telegram.log_message_edited(
+                    guild=after.guild,
+                    channel=after.channel,
+                    author=after.author,
+                    before_content=before_text,
+                    after_content=after_text,
+                    message_url=msg_url,
+                )
+            except Exception as exc:
+                logger.error("Erro ao notificar edição de mensagem no Telegram: %s", exc)
+
+    @client.event
     async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent) -> None:
+        """Notifica deleções de mensagem via Telegram e repassa ao media_manager."""
+        # Tenta recuperar dados do cache do discord.py (sem RAM extra)
+        cached: discord.Message | None = payload.cached_message
+
+        if ctx.telegram and payload.guild_id:
+            guild = client.get_guild(payload.guild_id)
+            channel = client.get_channel(payload.channel_id)
+            if guild and channel:
+                # Só notifica se tiver autor e se não for bot
+                author = cached.author if cached else None
+                content = cached.content if cached else ""
+                if author is None or not author.bot:
+                    try:
+                        await ctx.telegram.log_message_deleted_event(
+                            guild=guild,
+                            channel=channel,
+                            author=author,
+                            content=content,
+                        )
+                    except Exception as exc:
+                        logger.error("Erro ao notificar deleção de mensagem no Telegram: %s", exc)
+
+        # Preserva repasse ao media_manager (zero regressão)
         if ctx.media_manager:
             await ctx.media_manager.on_raw_message_delete(payload)
 
