@@ -5035,6 +5035,35 @@ class Database:
                     d = dict(day_row)
                     d["formatted_date"] = d["date"].strftime("%d/%m/%Y")
                     extras["most_active_day"] = d
+                else:
+                    # Fallback dinâmico calculando de messages + voice_activity
+                    dynamic_day = await conn.fetchrow("""
+                        WITH msg_days AS (
+                            SELECT (created_at AT TIME ZONE 'America/Sao_Paulo')::date AS dt, COUNT(*) AS msg_cnt
+                            FROM messages
+                            WHERE guild_id = $1 AND created_at >= $2 AND created_at <= $3
+                            GROUP BY dt
+                        ),
+                        voice_days AS (
+                            SELECT (joined_at AT TIME ZONE 'America/Sao_Paulo')::date AS dt, COALESCE(SUM(duration_seconds), 0) / 60 AS voice_min
+                            FROM voice_activity
+                            WHERE guild_id = $1 AND joined_at >= $2 AND joined_at <= $3
+                            GROUP BY dt
+                        )
+                        SELECT 
+                            COALESCE(m.dt, v.dt) AS date,
+                            COALESCE(m.msg_cnt, 0)::BIGINT AS total_messages,
+                            COALESCE(v.voice_min, 0)::BIGINT AS total_voice_minutes,
+                            (COALESCE(m.msg_cnt, 0) + COALESCE(v.voice_min, 0))::BIGINT AS total_activity
+                        FROM msg_days m
+                        FULL OUTER JOIN voice_days v ON m.dt = v.dt
+                        ORDER BY total_activity DESC
+                        LIMIT 1
+                    """, guild_id, start_dt, end_dt)
+                    if dynamic_day and dynamic_day.get("total_activity", 0) > 0:
+                        d = dict(dynamic_day)
+                        d["formatted_date"] = d["date"].strftime("%d/%m/%Y")
+                        extras["most_active_day"] = d
             except Exception as e:
                 logger.warning("Erro extras most_active_day: %s", e)
 
