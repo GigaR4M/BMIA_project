@@ -685,11 +685,11 @@ class PodiumBuilder:
         # Ordem visual do pódio: [2º Lugar, 1º Lugar, 3º Lugar]
         podium_slots = []
         
-        # Mapeamento para visual: idx 0 = 2º, idx 1 = 1º, idx 2 = 3º
+        # Mapeamento para visual: idx 0 = 2º, idx 1 = 1º, idx 2 = 3º (alturas aumentadas proporcionalmente)
         slot_configs = [
-            {"rank": 2, "color": "#00f0ff", "border": "rgba(0, 240, 255, 0.5)", "pedestal_h": "130px", "badge": "2º LUGAR", "crown": "🥈", "avatar_size": "95px"},
-            {"rank": 1, "color": "#ffd700", "border": "rgba(255, 215, 0, 0.6)", "pedestal_h": "170px", "badge": "1º LUGAR", "crown": "👑", "avatar_size": "115px"},
-            {"rank": 3, "color": "#b026ff", "border": "rgba(176, 38, 255, 0.5)", "pedestal_h": "100px", "badge": "3º LUGAR", "crown": "🥉", "avatar_size": "85px"}
+            {"rank": 2, "color": "#00f0ff", "border": "rgba(0, 240, 255, 0.5)", "pedestal_h": "235px", "badge": "2º LUGAR", "crown": "🥈", "avatar_size": "95px"},
+            {"rank": 1, "color": "#ffd700", "border": "rgba(255, 215, 0, 0.6)", "pedestal_h": "300px", "badge": "1º LUGAR", "crown": "👑", "avatar_size": "115px"},
+            {"rank": 3, "color": "#b026ff", "border": "rgba(176, 38, 255, 0.5)", "pedestal_h": "175px", "badge": "3º LUGAR", "crown": "🥉", "avatar_size": "85px"}
         ]
 
         # Monta dados do pódio
