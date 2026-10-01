@@ -5059,7 +5059,7 @@ class Database:
                         FULL OUTER JOIN voice_days v ON m.dt = v.dt
                         ORDER BY total_activity DESC
                         LIMIT 1
-                    """, guild_id, start_dt, end_dt)
+                    """, guild_id, start_dt.replace(tzinfo=None) if start_dt.tzinfo else start_dt, end_dt.replace(tzinfo=None) if end_dt.tzinfo else end_dt)
                     if dynamic_day and dynamic_day.get("total_activity", 0) > 0:
                         d = dict(dynamic_day)
                         d["formatted_date"] = d["date"].strftime("%d/%m/%Y")
