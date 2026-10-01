@@ -9,6 +9,7 @@ import re
 import logging
 import asyncio
 from datetime import datetime, timezone
+from typing import Optional, Dict, List, Any
 import discord
 
 from config import (
@@ -386,6 +387,16 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
             if appid:
                 async def auto_track_game():
                     try:
+                        # Validação de canal: canal de jogos configurado ou canais principais
+                        deals_ch = await ctx.get_deals_channel(message.guild.id)
+                        if deals_ch:
+                            if message.channel.id != deals_ch:
+                                return
+                        else:
+                            allowed_channels = await ctx.get_allowed_channels(message.guild.id)
+                            if message.channel.id not in allowed_channels:
+                                return
+
                         existing = await ctx.db.get_tracked_game(message.guild.id, appid)
                         if not existing:
                             gg_client = getattr(ctx, "gg_deals_client", None) or GGDealsClient()
@@ -407,7 +418,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                                     header_image_url=info["header_image_url"],
                                     gg_deals_url=info["gg_deals_url"]
                                 )
-                                logger.info(f"🎮 Jogo '{info['game_name']}' (AppID {appid}) registrado automaticamente para monitoramento de ofertas.")
+                                logger.info(f"🎮 Jogo '{info['game_name']}' (AppID {appid}) registrado automaticamente para monitoramento de ofertas no canal #{message.channel.name}.")
                                 try:
                                     await message.add_reaction("🎮")
                                 except Exception:
@@ -679,6 +690,11 @@ class BotContext:
         if channels is not None and len(channels) > 0:
             return channels
         return list(DEFAULT_IGNORED_VOICE_CHANNELS)
+
+    async def get_deals_channel(self, guild_id: int) -> Optional[int]:
+        """Retorna o canal de texto configurado para jogos e promoções Steam (se houver)."""
+        cfg = await self.get_guild_config(guild_id)
+        return cfg.get("deals_channel_id")
 
     async def get_dynamic_roles_config(self, guild_id: int) -> dict:
         """Retorna a configuração de cargos dinâmicos para este servidor."""

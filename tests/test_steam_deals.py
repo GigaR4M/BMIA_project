@@ -146,5 +146,81 @@ class TestSteamDatabaseIntegration:
         assert hasattr(Database, "get_upcoming_steam_events")
         assert hasattr(Database, "get_due_steam_events_for_notification")
         assert hasattr(Database, "mark_steam_event_notified")
-        assert hasattr(Database, "update_steam_event_banner")
         assert hasattr(Database, "seed_initial_steam_deals_data")
+        assert hasattr(Database, "set_deals_channel")
+
+
+class TestGamingChannelPriority:
+    """Testes para a lógica de seleção do canal de anúncios de jogos e eventos."""
+
+    def test_prefers_configured_deals_channel(self):
+        from tasks.background_tasks import find_gaming_announcement_channel
+        
+        guild = MagicMock()
+        guild.me = MagicMock()
+        
+        deals_ch = MagicMock()
+        deals_ch.id = 1327836428524191766
+        deals_ch.name = "sugestão-de-jogos"
+        deals_ch.permissions_for.return_value.send_messages = True
+
+        other_ch = MagicMock()
+        other_ch.id = 1111111111111111111
+        other_ch.name = "chat-principal"
+        other_ch.permissions_for.return_value.send_messages = True
+
+        guild.get_channel.side_effect = lambda cid: deals_ch if cid == deals_ch.id else None
+        guild.text_channels = [other_ch, deals_ch]
+
+        config = {
+            "deals_channel_id": 1327836428524191766,
+            "allowed_channels": [1111111111111111111]
+        }
+
+        selected = find_gaming_announcement_channel(guild, config)
+        assert selected == deals_ch
+
+    def test_falls_back_to_gaming_keyword_when_not_configured(self):
+        from tasks.background_tasks import find_gaming_announcement_channel
+
+        guild = MagicMock()
+        guild.me = MagicMock()
+
+        deals_ch = MagicMock()
+        deals_ch.name = "🎮sugestão-de-jogos"
+        deals_ch.permissions_for.return_value.send_messages = True
+
+        main_ch = MagicMock()
+        main_ch.name = "🎯chat-principal"
+        main_ch.permissions_for.return_value.send_messages = True
+
+        guild.text_channels = [main_ch, deals_ch]
+        config = {"deals_channel_id": None, "allowed_channels": []}
+
+        selected = find_gaming_announcement_channel(guild, config)
+        assert selected == deals_ch
+
+    def test_never_selects_staff_channel(self):
+        from tasks.background_tasks import find_gaming_announcement_channel
+
+        guild = MagicMock()
+        guild.me = MagicMock()
+
+        staff_ch = MagicMock()
+        staff_ch.name = "⚠-administração-⚠"
+        staff_ch.permissions_for.return_value.send_messages = True
+
+        main_ch = MagicMock()
+        main_ch.name = "🎯chat-principal"
+        main_ch.permissions_for.return_value.send_messages = True
+
+        guild.text_channels = [staff_ch, main_ch]
+        guild.system_channel = None
+        guild.get_channel.side_effect = lambda cid: main_ch if cid == 999 else None
+
+        config = {"deals_channel_id": None, "allowed_channels": [999]}
+
+        selected = find_gaming_announcement_channel(guild, config)
+        assert selected == main_ch
+        assert selected != staff_ch
+

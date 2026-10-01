@@ -108,6 +108,7 @@ class TestGetGuildConfig:
             "allowed_channels": [111, 222],
             "ignored_voice_channels": [333],
             "announcement_channel_id": 444,
+            "deals_channel_id": 777,
             "dynamic_roles_config": {"top_1": 555},
         }
         conn.fetchrow = AsyncMock(return_value=mock_row)
@@ -117,6 +118,7 @@ class TestGetGuildConfig:
         assert result["allowed_channels"] == [111, 222]
         assert result["ignored_voice_channels"] == [333]
         assert result["announcement_channel_id"] == 444
+        assert result["deals_channel_id"] == 777
         assert result["dynamic_roles_config"] == {"top_1": 555}
 
     @pytest.mark.asyncio
@@ -128,6 +130,7 @@ class TestGetGuildConfig:
             "allowed_channels": None,
             "ignored_voice_channels": None,
             "announcement_channel_id": None,
+            "deals_channel_id": None,
             "dynamic_roles_config": None,
         }
         conn.fetchrow = AsyncMock(return_value=mock_row)
@@ -135,7 +138,20 @@ class TestGetGuildConfig:
 
         assert result["allowed_channels"] == []
         assert result["ignored_voice_channels"] == []
+        assert result["deals_channel_id"] is None
         assert result["dynamic_roles_config"] == {}
+
+    @pytest.mark.asyncio
+    async def test_set_deals_channel(self, db_with_mock):
+        """Deve chamar execute com query correta ao definir deals_channel_id."""
+        db, conn = db_with_mock
+        await db.set_deals_channel(guild_id=123, channel_id=456)
+        conn.execute.assert_called_once()
+        args = conn.execute.call_args[0]
+        assert "deals_channel_id" in args[0]
+        assert args[1] == 123
+        assert args[2] == 456
+
 
 
 # ── Testes de set_allowed_channels ────────────────────────────────────────────

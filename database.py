@@ -161,6 +161,7 @@ class Database:
                     allowed_channels BIGINT[] DEFAULT '{}',
                     ignored_voice_channels BIGINT[] DEFAULT '{}',
                     announcement_channel_id BIGINT,
+                    deals_channel_id BIGINT,
                     dynamic_roles_config JSONB DEFAULT '{}',
                     updated_at TIMESTAMP DEFAULT NOW()
                 )
@@ -171,6 +172,7 @@ class Database:
                 "allowed_channels BIGINT[] DEFAULT '{}'",
                 "ignored_voice_channels BIGINT[] DEFAULT '{}'",
                 "announcement_channel_id BIGINT",
+                "deals_channel_id BIGINT",
                 "dynamic_roles_config JSONB DEFAULT '{}'",
             ]:
                 col_name = col_def.split()[0]
@@ -2261,6 +2263,16 @@ class Database:
                 DO UPDATE SET announcement_channel_id = $2, updated_at = NOW()
             """, guild_id, channel_id)
 
+    async def set_deals_channel(self, guild_id: int, channel_id: Optional[int]):
+        """Define o canal para anúncios e alertas de jogos/ofertas Steam do servidor."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO guild_settings (guild_id, deals_channel_id, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (guild_id) 
+                DO UPDATE SET deals_channel_id = $2, updated_at = NOW()
+            """, guild_id, channel_id)
+
     async def is_ai_moderation_enabled(self, guild_id: int) -> bool:
         """Verifica se a moderação por IA está ativa para um servidor."""
         async with self.pool.acquire() as conn:
@@ -2280,6 +2292,7 @@ class Database:
                     allowed_channels,
                     ignored_voice_channels,
                     announcement_channel_id,
+                    deals_channel_id,
                     dynamic_roles_config
                 FROM guild_settings
                 WHERE guild_id = $1
@@ -2301,6 +2314,7 @@ class Database:
                 "allowed_channels": list(row["allowed_channels"] or []),
                 "ignored_voice_channels": list(row["ignored_voice_channels"] or []),
                 "announcement_channel_id": row["announcement_channel_id"],
+                "deals_channel_id": row["deals_channel_id"],
                 "dynamic_roles_config": dict(dyn_roles),
             }
 

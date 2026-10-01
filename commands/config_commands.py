@@ -153,7 +153,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             f"Moderação por IA {status} para **{interaction.guild.name}**.", ephemeral=True
         )
 
-    # ── Canal de Moderação / Anúncios ──────────────────────────────────────────
+    # ── Canal de Moderação / Alertas ───────────────────────────────────────────
     @app_commands.command(name="canal-moderacao", description="Define o canal onde serão enviados alertas de moderação e denúncias.")
     @app_commands.describe(canal="Canal de texto para receber alertas da Staff")
     async def set_moderation_channel(
@@ -171,6 +171,37 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
         )
         logger.info("Canal de moderação definido como %s em %s", canal.name, interaction.guild.name)
 
+    # ── Canal de Jogos e Promoções ─────────────────────────────────────────────
+    @app_commands.command(name="canal-jogos", description="Define o canal para anúncios de eventos Steam, promoções e rastreamento de links.")
+    @app_commands.describe(canal="Canal de texto para sugestões de jogos e ofertas Steam")
+    async def set_deals_channel(
+        self, interaction: discord.Interaction, canal: discord.TextChannel
+    ) -> None:
+        if not self._is_admin(interaction):
+            await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
+            return
+
+        await self.db.set_deals_channel(interaction.guild.id, canal.id)
+        self.ctx.invalidate_guild_config(interaction.guild.id)
+        await interaction.response.send_message(
+            f"🎮 Canal de jogos e promoções Steam definido para {canal.mention}.",
+            ephemeral=True
+        )
+        logger.info("Canal de jogos definido como %s em %s", canal.name, interaction.guild.name)
+
+    @app_commands.command(name="canal-jogos-remover", description="Remove o canal personalizado de jogos (voltará a usar os canais principais).")
+    async def remove_deals_channel(self, interaction: discord.Interaction) -> None:
+        if not self._is_admin(interaction):
+            await interaction.response.send_message("❌ Apenas administradores podem usar este comando.", ephemeral=True)
+            return
+
+        await self.db.set_deals_channel(interaction.guild.id, None)
+        self.ctx.invalidate_guild_config(interaction.guild.id)
+        await interaction.response.send_message(
+            "ℹ️ Canal de jogos personalizado removido. O bot usará os canais principais de conversa para anúncios e sugestões.",
+            ephemeral=True
+        )
+
     # ── Ver configuração atual ─────────────────────────────────────────────────
     @app_commands.command(name="ver", description="Mostra a configuração atual do bot neste servidor.")
     async def show_config(self, interaction: discord.Interaction) -> None:
@@ -184,6 +215,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
         allowed = guild_config.get("allowed_channels", [])
         ignored = guild_config.get("ignored_voice_channels", [])
         ann_channel = guild_config.get("announcement_channel_id")
+        deals_channel = guild_config.get("deals_channel_id")
         dyn_roles = guild_config.get("dynamic_roles_config", {})
 
         def ch_list(ids: list) -> str:
@@ -197,6 +229,7 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
         )
         embed.add_field(name="🛡️ Moderação por IA", value="✅ Ativada" if ai_mod else "⏸️ Desativada", inline=False)
         embed.add_field(name="🚨 Canal de Moderação / Alertas", value=f"<#{ann_channel}>" if ann_channel else "*(não configurado)*", inline=False)
+        embed.add_field(name="🎮 Canal de Jogos e Promoções", value=f"<#{deals_channel}>" if deals_channel else "*(canais principais de bate-papo)*", inline=False)
         embed.add_field(name="💬 Canais com Pontos", value=ch_list(allowed), inline=False)
         embed.add_field(name="🔇 Canais de Voz Ignorados", value=ch_list(ignored), inline=False)
         embed.add_field(
@@ -205,4 +238,5 @@ class ConfigCommands(app_commands.Group, name="config", description="Configuraç
             inline=False,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
 

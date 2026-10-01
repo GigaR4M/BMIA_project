@@ -7,6 +7,8 @@ Cada função recebe via parâmetro os managers necessários (sem variáveis glo
 import asyncio
 import logging
 import traceback
+import re
+from typing import Optional, Dict, List, Any
 
 import discord
 
@@ -370,50 +372,68 @@ async def check_voice_points_periodically(
 def find_gaming_announcement_channel(guild: discord.Guild, config: Optional[dict] = None) -> Optional[discord.TextChannel]:
     """
     Encontra o melhor canal público para anúncios de jogos, eventos e promoções.
+    Prioridade:
+    1. Canal configurado explicitamente pelo admin (deals_channel_id via /config canal-jogos).
+    2. Canais temáticos de games/ofertas (ex: sugestao-de-jogos, games-gratis).
+    3. Canais principais de bate-papo da comunidade (allowed_channels, ex: #chat-principal).
+    4. Canal público de sistema (system_channel) seguro.
     Nunca envia para canais de moderação, administração, logs ou staff.
     """
     if not guild:
         return None
 
-    # Palavras-chave de canais prioritários para jogos e promoções
-    GAMING_KEYWORDS = [
-        "games-gratis", "gamesgratis", "jogos-gratis", "jogosgratis",
-        "sugestao-de-jogos", "sugestão-de-jogos", "sugestaodejogos", "sugestões-de-jogos",
-        "steam", "promocoes", "promoções", "ofertas",
-        "noticias", "notícias", "anuncios", "anúncios", "novidades"
-    ]
-    
     # Palavras-chave proibidas para anúncios públicos
     STAFF_KEYWORDS = ["admin", "adm", "mod", "staff", "log", "audit", "privado", "denuncia", "denúncia", "regras"]
 
-    def is_staff_channel(ch_name: str) -> bool:
-        norm = re.sub(r'[^a-zA-Z0-9]', '', ch_name).lower()
-        return any(k in norm for k in STAFF_KEYWORDS)
+    def _normalize(name: Any) -> str:
+        if not isinstance(name, str):
+            name = str(name or "")
+        import unicodedata
+        nfkd = unicodedata.normalize('NFKD', name)
+        ascii_text = ''.join(c for c in nfkd if not unicodedata.combining(c))
+        return re.sub(r'[^a-zA-Z0-9]', '', ascii_text).lower()
 
-    # 1. Procura canais temáticos de games/notícias onde o bot possa enviar
+    def is_staff_channel(ch_name: Any) -> bool:
+        norm = _normalize(ch_name)
+        return any(k in norm for k in ["admin", "adm", "mod", "staff", "log", "audit", "privado", "denuncia", "regras"])
+
+    # 1. Canal explicitamente configurado pelo usuário (/config canal-jogos)
+    if config and config.get("deals_channel_id"):
+        ch = guild.get_channel(config["deals_channel_id"])
+        if ch and hasattr(ch, "permissions_for") and ch.permissions_for(guild.me).send_messages and not is_staff_channel(getattr(ch, "name", "")):
+            return ch
+
+    # Palavras-chave de canais prioritários para jogos e promoções
+    GAMING_KEYWORDS = [
+        "sugestaodejogos", "gamesgratis", "jogosgratis",
+        "steam", "promocoes", "ofertas",
+        "noticias", "anuncios", "novidades"
+    ]
+
+    # 2. Procura canais temáticos de games/notícias onde o bot possa enviar
     for keyword in GAMING_KEYWORDS:
         for ch in guild.text_channels:
-            if not ch.permissions_for(guild.me).send_messages:
+            if not (hasattr(ch, "permissions_for") and ch.permissions_for(guild.me).send_messages):
                 continue
-            norm_name = re.sub(r'[^a-zA-Z0-9]', '', ch.name).lower()
-            if keyword in norm_name and not is_staff_channel(ch.name):
+            norm_name = _normalize(getattr(ch, "name", ""))
+            if keyword in norm_name and not is_staff_channel(getattr(ch, "name", "")):
                 return ch
 
-    # 2. Procura nos allowed_channels configurados (canais principais de interação)
+    # 3. Procura nos allowed_channels configurados (canais principais de interação)
     if config:
         allowed = config.get("allowed_channels", [])
         for ch_id in allowed:
             ch = guild.get_channel(ch_id)
-            if ch and hasattr(ch, "permissions_for") and ch.permissions_for(guild.me).send_messages and not is_staff_channel(ch.name):
+            if ch and hasattr(ch, "permissions_for") and ch.permissions_for(guild.me).send_messages and not is_staff_channel(getattr(ch, "name", "")):
                 return ch
 
-    # 3. System channel seguro (desde que não seja de moderação/staff)
-    if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages and not is_staff_channel(guild.system_channel.name):
+    # 4. System channel seguro (desde que não seja de moderação/staff)
+    if guild.system_channel and hasattr(guild.system_channel, "permissions_for") and guild.system_channel.permissions_for(guild.me).send_messages and not is_staff_channel(getattr(guild.system_channel, "name", "")):
         return guild.system_channel
 
-    # 4. Qualquer canal público seguro sem ser de moderação/staff
+    # 5. Qualquer canal público seguro sem ser de moderação/staff
     for ch in guild.text_channels:
-        if ch.permissions_for(guild.me).send_messages and not is_staff_channel(ch.name):
+        if hasattr(ch, "permissions_for") and ch.permissions_for(guild.me).send_messages and not is_staff_channel(getattr(ch, "name", "")):
             return ch
 
     return None
