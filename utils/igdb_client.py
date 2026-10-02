@@ -59,8 +59,8 @@ class GameCoverFetcher:
                                 data = await resp.json()
                                 if data and len(data) > 0 and "cover" in data[0]:
                                     img_id = data[0]["cover"]["image_id"]
-                                    # Formato 1080p
-                                    avatar_url = f"https://images.igdb.com/igdb/image/upload/t_1080p/{img_id}.jpg"
+                                    # Formato cover_big (menor, poupa memória e CPU no Base64)
+                                    avatar_url = f"https://images.igdb.com/igdb/image/upload/t_cover_big/{img_id}.jpg"
                 except Exception as e:
                     logger.debug("Erro na busca do IGDB para '%s': %s", game_name, e)
 
