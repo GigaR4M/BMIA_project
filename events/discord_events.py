@@ -455,7 +455,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                 if g_match:
                     gif_found = g_match.group(0)
             if gif_found:
-                asyncio.create_task(ctx.db.increment_gif_usage(message.guild.id, gif_found, now_brt().year))
+                asyncio.create_task(ctx.db.increment_gif_usage(message.guild.id, gif_found, now_brt().year, message.jump_url))
 
     # ── Reações ────────────────────────────────────────────────────────────────
     @client.event

@@ -499,9 +499,15 @@ class Database:
                     gif_url TEXT NOT NULL,
                     count INTEGER DEFAULT 1,
                     year INTEGER NOT NULL,
+                    first_message_url TEXT,
                     PRIMARY KEY (guild_id, gif_url, year)
                 )
             """)
+            # Migration inline caso a coluna não exista
+            try:
+                await conn.execute("ALTER TABLE gif_usage_stats ADD COLUMN IF NOT EXISTS first_message_url TEXT")
+            except Exception:
+                pass
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_gif_usage_guild_year ON gif_usage_stats(guild_id, year, count DESC)")
 
             # Tabela de Jogos Monitorados (Wishlist & Sugestões)
@@ -4563,15 +4569,24 @@ class Database:
                 DO UPDATE SET count = emoji_usage_stats.count + 1
             """, guild_id, emoji_name, is_custom, year)
 
-    async def increment_gif_usage(self, guild_id: int, gif_url: str, year: int) -> None:
-        """Incrementa o contador de uso de um GIF na guilda para o ano."""
+    async def increment_gif_usage(self, guild_id: int, gif_url: str, year: int, jump_url: str = None) -> None:
+        """Incrementa o contador de uso de um GIF na guilda para o ano, salvando o link da primeira mensagem."""
         async with self.pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO gif_usage_stats (guild_id, gif_url, count, year)
-                VALUES ($1, $2, 1, $3)
-                ON CONFLICT (guild_id, gif_url, year)
-                DO UPDATE SET count = gif_usage_stats.count + 1
-            """, guild_id, gif_url, year)
+            if jump_url:
+                await conn.execute("""
+                    INSERT INTO gif_usage_stats (guild_id, gif_url, count, year, first_message_url)
+                    VALUES ($1, $2, 1, $3, $4)
+                    ON CONFLICT (guild_id, gif_url, year)
+                    DO UPDATE SET count = gif_usage_stats.count + 1
+                    -- Não sobrescreve first_message_url, para manter o link da PRIMEIRA mensagem
+                """, guild_id, gif_url, year, jump_url)
+            else:
+                await conn.execute("""
+                    INSERT INTO gif_usage_stats (guild_id, gif_url, count, year)
+                    VALUES ($1, $2, 1, $3)
+                    ON CONFLICT (guild_id, gif_url, year)
+                    DO UPDATE SET count = gif_usage_stats.count + 1
+                """, guild_id, gif_url, year)
 
     async def get_annual_highlights_data(
         self,
@@ -4995,13 +5010,15 @@ class Database:
             # 3. GIF do Ano
             try:
                 gif_row = await conn.fetchrow("""
-                    SELECT gif_url, count FROM gif_usage_stats
+                    SELECT gif_url, count, first_message_url FROM gif_usage_stats
                     WHERE guild_id = $1 AND year = $2
                     ORDER BY count DESC
                     LIMIT 1
                 """, guild_id, year)
                 if gif_row:
                     extras["top_gif"] = dict(gif_row)
+                    if extras["top_gif"].get("first_message_url"):
+                        extras["top_gif"]["jump_url"] = extras["top_gif"]["first_message_url"]
                 else:
                     # Fallback: buscar gif em media_highlights
                     fb_gif = await conn.fetchrow("""
