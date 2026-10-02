@@ -1531,8 +1531,8 @@ def _sync_draw_league_table(
 
     font_title = _get_font(30, bold=True)
     font_sub = _get_font(15, bold=False)
-    title_suffix = " — 🏆 ENCERRADO" if is_final else ""
-    draw.text((70, 45), f"⚡ TABELA DE CLASSIFICAÇÃO — {title}{title_suffix}", fill=(255, 255, 255, 255), font=font_title)
+    title_suffix = " — ENCERRADO" if is_final else ""
+    draw.text((70, 45), f"TABELA DE CLASSIFICAÇÃO — {title}{title_suffix}", fill=(255, 255, 255, 255), font=font_title)
     draw.text((70, 85), f"JOGO: {game} • PREMIAÇÃO: {prize} • PONTOS CORRIDOS".upper(), fill=(0, 240, 255, 255), font=font_sub)
 
     # Container da Tabela
@@ -1598,11 +1598,9 @@ def _sync_draw_league_table(
 
         row_mid_y = (ry1 + ry2) // 2
 
-        # Pos + troféu para campeão
-        if is_champion:
-            draw.text((140, row_mid_y), "🏆", fill=(255, 215, 0, 255), font=font_tr_bold, anchor="mm")
-        else:
-            draw.text((140, row_mid_y), f"#{pos:02d}", fill=pos_color, font=font_tr_bold, anchor="mm")
+        # Pos (evitando emojis que causam quadrados)
+        pos_str = "WIN" if is_champion else f"#{pos:02d}"
+        draw.text((140, row_mid_y), pos_str, fill=(255, 215, 0, 255) if is_champion else pos_color, font=font_tr_bold, anchor="mm")
 
         # Avatar circular
         av_x_left = 195
