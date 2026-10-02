@@ -1556,6 +1556,22 @@ def _sync_draw_league_table(
 
     winner_id_set: set = set(int(x) for x in (winner_ids or []))
 
+    # Fallback: se o torneio está encerrado mas winner_ids não bate com nenhuma
+    # entrada das standings (ex: admin especificou membro real, mas o torneio
+    # tinha bots fictícios), destaca o 1º colocado como campeão por posição.
+    if is_final and winner_id_set and standings:
+        any_match = any(
+            bool(set(int(x) for x in (s.get("team_ids") or [])) & winner_id_set)
+            for s in standings
+        )
+        if not any_match:
+            # Nenhum match de ID — usa team_ids do líder como vencedor
+            leader_ids = standings[0].get("team_ids") or []
+            winner_id_set = set(int(x) for x in leader_ids)
+
+    # Também destaca por posição quando is_final=True e winner_ids não foi fornecido
+    highlight_rank_one = is_final and not winner_id_set
+
     for idx, s in enumerate(standings[:12]):
         ry1 = row_y + (idx * row_h)
         ry2 = ry1 + row_h - 8
@@ -1567,7 +1583,12 @@ def _sync_draw_league_table(
 
         # Verifica se esta equipe é a vencedora
         team_ids_raw = s.get("team_ids", [])
-        is_champion = is_final and bool(winner_id_set) and bool(set(int(x) for x in team_ids_raw) & winner_id_set)
+        is_champion = is_final and (
+            # Critério primário: IDs do vencedor batem com team_ids
+            (bool(winner_id_set) and bool(set(int(x) for x in team_ids_raw) & winner_id_set))
+            # Fallback: torna o 1º colocado campeão quando não há match de IDs
+            or (highlight_rank_one and idx == 0)
+        )
 
         # Fundo da linha — dourado para campeão
         if is_champion:
