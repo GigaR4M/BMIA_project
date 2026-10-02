@@ -533,6 +533,11 @@ class Database:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_tracked_games_active ON tracked_games(is_active)")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_tracked_games_appid ON tracked_games(steam_appid)")
 
+            try:
+                await conn.execute("ALTER TABLE tracked_games ADD COLUMN IF NOT EXISTS last_notified_price NUMERIC(10, 2)")
+            except Exception as e:
+                logger.debug(f"Migração tracked_games ignorada: {e}")
+
             # Tabela de Eventos Sazonais e Festivais da Steam
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS steam_seasonal_events (
@@ -5540,21 +5545,49 @@ class Database:
     ) -> None:
         """Atualiza os dados de preço e loja mais barata de um jogo monitorado."""
         async with self.pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE tracked_games
-                SET current_price = $2,
-                    discount_percent = $3,
-                    historical_low_price = $4,
-                    best_store_name = $5,
-                    best_store_url = $6,
-                    header_image_url = COALESCE($7, header_image_url),
-                    last_checked_at = NOW()
-                WHERE id = $1
-            """, game_id, current_price, discount_percent, historical_low_price, best_store_name, best_store_url, header_image_url)
+            if discount_percent == 0:
+                await conn.execute("""
+                    UPDATE tracked_games
+                    SET current_price = $2,
+                        discount_percent = $3,
+                        historical_low_price = $4,
+                        best_store_name = $5,
+                        best_store_url = $6,
+                        header_image_url = COALESCE($7, header_image_url),
+                        last_checked_at = NOW(),
+                        last_notified_at = NULL,
+                        last_notified_price = NULL
+                    WHERE id = $1
+                """, game_id, current_price, discount_percent, historical_low_price, best_store_name, best_store_url, header_image_url)
+            else:
+                await conn.execute("""
+                    UPDATE tracked_games
+                    SET current_price = $2,
+                        discount_percent = $3,
+                        historical_low_price = $4,
+                        best_store_name = $5,
+                        best_store_url = $6,
+                        header_image_url = COALESCE($7, header_image_url),
+                        last_checked_at = NOW()
+                    WHERE id = $1
+                """, game_id, current_price, discount_percent, historical_low_price, best_store_name, best_store_url, header_image_url)
 
-    async def mark_tracked_game_notified(self, game_id: int) -> None:
-        """Registra a data em que a notificação de promoção foi enviada."""
+    async def mark_tracked_game_notified(self, game_id: int, notified_price: Optional[float] = None) -> None:
+        """Registra a data em que a notificação de promoção foi enviada e o preço notificado."""
         async with self.pool.acquire() as conn:
+            if notified_price is not None:
+                await conn.execute("""
+                    UPDATE tracked_games
+                    SET last_notified_at = NOW(),
+                        last_notified_price = $2
+                    WHERE id = $1
+                """, game_id, notified_price)
+            else:
+                await conn.execute("""
+                    UPDATE tracked_games
+                    SET last_notified_at = NOW()
+                    WHERE id = $1
+                """, game_id)
             await conn.execute("""
                 UPDATE tracked_games
                 SET last_notified_at = NOW()

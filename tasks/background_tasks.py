@@ -524,21 +524,15 @@ async def check_tracked_game_deals_periodically(client: discord.Client, db, gg_c
                         header_image_url=info["header_image_url"]
                     )
 
-                    # Verifica se deve alertar: Desconto ativo e não notificado recentemente (ou preço caiu mais)
+                    # Verifica se deve alertar: Desconto ativo e preço caiu em relação à última notificação
                     discount = info["discount_percent"]
-                    last_notified = game.get("last_notified_at")
+                    last_notified_price = game.get("last_notified_price")
                     should_notify = False
 
                     if discount > 0:
-                        if not last_notified:
+                        # Notifica se nunca foi notificado OU se o preço caiu ainda mais desde a última notificação
+                        if last_notified_price is None or info["current_price"] < last_notified_price:
                             should_notify = True
-                        else:
-                            now = utcnow()
-                            if last_notified.tzinfo is None:
-                                last_notified = last_notified.replace(tzinfo=now.tzinfo)
-                            # Se faz mais de 24 horas desde a última notificação
-                            if (now - last_notified).total_seconds() > 86400:
-                                should_notify = True
 
                     if should_notify:
                         guild = client.get_guild(game["guild_id"])
@@ -577,7 +571,7 @@ async def check_tracked_game_deals_periodically(client: discord.Client, db, gg_c
                                     else:
                                         suggester_mention = f"<@{game['suggested_by_id']}> " if game.get("suggested_by_id") and game["suggested_by_id"] > 0 else ""
                                         await channel.send(content=suggester_mention if suggester_mention else None, embed=embed)
-                                    await db.mark_tracked_game_notified(game["id"])
+                                    await db.mark_tracked_game_notified(game["id"], info["current_price"])
                                 except Exception as send_err:
                                     logger.warning(f"Erro ao enviar alerta de promoção para {game['game_name']}: {send_err}")
                     
