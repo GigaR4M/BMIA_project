@@ -3818,17 +3818,22 @@ class Database:
                 key = tuple(sorted(t))
                 team_users = [user_map.get(uid, {"username": f"User {uid}", "user_id": uid}) for uid in t]
                 table[key] = {
-                    "team_ids": t,
+                    "team_ids": t,         # lista de user_ids (usada pelo renderer para avatar e highlight)
                     "members": team_users,
                     "team_name": " & ".join(u.get("username") or f"<@{u.get('user_id')}>" for u in team_users),
                     "played": 0,
-                    "won": 0,
+                    "wins":   0,  # vitórias — chave lida pelo renderer
+                    "draws":  0,  # empates
+                    "losses": 0,  # derrotas
+                    # Aliases internos (retrocompatibilidade)
+                    "won":   0,
                     "drawn": 0,
-                    "lost": 0,
+                    "lost":  0,
                     "goals_for": 0,
                     "goals_against": 0,
-                    "goal_diff": 0,
-                    "points": 0,
+                    "goal_diff":  0,
+                    "score_diff": 0,  # alias de goal_diff (lido pelo renderer)
+                    "points":   0,
                     "win_rate": 0.0
                 }
 
@@ -3852,34 +3857,41 @@ class Database:
 
                     if m.get("is_draw") or sa == sb:
                         if ta_key in table:
-                            table[ta_key]["drawn"] += 1
+                            table[ta_key]["draws"]  += 1
+                            table[ta_key]["drawn"]  += 1  # alias
                             table[ta_key]["points"] += 1
                         if tb_key in table:
-                            table[tb_key]["drawn"] += 1
+                            table[tb_key]["draws"]  += 1
+                            table[tb_key]["drawn"]  += 1
                             table[tb_key]["points"] += 1
                     elif sa > sb:
                         if ta_key in table:
-                            table[ta_key]["won"] += 1
+                            table[ta_key]["wins"]  += 1
+                            table[ta_key]["won"]   += 1  # alias
                             table[ta_key]["points"] += 3
                         if tb_key in table:
-                            table[tb_key]["lost"] += 1
+                            table[tb_key]["losses"] += 1
+                            table[tb_key]["lost"]   += 1  # alias
                     else:
                         if tb_key in table:
-                            table[tb_key]["won"] += 1
+                            table[tb_key]["wins"]  += 1
+                            table[tb_key]["won"]   += 1
                             table[tb_key]["points"] += 3
                         if ta_key in table:
-                            table[ta_key]["lost"] += 1
+                            table[ta_key]["losses"] += 1
+                            table[ta_key]["lost"]   += 1
 
-            # Calcula SG e Aproveitamento
+            # Calcula SG, Aproveitamento e aliases
             standings = list(table.values())
             for s in standings:
-                s["goal_diff"] = s["goals_for"] - s["goals_against"]
+                s["goal_diff"]  = s["goals_for"] - s["goals_against"]
+                s["score_diff"] = s["goal_diff"]  # alias lido pelo renderer
                 max_pts = s["played"] * 3
                 s["win_rate"] = round((s["points"] / max_pts) * 100, 1) if max_pts > 0 else 0.0
 
             # Ordena por Pontos DESC, Vitórias DESC, SG DESC, GP DESC
             standings.sort(
-                key=lambda x: (x["points"], x["won"], x["goal_diff"], x["goals_for"]),
+                key=lambda x: (x["points"], x["wins"], x["goal_diff"], x["goals_for"]),
                 reverse=True
             )
 

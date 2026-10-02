@@ -1604,10 +1604,12 @@ class TournamentCommands(app_commands.Group):
                                 guild=interaction.guild,
                                 tournament=tourney,
                                 standings=standings,
-                                matches=matches
+                                matches=matches,
+                                winner_ids=[m.id for m in winner_team],  # highlight de campeão
                             )
                             final_file = discord.File(fp=img_buf, filename="classificacao_final.png")
                             podium_embed.set_image(url="attachment://classificacao_final.png")
+
                     else:
                         builder = BracketBuilder()
                         img_buf = await builder.generate_bracket(

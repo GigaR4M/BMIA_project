@@ -1505,8 +1505,20 @@ class BracketBuilder:
 
 def _sync_draw_league_table(
     tournament: dict,
-    standings: List[dict]
+    standings: List[dict],
+    avatar_data_map: Optional[Dict[str, bytes]] = None,
+    winner_ids: Optional[List[int]] = None,
 ) -> bytes:
+    """
+    Renderiza a tabela de classificação (Pontos Corridos) em Pillow puro.
+
+    Args:
+        tournament: dicionário do torneio.
+        standings: lista ordenada de classificação — chaves esperadas:
+                   points, wins, draws, losses, goal_diff / score_diff.
+        avatar_data_map: dict {user_id_str: bytes} com dados PNG/JPG do avatar.
+        winner_ids: lista de user_ids do vencedor (para highlight de campeão).
+    """
     img = Image.new("RGBA", (1920, 1080), (6, 9, 18, 255))
     draw = ImageDraw.Draw(img)
 
@@ -1515,10 +1527,12 @@ def _sync_draw_league_table(
     title = str(tournament.get("name", "TABELA DA LIGA")).upper()
     game = str(tournament.get("game_name", "Geral")).upper()
     prize = str(tournament.get("prize") or "Glória e Pontos")
+    is_final = bool(winner_ids)  # Torneio encerrado?
 
     font_title = _get_font(30, bold=True)
     font_sub = _get_font(15, bold=False)
-    draw.text((70, 45), f"⚡ TABELA DE CLASSIFICAÇÃO — {title}", fill=(255, 255, 255, 255), font=font_title)
+    title_suffix = " — 🏆 ENCERRADO" if is_final else ""
+    draw.text((70, 45), f"⚡ TABELA DE CLASSIFICAÇÃO — {title}{title_suffix}", fill=(255, 255, 255, 255), font=font_title)
     draw.text((70, 85), f"JOGO: {game} • PREMIAÇÃO: {prize} • PONTOS CORRIDOS".upper(), fill=(0, 240, 255, 255), font=font_sub)
 
     # Container da Tabela
@@ -1538,6 +1552,9 @@ def _sync_draw_league_table(
     row_h = 58
     font_tr_bold = _get_font(16, bold=True)
     font_tr_regular = _get_font(15, bold=False)
+    avatar_size = row_h - 14  # ~44px
+
+    winner_id_set: set = set(int(x) for x in (winner_ids or []))
 
     for idx, s in enumerate(standings[:12]):
         ry1 = row_y + (idx * row_h)
@@ -1548,25 +1565,81 @@ def _sync_draw_league_table(
         pos = idx + 1
         pos_color = (255, 215, 0, 255) if pos == 1 else ((148, 163, 184, 255) if pos == 2 else ((205, 127, 50, 255) if pos == 3 else (255, 255, 255, 255)))
 
-        draw.rounded_rectangle((rx1, ry1, rx2, ry2), radius=8, fill=(18, 26, 48, 200) if idx % 2 == 0 else (14, 20, 38, 200), outline=(255, 255, 255, 15), width=1)
+        # Verifica se esta equipe é a vencedora
+        team_ids_raw = s.get("team_ids", [])
+        is_champion = is_final and bool(winner_id_set) and bool(set(int(x) for x in team_ids_raw) & winner_id_set)
 
-        # Pos
-        draw.text((140, (ry1 + ry2) // 2), f"#{pos:02d}", fill=pos_color, font=font_tr_bold, anchor="mm")
+        # Fundo da linha — dourado para campeão
+        if is_champion:
+            draw.rounded_rectangle((rx1, ry1, rx2, ry2), radius=8, fill=(40, 32, 8, 230), outline=(255, 215, 0, 200), width=2)
+        else:
+            draw.rounded_rectangle((rx1, ry1, rx2, ry2), radius=8, fill=(18, 26, 48, 200) if idx % 2 == 0 else (14, 20, 38, 200), outline=(255, 255, 255, 15), width=1)
 
-        # Nome
+        row_mid_y = (ry1 + ry2) // 2
+
+        # Pos + troféu para campeão
+        if is_champion:
+            draw.text((140, row_mid_y), "🏆", fill=(255, 215, 0, 255), font=font_tr_bold, anchor="mm")
+        else:
+            draw.text((140, row_mid_y), f"#{pos:02d}", fill=pos_color, font=font_tr_bold, anchor="mm")
+
+        # Avatar circular
+        av_x_left = 195
+        avatar_drawn = False
+        if avatar_data_map:
+            # Tenta primeiro membro da equipe
+            for uid in (s.get("team_ids") or []):
+                av_bytes = avatar_data_map.get(str(uid))
+                if av_bytes:
+                    try:
+                        av_img = Image.open(BytesIO(av_bytes)).convert("RGBA").resize((avatar_size, avatar_size), Image.LANCZOS)
+                        # Máscara circular
+                        mask = Image.new("L", (avatar_size, avatar_size), 0)
+                        ImageDraw.Draw(mask).ellipse((0, 0, avatar_size - 1, avatar_size - 1), fill=255)
+                        av_pos = (av_x_left, row_mid_y - avatar_size // 2)
+                        img.paste(av_img, av_pos, mask)
+                        # Borda circular dourada p/ campeão, branca suave para os demais
+                        border_color = (255, 215, 0, 255) if is_champion else (255, 255, 255, 60)
+                        draw.ellipse(
+                            (av_pos[0] - 2, av_pos[1] - 2, av_pos[0] + avatar_size + 1, av_pos[1] + avatar_size + 1),
+                            outline=border_color, width=2
+                        )
+                        avatar_drawn = True
+                    except Exception:
+                        pass
+                    break
+
+        # Nome — desloca para direita se avatar foi desenhado
+        name_x = av_x_left + avatar_size + 10 if avatar_drawn else 320
         t_name = s.get("team_name") or (" & ".join([m.get("username", "Jogador") for m in s.get("members", [])]) if s.get("members") else "Time")
-        draw.text((320, (ry1 + ry2) // 2), t_name[:24], fill=(255, 255, 255, 255), font=font_tr_bold, anchor="lm")
+        name_color = (255, 215, 0, 255) if is_champion else (255, 255, 255, 255)
+        draw.text((name_x, row_mid_y), t_name[:24], fill=name_color, font=font_tr_bold, anchor="lm")
 
-        # Stats
-        draw.text((1000, (ry1 + ry2) // 2), str(s.get("points", 0)), fill=(255, 215, 0, 255), font=font_tr_bold, anchor="mm")
-        draw.text((1150, (ry1 + ry2) // 2), str(s.get("wins", 0)), fill=(255, 255, 255, 255), font=font_tr_regular, anchor="mm")
-        draw.text((1300, (ry1 + ry2) // 2), str(s.get("draws", 0)), fill=(255, 255, 255, 255), font=font_tr_regular, anchor="mm")
-        draw.text((1450, (ry1 + ry2) // 2), str(s.get("losses", 0)), fill=(255, 255, 255, 255), font=font_tr_regular, anchor="mm")
-        draw.text((1600, (ry1 + ry2) // 2), str(s.get("score_diff", s.get("goal_diff", 0))), fill=(255, 255, 255, 255), font=font_tr_regular, anchor="mm")
+        # Stats — chaves corretas retornadas pelo get_tournament_standings
+        # DB salva: won, drawn, lost → standings retorna: wins, draws, losses
+        wins_val   = s.get("wins",   s.get("won",   0))
+        draws_val  = s.get("draws",  s.get("drawn", 0))
+        losses_val = s.get("losses", s.get("lost",  0))
+        sg_val     = s.get("score_diff", s.get("goal_diff", 0))
+
+        draw.text((1000, row_mid_y), str(s.get("points", 0)), fill=(255, 215, 0, 255), font=font_tr_bold, anchor="mm")
+        draw.text((1150, row_mid_y), str(wins_val),   fill=(100, 255, 130, 255) if wins_val   else (255, 255, 255, 200), font=font_tr_regular, anchor="mm")
+        draw.text((1300, row_mid_y), str(draws_val),  fill=(255, 200, 60,  255) if draws_val  else (255, 255, 255, 200), font=font_tr_regular, anchor="mm")
+        draw.text((1450, row_mid_y), str(losses_val), fill=(255, 90,  90,  255) if losses_val else (255, 255, 255, 200), font=font_tr_regular, anchor="mm")
+        sg_color = (100, 255, 130, 255) if sg_val > 0 else ((255, 90, 90, 255) if sg_val < 0 else (255, 255, 255, 200))
+        draw.text((1600, row_mid_y), (f"+{sg_val}" if sg_val > 0 else str(sg_val)), fill=sg_color, font=font_tr_regular, anchor="mm")
 
         # Status Pill
-        st_lbl = "LÍDER" if pos == 1 else ("G4" if pos <= 4 else "-")
-        draw.text((1750, (ry1 + ry2) // 2), st_lbl, fill=pos_color, font=font_tr_bold, anchor="mm")
+        if is_champion:
+            st_lbl = "CAMPEÃO"
+            st_color = (255, 215, 0, 255)
+        elif pos == 1:
+            st_lbl, st_color = "LÍDER", (255, 215, 0, 255)
+        elif pos <= 4:
+            st_lbl, st_color = "G4", pos_color
+        else:
+            st_lbl, st_color = "-", (148, 163, 184, 255)
+        draw.text((1750, row_mid_y), st_lbl, fill=st_color, font=font_tr_bold, anchor="mm")
 
     buf = BytesIO()
     img.save(buf, format="PNG", optimize=True)
@@ -1577,32 +1650,78 @@ def _sync_draw_league_table(
 class LeagueTableBuilder:
     """Gerador visual de Tabela de Liga / Pontos Corridos em Pillow Puro com Cache."""
 
+    async def _get_avatar_bytes(self, member: Optional[discord.Member], user_data: dict) -> Optional[bytes]:
+        """Busca os bytes do avatar do membro, com cache em memória."""
+        uid = str(getattr(member, "id", None) or user_data.get("user_id") or user_data.get("id"))
+        if uid in _AVATAR_BYTES_CACHE:
+            return _AVATAR_BYTES_CACHE[uid]
+        if member:
+            try:
+                data = await member.display_avatar.with_size(128).read()
+                if len(_AVATAR_BYTES_CACHE) > 300:
+                    _AVATAR_BYTES_CACHE.clear()
+                _AVATAR_BYTES_CACHE[uid] = data
+                return data
+            except Exception:
+                pass
+        return None
+
     async def generate_table(
         self,
         guild: discord.Guild,
         tournament: dict,
         standings: List[dict],
         matches: Optional[List[dict]] = None,
+        winner_ids: Optional[List[int]] = None,
         use_cache: bool = True
     ) -> BytesIO:
+        """
+        Gera a imagem da tabela de classificação.
+
+        Args:
+            winner_ids: lista de user_ids do(s) vencedor(es) para highlight de campeão.
+                        Deve ser passado apenas ao encerrar o torneio.
+        """
         t_id = tournament.get("id", 0)
         state_hash = _get_league_state_hash(tournament, standings, matches)
         prefix = f"table_{t_id}"
 
-        if use_cache:
+        # Cache hit apenas se não for encerramento (winner_ids muda o visual)
+        if use_cache and not winner_ids:
             cached_buf = _read_cached_image(prefix, state_hash)
             if cached_buf is not None:
                 return cached_buf
+
+        # Busca avatares de forma assíncrona (todos em paralelo)
+        avatar_data_map: Dict[str, bytes] = {}
+        all_members: List[dict] = []
+        for s in standings:
+            for uid in (s.get("team_ids") or []):
+                # Monta um user_data mínimo compatível com _get_avatar_bytes
+                all_members.append({"user_id": uid})
+
+        if guild and all_members:
+            tasks = []
+            for ud in all_members:
+                member = guild.get_member(ud["user_id"]) if guild else None
+                tasks.append(self._get_avatar_bytes(member, ud))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for ud, result in zip(all_members, results):
+                if isinstance(result, bytes):
+                    avatar_data_map[str(ud["user_id"])] = result
 
         loop = asyncio.get_running_loop()
         png_bytes = await loop.run_in_executor(
             None,
             _sync_draw_league_table,
             tournament,
-            standings
+            standings,
+            avatar_data_map or None,
+            winner_ids or None,
         )
 
-        _save_cached_image(prefix, state_hash, png_bytes)
+        if not winner_ids:
+            _save_cached_image(prefix, state_hash, png_bytes)
         buffer = BytesIO(png_bytes)
         buffer.seek(0)
         return buffer
