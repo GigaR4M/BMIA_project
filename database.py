@@ -4420,7 +4420,7 @@ class Database:
     async def finish_tournament(
         self,
         tournament_id: int,
-        winner_id: int,
+        winner_id: Optional[int],
         second_place_id: Optional[int] = None,
         third_place_id: Optional[int] = None,
         winner_ids: Optional[List[int]] = None,

@@ -1409,7 +1409,7 @@ class TournamentCommands(app_commands.Group):
     @app_commands.command(name="encerrar", description="Encerra um torneio, define os vencedores e distribui os pontos")
     @app_commands.describe(
         id="ID do torneio a ser encerrado",
-        vencedor="Membro campeão do torneio",
+        vencedor="Membro campeão (opcional: auto-detectado pelo líder da liga ou vencedor da final)",
         segundo_lugar="Membro que ficou em 2º lugar (Vice)",
         terceiro_lugar="Membro que ficou em 3º lugar",
         pontos_vencedor="Pontos adicionais para o campeão (opcional)",
@@ -1421,7 +1421,7 @@ class TournamentCommands(app_commands.Group):
         self,
         interaction: discord.Interaction,
         id: int,
-        vencedor: discord.Member,
+        vencedor: Optional[discord.Member] = None,
         segundo_lugar: Optional[discord.Member] = None,
         terceiro_lugar: Optional[discord.Member] = None,
         pontos_vencedor: int = 0,
@@ -1479,9 +1479,84 @@ class TournamentCommands(app_commands.Group):
                         team_members.append(m)
                 return team_members if team_members else [target_member]
 
+            # ── Auto-deteção de vencedor quando não especificado ────────────────
+            t_type = (tourney.get("tournament_type") or "bracket").lower()
+
+            if vencedor is None:
+                if t_type == "round_robin":
+                    # Usa o 1º colocado das standings como vencedor
+                    auto_standings = await self.db.get_tournament_standings(id)
+                    if not auto_standings:
+                        await interaction.followup.send(
+                            "⚠️ Não há standings disponíveis para este torneio de liga. "
+                            "Registre pelo menos uma partida antes de encerrar, "
+                            "ou especifique o vencedor manualmente."
+                        )
+                        return
+                    leader = auto_standings[0]
+                    leader_team_ids: List[int] = leader.get("team_ids") or []
+                    # Tenta resolver o 1º membro da equipe líder como vencedor visual
+                    for uid in leader_team_ids:
+                        m = interaction.guild.get_member(uid)
+                        if not m:
+                            try:
+                                m = await interaction.guild.fetch_member(uid)
+                            except Exception:
+                                m = None
+                        if m:
+                            vencedor = m
+                            break
+                    # Se não resolveu (ex: bots fictícios) mantém vencedor=None
+                    # e usa winner_ids com os IDs do banco
+                    logger.info(
+                        "[encerrar] Round-robin: vencedor auto-detectado = %s (team_ids=%s)",
+                        vencedor, leader_team_ids
+                    )
+
+                elif t_type in ("bracket", "single_elimination", "double_elimination"):
+                    # Usa o vencedor da partida final do chaveamento
+                    all_matches = await self.db.get_tournament_matches(id)
+                    final_match = next(
+                        (m for m in all_matches if m.get("round_name") == "final" and m.get("status") == "completed"),
+                        None
+                    )
+                    if final_match and final_match.get("winner_team_ids"):
+                        for uid in (final_match["winner_team_ids"] or []):
+                            m = interaction.guild.get_member(uid)
+                            if not m:
+                                try:
+                                    m = await interaction.guild.fetch_member(uid)
+                                except Exception:
+                                    m = None
+                            if m:
+                                vencedor = m
+                                break
+                    if vencedor is None:
+                        await interaction.followup.send(
+                            "⚠️ Não foi possível detectar automaticamente o vencedor. "
+                            "Verifique se a partida final foi registrada com `/torneio partida`, "
+                            "ou especifique o vencedor manualmente."
+                        )
+                        return
+
+                else:
+                    await interaction.followup.send(
+                        "⚠️ Especifique o vencedor manualmente para este formato de torneio."
+                    )
+                    return
+
+            # ── Resolve equipes a partir do vencedor (manual ou auto-detectado) ─
             winner_team = await find_team_members(vencedor)
             runner_up_team = await find_team_members(segundo_lugar) if segundo_lugar else []
             third_place_team = await find_team_members(terceiro_lugar) if terceiro_lugar else []
+
+            # Para round_robin sem membro real resolvido (bots fictícios),
+            # usa os team_ids do líder diretamente como winner_ids
+            auto_winner_ids: Optional[List[int]] = None
+            if t_type == "round_robin" and not winner_team:
+                auto_standings = auto_standings if 'auto_standings' in dir() else await self.db.get_tournament_standings(id)
+                if auto_standings:
+                    auto_winner_ids = auto_standings[0].get("team_ids") or []
 
             # Garante que todos os membros existem no banco
             for member in winner_team + runner_up_team + third_place_team:
@@ -1490,12 +1565,23 @@ class TournamentCommands(app_commands.Group):
                     await self.db.upsert_user(member.id, member.name, member.discriminator, member.bot, avatar_url=m_avatar)
 
             # Finaliza no banco com todos os IDs de cada equipe e placar
+            # winner_ids efetivos: preferencialmente os members resolvidos;
+            # fallback para auto_winner_ids quando são bots fictícios (sem Discord.Member)
+            effective_winner_ids = (
+                [m.id for m in winner_team] if winner_team
+                else (auto_winner_ids or [])
+            )
+            effective_winner_id = (
+                vencedor.id if vencedor
+                else (effective_winner_ids[0] if effective_winner_ids else None)
+            )
+
             await self.db.finish_tournament(
                 tournament_id=id,
-                winner_id=vencedor.id,
+                winner_id=effective_winner_id,
                 second_place_id=segundo_lugar.id if segundo_lugar else None,
                 third_place_id=terceiro_lugar.id if terceiro_lugar else None,
-                winner_ids=[m.id for m in winner_team],
+                winner_ids=effective_winner_ids,
                 second_place_ids=[m.id for m in runner_up_team],
                 third_place_ids=[m.id for m in third_place_team],
                 final_score=placar
@@ -1536,9 +1622,16 @@ class TournamentCommands(app_commands.Group):
                 color=discord.Color.gold()
             )
 
-            winners_mention = " & ".join([m.mention for m in winner_team])
+            # Pódio — se winner_team tiver members reais usa mention, senão usa nome da standings
+            if winner_team:
+                winners_mention = " & ".join([m.mention for m in winner_team])
+                label_1st = "Campeões" if len(winner_team) > 1 else "Campeão"
+            else:
+                # Bots fictícios: exibe o team_name do 1º colocado
+                ldr_name = auto_standings[0]["team_name"] if 'auto_standings' in dir() and auto_standings else "Campeão"
+                winners_mention = f"**{ldr_name}**"
+                label_1st = "Campeão"
             pts_win_str = f" *(+{pontos_vencedor} pts cada)*" if pontos_vencedor > 0 and len(winner_team) > 1 else (f" *(+{pontos_vencedor} pts)*" if pontos_vencedor > 0 else "")
-            label_1st = "Campeões" if len(winner_team) > 1 else "Campeão"
             podium_lines = [
                 f"🥇 **1º Lugar ({label_1st}):** {winners_mention}{pts_win_str}"
             ]
@@ -1562,7 +1655,7 @@ class TournamentCommands(app_commands.Group):
             if tourney.get("prize"):
                 podium_embed.add_field(name="🎁 Premiação Concedida", value=tourney["prize"], inline=False)
 
-            if vencedor.avatar:
+            if vencedor and vencedor.avatar:
                 podium_embed.set_thumbnail(url=vencedor.avatar.url)
             podium_embed.set_footer(text=f"Torneio #{tourney['id']} • Parabéns a todos os participantes!")
 
