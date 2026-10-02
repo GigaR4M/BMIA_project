@@ -9,6 +9,9 @@ import aiohttp
 from typing import Optional, List, Any, Dict, Tuple
 import asyncio
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Cache em memória para bytes brutos de avatares e ícones
 _AVATAR_BYTES_CACHE: Dict[str, bytes] = {}
