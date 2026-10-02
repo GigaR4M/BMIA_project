@@ -1983,21 +1983,13 @@ class HighlightsBuilder:
                     if member:
                         avatar_url = str(member.display_avatar.url)
                 
-                # Se não for usuário (sem uid), tenta puxar a arte do jogo via RAWG
+                # Se não for usuário (sem uid), tenta puxar a arte do jogo
                 if not uid and w.get("activity_name"):
                     try:
-                        import os
-                        from utils.rawg_client import RAWGClient
-                        
-                        rawg_key = os.getenv("RAWG_API_KEY")
-                        if rawg_key:
-                            rawg = RAWGClient(rawg_key)
-                            results = await rawg.search_games(w["activity_name"], page_size=1)
-                            if results and results[0].get("background_image"):
-                                avatar_url = results[0]["background_image"]
-                            await rawg.close()
+                        from utils.igdb_client import GameCoverFetcher
+                        avatar_url = await GameCoverFetcher.fetch_cover_url(w["activity_name"])
                     except Exception as ex:
-                        logger.debug("Erro ao buscar imagem do jogo '%s' no RAWG: %s", w.get("activity_name"), ex)
+                        logger.debug("Erro ao buscar imagem do jogo '%s': %s", w.get("activity_name"), ex)
 
                 avatar_uri = await cls._fetch_avatar_data_uri(avatar_url, uname)
                 top_data.append({
