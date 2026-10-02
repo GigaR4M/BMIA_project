@@ -4549,8 +4549,8 @@ class Database:
         else:
             end_brt = datetime(year, 12, 31, 23, 59, 59, tzinfo=BRT)
             
-        start_utc = start_brt.astimezone(timezone.utc)
-        end_utc = end_brt.astimezone(timezone.utc)
+        start_utc = start_brt.astimezone(timezone.utc).replace(tzinfo=None)
+        end_utc = end_brt.astimezone(timezone.utc).replace(tzinfo=None)
         return start_utc, end_utc
 
     async def increment_emoji_usage(self, guild_id: int, emoji_name: str, is_custom: bool, year: int) -> None:
