@@ -1698,7 +1698,7 @@ class TournamentCommands(app_commands.Group):
                                 tournament=tourney,
                                 standings=standings,
                                 matches=matches,
-                                winner_ids=[m.id for m in winner_team],  # highlight de campeão
+                                winner_ids=effective_winner_ids,  # usa os ids já resolvidos
                             )
                             final_file = discord.File(fp=img_buf, filename="classificacao_final.png")
                             podium_embed.set_image(url="attachment://classificacao_final.png")
@@ -2228,7 +2228,8 @@ class TournamentCommands(app_commands.Group):
                 guild=interaction.guild,
                 tournament=tourney,
                 standings=standings,
-                matches=matches
+                matches=matches,
+                winner_ids=[tourney["winner_id"]] if tourney.get("winner_id") else None
             )
 
             file = discord.File(fp=image_buffer, filename=f"tabela_liga_{id}.png")

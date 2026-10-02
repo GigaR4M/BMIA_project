@@ -1527,7 +1527,7 @@ def _sync_draw_league_table(
     title = str(tournament.get("name", "TABELA DA LIGA")).upper()
     game = str(tournament.get("game_name", "Geral")).upper()
     prize = str(tournament.get("prize") or "Glória e Pontos")
-    is_final = bool(winner_ids)  # Torneio encerrado?
+    is_final = tournament.get("status") in ("completed", "cancelled")
 
     font_title = _get_font(30, bold=True)
     font_sub = _get_font(15, bold=False)
