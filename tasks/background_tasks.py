@@ -531,7 +531,7 @@ async def check_tracked_game_deals_periodically(client: discord.Client, db, gg_c
 
                     if discount > 0:
                         # Notifica se nunca foi notificado OU se o preço caiu ainda mais desde a última notificação
-                        if last_notified_price is None or info["current_price"] < last_notified_price:
+                        if last_notified_price is None or info["current_price"] < float(last_notified_price):
                             should_notify = True
 
                     if should_notify:
