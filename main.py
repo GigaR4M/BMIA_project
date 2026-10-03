@@ -120,15 +120,32 @@ class BMIAClient(discord.Client):
         register_events(self, self.ctx)
 
         import os
+        import aiohttp
         dashboard_url = os.getenv("DASHBOARD_URL") or os.getenv("DASHBOARD_RENDER_URL")
         render_secret = os.getenv("INTERNAL_RENDER_SECRET") or os.getenv("NEXTAUTH_SECRET")
         if dashboard_url:
             if render_secret:
-                logger.info("✅ Vercel Dashboard configurada: %s", dashboard_url)
+                try:
+                    test_url = dashboard_url.rstrip("/")
+                    if not test_url.endswith("/api/render"):
+                        test_url += "/api/render"
+                    
+                    async with aiohttp.ClientSession() as session:
+                        headers = {"Authorization": f"Bearer {render_secret}"}
+                        body = {"type": "ping", "data": {}}
+                        async with session.post(test_url, json=body, headers=headers, timeout=5) as resp:
+                            if resp.status == 401:
+                                logger.error("❌ A chave INTERNAL_RENDER_SECRET está incorreta! A Vercel recusou a conexão (HTTP 401). O bot usará o fallback local.")
+                            elif resp.status in (400, 200):
+                                logger.info("✅ Integração com Vercel Dashboard conectada com sucesso! (%s)", test_url)
+                            else:
+                                logger.warning("⚠️ Vercel respondeu com status inesperado (%d). Renderização remota pode estar instável.", resp.status)
+                except Exception as e:
+                    logger.warning("⚠️ Falha ao tentar conectar com a Vercel: %s. A URL pode estar incorreta ou o painel offline.", e)
             else:
-                logger.warning("DASHBOARD_URL presente, mas INTERNAL_RENDER_SECRET ausente. A Vercel pode falhar.")
+                logger.warning("DASHBOARD_URL presente, mas INTERNAL_RENDER_SECRET ausente. A Vercel pode falhar se a rota for protegida.")
         else:
-            logger.warning("DASHBOARD_URL ausente no .env! O bot renderizara localmente.")
+            logger.warning("DASHBOARD_URL ausente no .env! O bot renderizara localmente (Isso consumirá muita CPU).")
 
         if not DATABASE_URL:
             logger.warning("DATABASE_URL nao configurada. Funcionalidades extras desativadas.")
