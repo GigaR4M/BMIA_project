@@ -117,7 +117,18 @@ class BMIAClient(discord.Client):
     # setup_hook e chamado UMA VEZ antes do gateway (correto para registrar commands e tasks)
     async def setup_hook(self) -> None:
         # Registra event handlers
-        register_events(self, self.ctx)
+        register_events(self, self.ctx)
+
+        import os
+        dashboard_url = os.getenv("DASHBOARD_URL") or os.getenv("DASHBOARD_RENDER_URL")
+        render_secret = os.getenv("INTERNAL_RENDER_SECRET") or os.getenv("NEXTAUTH_SECRET")
+        if dashboard_url:
+            if render_secret:
+                logger.info("✅ Vercel Dashboard configurada: %s", dashboard_url)
+            else:
+                logger.warning("DASHBOARD_URL presente, mas INTERNAL_RENDER_SECRET ausente. A Vercel pode falhar.")
+        else:
+            logger.warning("DASHBOARD_URL ausente no .env! O bot renderizara localmente.")
 
         if not DATABASE_URL:
             logger.warning("DATABASE_URL nao configurada. Funcionalidades extras desativadas.")
