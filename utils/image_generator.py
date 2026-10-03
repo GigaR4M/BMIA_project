@@ -1133,7 +1133,7 @@ class PodiumBuilder:
             if element:
                 screenshot_bytes = await element.screenshot(type="png", omit_background=True)
             else:
-                screenshot_bytes = await page.screenshot(type="png", omit_background=True)
+                screenshot_bytes = await page.screenshot(type="png", omit_background=True, timeout=90000)
             await browser.close()
 
         buffer = BytesIO(screenshot_bytes)
@@ -1938,7 +1938,7 @@ class HighlightsBuilder:
             )
             page = await browser.new_page(viewport={"width": 1300, "height": 850})
             await page.set_content(html, wait_until="load")
-            screenshot_bytes = await page.screenshot(type="png", omit_background=True)
+            screenshot_bytes = await page.screenshot(type="png", omit_background=True, timeout=90000)
             await browser.close()
 
         buffer = BytesIO(screenshot_bytes)
@@ -2322,7 +2322,7 @@ class HighlightsBuilder:
             )
             page = await browser.new_page(viewport={"width": 1300, "height": 850})
             await page.set_content(html, wait_until="load")
-            screenshot_bytes = await page.screenshot(type="png", omit_background=True)
+            screenshot_bytes = await page.screenshot(type="png", omit_background=True, timeout=90000)
             await browser.close()
 
         buffer = BytesIO(screenshot_bytes)
@@ -2830,7 +2830,7 @@ class HighlightsBuilder:
             )
             page = await browser.new_page(viewport={"width": 1300, "height": 850})
             await page.set_content(html, wait_until="load")
-            screenshot_bytes = await page.screenshot(type="png", omit_background=True)
+            screenshot_bytes = await page.screenshot(type="png", omit_background=True, timeout=90000)
             await browser.close()
 
         buffer = BytesIO(screenshot_bytes)
@@ -2855,7 +2855,7 @@ class HighlightsBuilder:
             )
             page = await browser.new_page(viewport={"width": 1300, "height": 850})
             await page.set_content(html, wait_until="load")
-            screenshot_bytes = await page.screenshot(type="png", omit_background=True)
+            screenshot_bytes = await page.screenshot(type="png", omit_background=True, timeout=90000)
             await browser.close()
 
         buffer = BytesIO(screenshot_bytes)
@@ -2968,7 +2968,7 @@ class HighlightsBuilder:
 
             for idx, (cat_id, html) in enumerate(html_results):
                 await page.set_content(html, wait_until="load")
-                screenshot_bytes = await page.screenshot(type="png", omit_background=True)
+                screenshot_bytes = await page.screenshot(type="png", omit_background=True, timeout=90000)
                 buf = BytesIO(screenshot_bytes)
                 buf.seek(0)
                 files.append(discord.File(fp=buf, filename=f"destaques_{idx+1:02d}_{cat_id}.png"))
