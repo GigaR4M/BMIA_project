@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 import discord
 from database import Database
+from utils.highlights_scanner import is_public_channel
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,10 @@ class MediaManager:
             except Exception as e:
                 logger.debug("Erro ao tentar incrementar resposta para mídia %s: %s", parent_id, e)
 
-        # 2. Verifica se a mensagem possui mídia
+        # 2. Verifica se a mensagem possui mídia e está em canal público
+        if not is_public_channel(message.channel):
+            return
+
         media_url = self.extract_media_url(message)
         if not media_url:
             return
@@ -117,7 +121,7 @@ class MediaManager:
             existing = await self.db.get_media_highlight(message_id)
             
             channel = client.get_channel(channel_id)
-            if not channel or not isinstance(channel, discord.TextChannel):
+            if not channel or not isinstance(channel, discord.TextChannel) or not is_public_channel(channel):
                 return
 
             # Se não está no banco mas o canal é dedicado de mídia, busca a mensagem para cadastrá-la
@@ -169,7 +173,7 @@ class MediaManager:
         logger.info("🔄 Iniciando sincronização/backfill de mídias de %d para o servidor '%s'...", year, guild.name)
 
         for ch in guild.text_channels:
-            if not ch.permissions_for(guild.me).read_message_history or not self.is_media_channel(ch.name):
+            if not ch.permissions_for(guild.me).read_message_history or not self.is_media_channel(ch.name) or not is_public_channel(ch):
                 continue
 
             try:

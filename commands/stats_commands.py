@@ -66,10 +66,9 @@ def build_retrospective_conclusion(guild: discord.Guild, year: int, extras: Dict
         gif_text = "O GIF que mais expressou o sentimento da galera"
         if "count" in top_gif and top_gif["count"]:
             gif_text += f" ({top_gif['count']}x no chat)"
-        if "jump_url" in top_gif and top_gif["jump_url"]:
-            gif_text += f" • [🔗 Ver Mensagem]({top_gif['jump_url']})"
-        if "gif_url" in top_gif:
-            gif_text += f"\n[🎬 Abrir GIF Original]({top_gif['gif_url']})"
+        jump_url = top_gif.get("jump_url") or top_gif.get("first_message_url")
+        if jump_url:
+            gif_text += f"\n[🔗 Ver Primeira Mensagem no Discord]({jump_url})"
         embed.add_field(name="🎭 GIF Mais Marcante do Ano", value=gif_text, inline=True)
 
     # 3. Emoji do Ano
@@ -121,6 +120,16 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
         # Envia a mensagem conclusiva com MVP, Print do Ano, GIF e curiosidades
         try:
             extras = await db.get_retrospective_extras(interaction.guild.id, year, is_automatic=False)
+            top_gif = extras.get("top_gif")
+            if top_gif and top_gif.get("gif_url") and not (top_gif.get("jump_url") or top_gif.get("first_message_url")):
+                from utils.highlights_scanner import HighlightsScanner
+                found_jump_url = await HighlightsScanner.find_first_gif_message_url(
+                    interaction.guild, top_gif["gif_url"], year
+                )
+                if found_jump_url:
+                    top_gif["jump_url"] = found_jump_url
+                    top_gif["first_message_url"] = found_jump_url
+                    await db.set_gif_first_message_url(interaction.guild.id, top_gif["gif_url"], year, found_jump_url)
             conclusion_text, conclusion_embed = build_retrospective_conclusion(interaction.guild, year, extras)
             if interaction.channel:
                 await interaction.channel.send(content=conclusion_text, embed=conclusion_embed)

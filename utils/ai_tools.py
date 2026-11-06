@@ -443,6 +443,63 @@ class AIToolkit:
             logger.error(f"Erro ao executar tool get_voice_peak_records: {e}")
             return {"erro": "Falha ao consultar recordes de usuários em voz."}
 
+    async def get_xp_podium(self, mes: Optional[int] = None, ano: Optional[int] = None, limit: int = 10) -> List[Dict[str, Any]]:
+        """Retorna o Pódio / Ranking de XP (pontos de atividade) dos membros mais ativos do servidor em um mês/ano específico ou no ano.
+
+        Args:
+            mes: Número do mês (1 a 12, ex: 10 para Outubro, 9 para Setembro). Opcional.
+            ano: Ano da consulta (ex: 2026). Opcional (padrão: ano atual).
+            limit: Quantidade máxima de membros no ranking (padrão: 10).
+        """
+        try:
+            from datetime import datetime
+            from config import BRT, now_brt
+
+            now = now_brt()
+            y = int(ano) if ano else now.year
+            limit = max(1, min(int(limit), 15))
+
+            if mes is not None:
+                m = max(1, min(int(mes), 12))
+                start_dt = datetime(y, m, 1, 0, 0, 0, tzinfo=BRT)
+                if m == 12:
+                    end_dt = datetime(y + 1, 1, 1, 0, 0, 0, tzinfo=BRT)
+                else:
+                    end_dt = datetime(y, m + 1, 1, 0, 0, 0, tzinfo=BRT)
+            else:
+                start_dt = datetime(y, 1, 1, 0, 0, 0, tzinfo=BRT)
+                end_dt = datetime(y + 1, 1, 1, 0, 0, 0, tzinfo=BRT)
+
+            rows = await self.db.get_top_users_date_range(self.guild_id, start_dt, end_dt, limit=limit)
+            if not rows:
+                return [{"mensagem": "Nenhum registro de pontuação encontrado para o período informado."}]
+
+            guild = None
+            if self.current_message and getattr(self.current_message, "guild", None):
+                guild = self.current_message.guild
+            elif self.client:
+                guild = self.client.get_guild(self.guild_id)
+
+            result = []
+            for idx, r in enumerate(rows):
+                uid = r.get("user_id")
+                uname = r.get("username", "Desconhecido")
+                display = uname
+                if guild and uid:
+                    member = guild.get_member(uid)
+                    if member and member.display_name and member.display_name != uname:
+                        display = f"{member.display_name} ({uname})"
+                result.append({
+                    "posicao": idx + 1,
+                    "usuario": display,
+                    "user_id": uid,
+                    "xp": int(r.get("total_points", 0)),
+                })
+            return result
+        except Exception as e:
+            logger.error(f"Erro ao executar tool get_xp_podium: {e}")
+            return [{"erro": "Falha ao consultar o pódio de XP."}]
+
     def get_tool_callables(self) -> List[Any]:
         """Retorna a lista de métodos que podem ser passados diretamente para o Gemini como tools."""
         return [
@@ -456,4 +513,5 @@ class AIToolkit:
             self.buscar_gif,
             self.reportar_mensagem,
             self.get_voice_peak_records,
+            self.get_xp_podium,
         ]

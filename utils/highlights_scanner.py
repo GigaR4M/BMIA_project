@@ -27,6 +27,37 @@ DEDICATED_MEDIA_CHANNELS = [
 # Canais secundários (gerais) para busca complementar caso necessário
 SECONDARY_CHANNELS = ["geral", "chat", "resenha"]
 
+# Palavras-chave de canais/categorias restritas (administração, moderação, staff, logs)
+RESTRICTED_CHANNEL_KEYWORDS = [
+    "admin", "adm", "modera", "staff", "log", "restrito", "privado", "diretoria", "gerencia", "gerência"
+]
+
+
+def is_public_channel(channel: Any) -> bool:
+    """Verifica se o canal é público para os membros do servidor (não restrito à administração/staff)."""
+    guild = getattr(channel, "guild", None)
+    default_role = getattr(guild, "default_role", None) if guild else None
+    if default_role is not None:
+        try:
+            perms = channel.permissions_for(default_role)
+            if getattr(perms, "view_channel", True) is False:
+                return False
+        except Exception:
+            pass
+
+    ch_name = getattr(channel, "name", "")
+    if not isinstance(ch_name, str):
+        ch_name = ""
+    cat_obj = getattr(channel, "category", None)
+    cat_name = getattr(cat_obj, "name", "") if cat_obj else ""
+    if not isinstance(cat_name, str):
+        cat_name = ""
+    combined = f"{ch_name} {cat_name}".lower()
+    if any(kw in combined for kw in RESTRICTED_CHANNEL_KEYWORDS):
+        return False
+
+    return True
+
 
 class HighlightsScanner:
     """Escaneia canais específicos do servidor para encontrar a mídia mais votada do ano."""
@@ -71,7 +102,7 @@ class HighlightsScanner:
         secondary_channels = []
 
         for ch in guild.text_channels:
-            if not ch.permissions_for(guild.me).read_message_history:
+            if not ch.permissions_for(guild.me).read_message_history or not is_public_channel(ch):
                 continue
 
             norm_ch = re.sub(r'[^a-zA-Z0-9]', '', ch.name).lower()
@@ -87,10 +118,10 @@ class HighlightsScanner:
             if is_secondary and ch not in secondary_channels:
                 secondary_channels.append(ch)
 
-        # Se não encontrou nenhum dos configurados, seleciona o primeiro canal legível
+        # Se não encontrou nenhum dos configurados, seleciona o primeiro canal público legível
         if not dedicated_channels and not secondary_channels:
             for ch in guild.text_channels:
-                if ch.permissions_for(guild.me).read_message_history:
+                if ch.permissions_for(guild.me).read_message_history and is_public_channel(ch):
                     secondary_channels.append(ch)
                     break
 
@@ -210,3 +241,78 @@ class HighlightsScanner:
                 }
 
         return top_item
+
+    @classmethod
+    async def find_first_gif_message_url(
+        cls,
+        guild: discord.Guild,
+        gif_url: str,
+        year: int,
+        timeout: float = 15.0
+    ) -> Optional[str]:
+        """
+        Busca no histórico dos canais de texto a primeira mensagem que enviou o GIF no ano.
+        Usado como fallback quando first_message_url ainda não está salvo no banco.
+        """
+        if not gif_url or not guild:
+            return None
+
+        try:
+            return await asyncio.wait_for(
+                cls._scan_guild_first_gif(guild, gif_url, year),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning("⏱️ Timeout (%ss) ao buscar primeira mensagem do GIF em %s.", timeout, guild.name)
+            return None
+        except Exception as e:
+            logger.warning("Erro ao buscar primeira mensagem do GIF em %s: %s", guild.name, e)
+            return None
+
+    @classmethod
+    async def _scan_guild_first_gif(
+        cls,
+        guild: discord.Guild,
+        gif_url: str,
+        year: int
+    ) -> Optional[str]:
+        start_of_year = datetime(year, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        end_of_year = datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        base_gif_url = gif_url.split("?")[0].lower()
+
+        priority_names = SECONDARY_CHANNELS + DEDICATED_MEDIA_CHANNELS
+        priority_channels = []
+        other_channels = []
+
+        for ch in guild.text_channels:
+            if not ch.permissions_for(guild.me).read_message_history or not is_public_channel(ch):
+                continue
+            norm_ch = re.sub(r'[^a-zA-Z0-9]', '', ch.name).lower()
+            if any(re.sub(r'[^a-zA-Z0-9]', '', name).lower() in norm_ch for name in priority_names):
+                priority_channels.append(ch)
+            else:
+                other_channels.append(ch)
+
+        earliest_msg = None
+
+        for ch in priority_channels + other_channels:
+            try:
+                async for message in ch.history(after=start_of_year, before=end_of_year, limit=1500, oldest_first=True):
+                    if message.author.bot:
+                        continue
+                    matched = False
+                    if message.content and (gif_url.lower() in message.content.lower() or base_gif_url in message.content.lower()):
+                        matched = True
+                    elif message.attachments:
+                        for att in message.attachments:
+                            if att.url.lower() == gif_url.lower() or base_gif_url in att.url.lower():
+                                matched = True
+                                break
+                    if matched:
+                        if earliest_msg is None or message.created_at < earliest_msg.created_at:
+                            earliest_msg = message
+                        break
+            except Exception as e:
+                logger.debug("Falha ao buscar GIF no canal #%s: %s", ch.name, e)
+
+        return earliest_msg.jump_url if earliest_msg else None

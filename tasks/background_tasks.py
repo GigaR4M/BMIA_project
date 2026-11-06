@@ -186,6 +186,16 @@ async def check_monthly_podium(
 
                                 # Envia a mensagem conclusiva especial com MVP, Print do Ano, GIF e curiosidades
                                 extras = await db.get_retrospective_extras(guild.id, retrospective_year, is_automatic=True, start_dt=start_dt, end_dt=end_dt)
+                                top_gif = extras.get("top_gif")
+                                if top_gif and top_gif.get("gif_url") and not (top_gif.get("jump_url") or top_gif.get("first_message_url")):
+                                    from utils.highlights_scanner import HighlightsScanner
+                                    found_jump_url = await HighlightsScanner.find_first_gif_message_url(
+                                        guild, top_gif["gif_url"], retrospective_year
+                                    )
+                                    if found_jump_url:
+                                        top_gif["jump_url"] = found_jump_url
+                                        top_gif["first_message_url"] = found_jump_url
+                                        await db.set_gif_first_message_url(guild.id, top_gif["gif_url"], retrospective_year, found_jump_url)
                                 conclusion_text, conclusion_embed = build_retrospective_conclusion(guild, retrospective_year, extras)
                                 await target_channel.send(content=conclusion_text, embed=conclusion_embed)
 

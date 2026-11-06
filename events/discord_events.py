@@ -70,6 +70,101 @@ def extract_and_clean_gif(text: str, fallback_gif_url: str | None = None) -> tup
     return direct_url, text
 
 
+MONTH_NAME_TO_NUMBER = {
+    "JANEIRO": 1, "FEVEREIRO": 2, "MARÇO": 3, "MARCO": 3, "ABRIL": 4,
+    "MAIO": 5, "JUNHO": 6, "JULHO": 7, "AGOSTO": 8,
+    "SETEMBRO": 9, "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12,
+}
+
+
+async def build_replied_message_context(
+    ref_msg: discord.Message,
+    guild: discord.Guild | None,
+    db: Any,
+) -> str:
+    """
+    Constrói o contexto enriquecido de uma mensagem respondida (reply),
+    incluindo conteúdo de texto, embeds e os resultados da imagem de Pódio Mensal/Anual.
+    """
+    ref_author = getattr(ref_msg.author, "display_name", str(ref_msg.author))
+    ref_text = resolve_mentions_in_text(ref_msg.content or "", guild)
+
+    embed_summaries: List[str] = []
+    if getattr(ref_msg, "embeds", None):
+        for emb in ref_msg.embeds:
+            emb_parts = []
+            if getattr(emb, "title", None):
+                emb_parts.append(f"Título: {emb.title}")
+            if getattr(emb, "description", None):
+                emb_parts.append(f"Descrição: {resolve_mentions_in_text(str(emb.description), guild)}")
+            if getattr(emb, "fields", None):
+                for f in emb.fields:
+                    f_val = resolve_mentions_in_text(str(f.value), guild)
+                    emb_parts.append(f"{f.name}: {f_val}")
+            if emb_parts:
+                embed_summaries.append(" | ".join(emb_parts))
+
+    podium_summary = ""
+    if db and guild and ref_text:
+        try:
+            from config import BRT
+            # 1. Detecta Pódio Mensal: ex. "PÓDIO DE OUTUBRO/2026"
+            m_monthly = re.search(r"P[ÓO]DIO\s+DE\s+([A-ZÇÃÕÁÉÍÓÚ]+)\s*/\s*(\d{4})", ref_text.upper())
+            # 2. Detecta Pódio Anual: ex. "PÓDIO ANUAL DE 2026"
+            m_yearly = re.search(r"P[ÓO]DIO\s+ANUAL\s+DE\s+(\d{4})", ref_text.upper())
+
+            start_dt = None
+            end_dt = None
+            period_label = ""
+
+            if m_monthly:
+                month_str, year_str = m_monthly.group(1), m_monthly.group(2)
+                m_num = MONTH_NAME_TO_NUMBER.get(month_str)
+                y_num = int(year_str)
+                if m_num:
+                    period_label = f"{month_str}/{y_num}"
+                    start_dt = datetime(y_num, m_num, 1, 0, 0, 0, tzinfo=BRT)
+                    if m_num == 12:
+                        end_dt = datetime(y_num + 1, 1, 1, 0, 0, 0, tzinfo=BRT)
+                    else:
+                        end_dt = datetime(y_num, m_num + 1, 1, 0, 0, 0, tzinfo=BRT)
+            elif m_yearly:
+                y_num = int(m_yearly.group(1))
+                period_label = f"ANO {y_num}"
+                start_dt = datetime(y_num, 1, 1, 0, 0, 0, tzinfo=BRT)
+                end_dt = datetime(y_num + 1, 1, 1, 0, 0, 0, tzinfo=BRT)
+
+            if start_dt and end_dt:
+                top_users = await db.get_top_users_date_range(guild.id, start_dt, end_dt, limit=10)
+                if top_users:
+                    ranking_items = []
+                    for idx, u in enumerate(top_users):
+                        uid = u.get("user_id")
+                        uname = u.get("username", "Desconhecido")
+                        pts = int(u.get("total_points", 0))
+                        member = guild.get_member(uid) if uid else None
+                        if member and member.display_name and member.display_name != uname:
+                            label = f"{member.display_name} ({uname})"
+                        else:
+                            label = uname
+                        ranking_items.append(f"#{idx + 1} {label}: {pts:,} XP")
+                    podium_summary = f" [Resultados exibidos na imagem do Pódio ({period_label}): {'; '.join(ranking_items)}]"
+        except Exception as pod_err:
+            logger.debug("Não foi possível enriquecer contexto do pódio: %s", pod_err)
+
+    base_parts = []
+    if ref_text:
+        base_parts.append(f"'{ref_text}'")
+    if embed_summaries:
+        base_parts.append(f"[Embeds: {' || '.join(embed_summaries)}]")
+    if podium_summary:
+        base_parts.append(podium_summary.strip())
+
+    if not base_parts:
+        return ""
+    return f"[Respondendo à mensagem de {ref_author}: {' '.join(base_parts)}]\n"
+
+
 def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type: ignore[name-defined]
     """
     Registra todos os event handlers no client.
@@ -240,10 +335,10 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                                 ref_msg = message.reference.resolved
                                 if not ref_msg or not isinstance(ref_msg, discord.Message):
                                     ref_msg = await message.channel.fetch_message(message.reference.message_id)
-                                if ref_msg and ref_msg.content:
-                                    ref_author = getattr(ref_msg.author, "display_name", str(ref_msg.author))
-                                    ref_text = resolve_mentions_in_text(ref_msg.content, message.guild)
-                                    reply_context = f"[Respondendo à mensagem de {ref_author}: '{ref_text}']\n"
+                                if ref_msg:
+                                    reply_context = await build_replied_message_context(
+                                        ref_msg, message.guild, ctx.db
+                                    )
                             except Exception as ref_err:
                                 logger.debug("Não foi possível obter mensagem de referência: %s", ref_err)
 
@@ -455,7 +550,9 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                 if g_match:
                     gif_found = g_match.group(0)
             if gif_found:
-                asyncio.create_task(ctx.db.increment_gif_usage(message.guild.id, gif_found, now_brt().year, message.jump_url))
+                from utils.highlights_scanner import is_public_channel
+                public_jump_url = message.jump_url if is_public_channel(message.channel) else None
+                asyncio.create_task(ctx.db.increment_gif_usage(message.guild.id, gif_found, now_brt().year, public_jump_url))
 
     # ── Reações ────────────────────────────────────────────────────────────────
     @client.event

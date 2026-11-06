@@ -2126,6 +2126,11 @@ class Database:
 
     async def get_top_users_date_range(self, guild_id: int, start_date: datetime, end_date: datetime, limit: int = 3) -> List[Dict[str, Any]]:
         """Retorna os top usuários por pontos num intervalo de datas."""
+        if getattr(start_date, "tzinfo", None) is not None:
+            start_date = start_date.astimezone(timezone.utc).replace(tzinfo=None)
+        if getattr(end_date, "tzinfo", None) is not None:
+            end_date = end_date.astimezone(timezone.utc).replace(tzinfo=None)
+
         async with self.pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT 
@@ -3336,7 +3341,7 @@ class Database:
                     FROM bot_memories
                     WHERE guild_id = $2 
                       AND (user_id = $3 OR user_id IS NULL)
-                    ORDER BY embedding <=> $1
+                    ORDER BY (embedding <=> $1) ASC NULLS LAST, created_at DESC
                     LIMIT $4
                 """, emb_str, guild_id, user_id, limit)
                 return [dict(row) for row in rows]
@@ -4577,8 +4582,9 @@ class Database:
                     INSERT INTO gif_usage_stats (guild_id, gif_url, count, year, first_message_url)
                     VALUES ($1, $2, 1, $3, $4)
                     ON CONFLICT (guild_id, gif_url, year)
-                    DO UPDATE SET count = gif_usage_stats.count + 1
-                    -- Não sobrescreve first_message_url, para manter o link da PRIMEIRA mensagem
+                    DO UPDATE SET
+                        count = gif_usage_stats.count + 1,
+                        first_message_url = COALESCE(gif_usage_stats.first_message_url, EXCLUDED.first_message_url)
                 """, guild_id, gif_url, year, jump_url)
             else:
                 await conn.execute("""
@@ -4587,6 +4593,17 @@ class Database:
                     ON CONFLICT (guild_id, gif_url, year)
                     DO UPDATE SET count = gif_usage_stats.count + 1
                 """, guild_id, gif_url, year)
+
+    async def set_gif_first_message_url(self, guild_id: int, gif_url: str, year: int, first_message_url: str) -> None:
+        """Define o link da primeira mensagem de um GIF caso ainda não esteja preenchido."""
+        if not first_message_url:
+            return
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE gif_usage_stats
+                SET first_message_url = COALESCE(first_message_url, $4)
+                WHERE guild_id = $1 AND gif_url = $2 AND year = $3
+            """, guild_id, gif_url, year, first_message_url)
 
     async def get_annual_highlights_data(
         self,
@@ -5019,6 +5036,24 @@ class Database:
                     extras["top_gif"] = dict(gif_row)
                     if extras["top_gif"].get("first_message_url"):
                         extras["top_gif"]["jump_url"] = extras["top_gif"]["first_message_url"]
+                    else:
+                        # Tenta buscar a primeira mensagem correspondente em media_highlights
+                        mh_gif = await conn.fetchrow("""
+                            SELECT jump_url FROM media_highlights
+                            WHERE guild_id = $1
+                              AND (media_url = $2 OR content ILIKE '%' || $2 || '%')
+                              AND jump_url IS NOT NULL
+                            ORDER BY created_at ASC
+                            LIMIT 1
+                        """, guild_id, extras["top_gif"]["gif_url"])
+                        if mh_gif and mh_gif["jump_url"]:
+                            extras["top_gif"]["jump_url"] = mh_gif["jump_url"]
+                            extras["top_gif"]["first_message_url"] = mh_gif["jump_url"]
+                            await conn.execute("""
+                                UPDATE gif_usage_stats
+                                SET first_message_url = COALESCE(first_message_url, $4)
+                                WHERE guild_id = $1 AND gif_url = $2 AND year = $3
+                            """, guild_id, extras["top_gif"]["gif_url"], year, mh_gif["jump_url"])
                 else:
                     # Fallback: buscar gif em media_highlights
                     fb_gif = await conn.fetchrow("""

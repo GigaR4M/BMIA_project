@@ -110,7 +110,8 @@ class MemoryManager:
         if relevant_memories:
             context_parts.append(f"\nMemórias Relevantes (Fatos/Decisões Passadas):")
             for mem in relevant_memories:
-                similarity = f" ({mem.get('similarity', 0):.2f})" if 'similarity' in mem else ""
+                sim_val = mem.get('similarity')
+                similarity = f" ({sim_val:.2f})" if sim_val is not None else ""
                 context_parts.append(f"- {mem['content']}{similarity}")
 
         return "\n".join(context_parts)

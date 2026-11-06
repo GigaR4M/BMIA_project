@@ -228,7 +228,11 @@ def test_build_retrospective_conclusion():
             "jump_url": "https://discord.com/channels/1/2/3",
             "media_url": "https://cdn.discordapp.com/lol.png"
         },
-        "top_gif": {"gif_url": "https://tenor.com/view/robot-dance.gif", "count": 14},
+        "top_gif": {
+            "gif_url": "https://tenor.com/view/robot-dance.gif",
+            "count": 14,
+            "jump_url": "https://discord.com/channels/1/2/999"
+        },
         "top_emoji": {"emoji_name": "🎉", "count": 87},
         "most_active_day": {"formatted_date": "15/07/2026", "total_messages": 450, "total_voice_minutes": 1200}
     }
@@ -240,6 +244,66 @@ def test_build_retrospective_conclusion():
     assert "15,420" in content
     assert embed is not None
     assert any("Print / Clipe do Ano" in f.name for f in embed.fields)
-    assert any("GIF Mais Marcante do Ano" in f.name for f in embed.fields)
+    gif_fields = [f for f in embed.fields if "GIF Mais Marcante do Ano" in f.name]
+    assert len(gif_fields) == 1
+    assert "https://discord.com/channels/1/2/999" in gif_fields[0].value
+    assert "Abrir GIF Original" not in gif_fields[0].value
+    assert "https://tenor.com/view/robot-dance.gif" not in gif_fields[0].value
     assert any("Emoji do Ano" in f.name for f in embed.fields)
     assert any("O Dia Mais Caótico do Ano" in f.name for f in embed.fields)
+
+
+def test_is_public_channel_filters_restricted():
+    from utils.highlights_scanner import is_public_channel
+
+    pub_ch = MagicMock(spec=discord.TextChannel)
+    pub_ch.name = "chat-principal"
+    pub_ch.category = None
+    pub_ch.guild.default_role = MagicMock()
+    pub_perms = MagicMock()
+    pub_perms.view_channel = True
+    pub_ch.permissions_for.return_value = pub_perms
+    assert is_public_channel(pub_ch) is True
+
+    admin_ch = MagicMock(spec=discord.TextChannel)
+    admin_ch.name = "⚠-administração-⚠"
+    admin_ch.category = None
+    admin_ch.guild.default_role = MagicMock()
+    admin_ch.permissions_for.return_value = pub_perms
+    assert is_public_channel(admin_ch) is False
+
+    priv_ch = MagicMock(spec=discord.TextChannel)
+    priv_ch.name = "geral-vip"
+    priv_ch.category = None
+    priv_ch.guild.default_role = MagicMock()
+    priv_perms = MagicMock()
+    priv_perms.view_channel = False
+    priv_ch.permissions_for.return_value = priv_perms
+    assert is_public_channel(priv_ch) is False
+
+
+@pytest.mark.asyncio
+async def test_build_replied_message_context_podium():
+    from events.discord_events import build_replied_message_context
+
+    fake_guild = MagicMock(spec=discord.Guild)
+    fake_guild.id = 1327836427915886643
+    fake_member = MagicMock()
+    fake_member.display_name = "Gato"
+    fake_guild.get_member.side_effect = lambda uid: fake_member if uid == 758794270856445973 else None
+
+    fake_db = MagicMock()
+    fake_db.get_top_users_date_range = AsyncMock(return_value=[
+        {"user_id": 758794270856445973, "username": "kaick175", "total_points": 47583},
+        {"user_id": 835177087820103690, "username": "brayan_020.", "total_points": 29296},
+    ])
+
+    ref_msg = MagicMock(spec=discord.Message)
+    ref_msg.author.display_name = "BMIA"
+    ref_msg.content = "**🏆 PÓDIO DE OUTUBRO/2026 🏆**\nParabéns aos membros mais ativos e dedicados do mês! 🎉⚡"
+    ref_msg.embeds = []
+
+    ctx_str = await build_replied_message_context(ref_msg, fake_guild, fake_db)
+    assert "OUTUBRO/2026" in ctx_str
+    assert "#1 Gato (kaick175): 47,583 XP" in ctx_str
+    assert "#2 brayan_020.: 29,296 XP" in ctx_str
