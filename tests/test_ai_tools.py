@@ -120,7 +120,7 @@ class TestAIToolkit:
 
     def test_get_tool_callables(self, toolkit):
         callables = toolkit.get_tool_callables()
-        assert len(callables) == 10
+        assert len(callables) == 11
         names = [c.__name__ for c in callables]
         assert "get_top_games" in names
         assert "get_game_leaderboard" in names
@@ -130,6 +130,7 @@ class TestAIToolkit:
         assert "buscar_gif" in names
         assert "reportar_mensagem" in names
         assert "get_voice_peak_records" in names
+        assert "get_xp_podium" in names
 
 
 class TestChatHandlerWithTools:
@@ -187,6 +188,58 @@ class TestChatHandlerWithTools:
                 toolkit=toolkit
             )
             assert "Pedrinho é o top 1 de Roblox" in res
+
+    @pytest.mark.asyncio
+    async def test_generate_response_handles_empty_part_value_error_and_gif_shortcircuit(self, toolkit, mock_db):
+        handler = ChatHandler(api_key="test-key", model_name="gemini-2.5-flash")
+        mock_db.get_top_users_date_range = AsyncMock(return_value=[
+            {"user_id": 758794270856445973, "username": "GigaR4M", "total_points": 376229}
+        ])
+        mock_gif = MagicMock()
+        mock_gif.search_gif_url = AsyncMock(return_value="https://media.giphy.com/media/123/giphy.gif")
+        toolkit.gif_client = mock_gif
+
+        with patch("google.generativeai.GenerativeModel") as MockModel:
+            mock_model_instance = MagicMock()
+            mock_chat = MagicMock()
+
+            # 1º turno: chama get_xp_podium (response.text levanta ValueError real do SDK)
+            part_fn1 = MagicMock()
+            part_fn1.text = ""
+            part_fn1.function_call.name = "get_xp_podium"
+            part_fn1.function_call.args = {"limit": 1}
+            cand1 = MagicMock()
+            cand1.content.parts = [part_fn1]
+            resp1 = MagicMock()
+            resp1.candidates = [cand1]
+            type(resp1).text = property(lambda self: (_ for _ in ()).throw(ValueError("No valid Part")))
+
+            # 2º turno: devolve texto + chama buscar_gif
+            part_text2 = MagicMock()
+            part_text2.text = "Quem tá em primeiro em XP é o GigaR4M com 376.229 XP!"
+            part_text2.function_call = None
+            part_fn2 = MagicMock()
+            part_fn2.text = ""
+            part_fn2.function_call.name = "buscar_gif"
+            part_fn2.function_call.args = {"tema": "robot cool thumbs up"}
+            cand2 = MagicMock()
+            cand2.content.parts = [part_text2, part_fn2]
+            resp2 = MagicMock()
+            resp2.candidates = [cand2]
+            type(resp2).text = property(lambda self: (_ for _ in ()).throw(ValueError("Multiple parts")))
+
+            mock_chat.send_message_async = AsyncMock(side_effect=[resp1, resp2])
+            mock_model_instance.start_chat.return_value = mock_chat
+            MockModel.return_value = mock_model_instance
+
+            res = await handler.generate_response(
+                "quem ta em primeiro em xp ate agora?",
+                toolkit=toolkit
+            )
+            assert "GigaR4M com 376.229 XP" in res
+            assert toolkit.last_gif_url == "https://media.giphy.com/media/123/giphy.gif"
+            # Garante que fez short-circuit após buscar_gif quando já havia texto (apenas 2 chamadas ao Gemini, não 3)
+            assert mock_chat.send_message_async.await_count == 2
 
     def test_format_history_identifies_authors(self):
         handler = ChatHandler(api_key="test-key")

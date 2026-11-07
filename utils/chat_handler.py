@@ -1,9 +1,11 @@
 import os
+import asyncio
 import logging
 import google.generativeai as genai
 from google.api_core.exceptions import ResourceExhausted
 
 logger = logging.getLogger(__name__)
+
 
 class ChatHandler:
     def __init__(self, api_key, model_name="gemini-2.5-flash"):
@@ -18,78 +20,37 @@ class ChatHandler:
             return
 
         try:
-            # Note: genai.configure is global. If main.py already configured it, 
-            # this might overwrite it if the keys are different.
-            # To support multiple keys safely, we might need to use client instantiation if available 
-            # or rely on the fact that we might be switching keys?
-            # actually, genai library creates a client. 
-            # If we want to use a specific key for this model instance without messing global config,
-            # we might need to look at how the library handles it. 
-            # But standard usage is genai.configure.
-            # If the user provides a dedicated key, we might need to re-configure or accept that 
-            # we are switching "contexts". 
-            # However, simpler approach for now: Use the key provided to this handler via a client if possible,
-            # Or just re-configure if strictly necessary, but that influences other threads.
-            # 
-            # WAIT: checking docs, google.generativeai.GenerativeModel doesn't take api_key in init.
-            # It relies on global configure.
-            # If we strictly need a separate key, we should surely verify if the library supports client instances.
-            # It seems `genai.configure` is indeed global.
-            # 
-            # WORKAROUND: If we want to use a separate key, we can try passing `client_options` or similar?
-            # Actually, `genai` has `Client` object in newer versions?
-            # Let's stick to the simplest approach first: 
-            # If the specific key is different from the main one, we might risk race conditions if we reconfigure.
-            # 
-            # But the proposal said "Dedicated API key".
-            # If `google.generativeai` allows passing `api_key` to `generate_content` or model construction?
-            # No, it seems it doesn't easily support multiple keys in the same process with the high-level `genai` module.
-            # 
-            # CORRECTIVE ACTION: I will assume that for now we might share the key or 
-            # if we really need a separate one, we have to look for a Client class.
-            # 
-            # Let's inspect if `lib` is recent enough to have `genai.Client`.
-            # For now, I will write it assuming `genai.configure` but adding a TODO or verify if we can pass it.
-            # Actually, looking at recent docs, `genai.configure(api_key=...)` is the way.
-            # If we change it, it changes globally.
-            # 
-            # IF the user wants a separate key for cost management, it implies they might accept that
-            # we switch the global key just before the call? That's unsafe in async.
-            # 
-            # Alternative: Use HTTP REST API for this specific feature if we need a different key safely.
-            # OR, just assume for now we use the main key if we can't easily isolate.
-            # 
-            # Let's try to assume we can use the same key for now OR checking if `genai.Client(api_key=...)` exists.
-            # I will check existence of Client by trying to import it or just stick to `genai.GenerativeModel`.
-            # 
-            # BUT, the `main.py` uses `genai.configure(api_key=GEMINI_API_KEY)`.
-            # If `GEMINI_CHAT_API_KEY` is provided, we probably want to prioritize it for chat.
-            # 
-            # Let's implement using the standard model init. I'll add logic to "configure" locally if needed
-            # but usually it's better to just use one key for the bot process unless there's a strict requirement.
-            # The requirement SAYS "Dedicated Configuration ... distinct from main ...".
-            # 
-            # I will just default to whatever is configured globally for now in `__init__` if I cannot isolate it,
-            # checking if `api_key` argument to `GenerativeModel` exists? No.
-            # 
-            # Let's use `genai.configure` safely? No.
-            # 
-            # DECISION: I will implement using the global configuration for now, but strictly asserting that
-            # we use the *model name* specified. 
-            # If the user REALLY needs a separate key effectively, they might need a library update or use REST.
-            # I will assume the user has set the global key to one that works for both OR 
-            # I will try to support `api_key` if I can find a way.
-            # 
-            # Actually, let's look at `google.generativeai` imports.
-            # `configure` accepts `api_key`.
-            # 
-            # I will proceed with creating the class and assume global config is managed in main or 
-            # IF I am given a key, I will re-configure.
             pass
         except Exception as e:
             logger.error(f"Error configuring ChatHandler: {e}")
 
         self.model = genai.GenerativeModel(self.model_name)
+
+    @staticmethod
+    def _extract_text_parts(response) -> str:
+        """Extrai com segurança todos os blocos de texto de um response do Gemini sem disparar ValueError."""
+        if not response:
+            return ""
+        try:
+            if getattr(response, "candidates", None):
+                candidate = response.candidates[0]
+                if getattr(candidate, "content", None) and getattr(candidate.content, "parts", None):
+                    text_parts = [
+                        p.text
+                        for p in candidate.content.parts
+                        if isinstance(getattr(p, "text", None), str) and p.text.strip()
+                    ]
+                    if text_parts:
+                        return "".join(text_parts).strip()
+        except Exception:
+            pass
+
+        try:
+            if isinstance(getattr(response, "text", None), str) and response.text.strip():
+                return response.text.strip()
+        except Exception:
+            pass
+        return ""
 
     async def generate_response(self, prompt, history=[], system_instruction=None, toolkit=None):
         """
@@ -98,6 +59,7 @@ class ChatHandler:
         system_instruction: Optional string to define the bot's persona/behavior for this turn.
         toolkit: Optional AIToolkit instance providing tools for function calling.
         """
+        collected_texts = []
         try:
             tools = toolkit.get_tool_callables() if toolkit else None
 
@@ -109,17 +71,21 @@ class ChatHandler:
 
             model = genai.GenerativeModel(self.model_name, **model_kwargs)
             chat = model.start_chat(history=history, enable_automatic_function_calling=False)
-            response = await chat.send_message_async(prompt)
+            response = await asyncio.wait_for(chat.send_message_async(prompt), timeout=45.0)
+
+            initial_text = self._extract_text_parts(response)
+            if initial_text:
+                collected_texts.append(initial_text)
 
             # Loop para resolver chamadas de ferramentas (Function Calling)
             max_turns = 3
             turns = 0
             while turns < max_turns:
                 function_calls = []
-                if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                if getattr(response, "candidates", None) and response.candidates[0].content and response.candidates[0].content.parts:
                     for part in response.candidates[0].content.parts:
                         fn_call = getattr(part, "function_call", None)
-                        if fn_call and fn_call.name:
+                        if fn_call and getattr(fn_call, "name", None):
                             function_calls.append(fn_call)
 
                 if not function_calls:
@@ -151,23 +117,47 @@ class ChatHandler:
                         )
                     )
 
-                response = await chat.send_message_async(
-                    genai.protos.Content(parts=response_parts)
-                )
+                # Se a única tool chamada neste turno foi 'buscar_gif' e o modelo já gerou o texto da resposta,
+                # encerramos o loop sem enviar um novo turno ao Gemini (evita espera extra e finish_reason=1 vazio).
+                only_gif_tool = all(fc.name == "buscar_gif" for fc in function_calls)
+                if only_gif_tool and collected_texts:
+                    break
 
-            if response.text:
-                return response.text
-            elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-                text_parts = [p.text for p in response.candidates[0].content.parts if getattr(p, "text", None)]
-                if text_parts:
-                    return "".join(text_parts)
+                response = await asyncio.wait_for(
+                    chat.send_message_async(genai.protos.Content(parts=response_parts)),
+                    timeout=45.0,
+                )
+                turn_text = self._extract_text_parts(response)
+                if turn_text:
+                    collected_texts.append(turn_text)
+
+            if collected_texts:
+                return "\n".join(collected_texts).strip()
+
+            final_text = self._extract_text_parts(response)
+            if final_text:
+                return final_text
+
+            # Se não veio texto mas um GIF foi selecionado pela tool buscar_gif, retorna vazio para enviar apenas o GIF
+            if toolkit and getattr(toolkit, "last_gif_url", None):
+                return ""
+
             return "Não consegui formular uma resposta no momento."
 
+        except asyncio.TimeoutError:
+            logger.warning("ChatHandler: Timeout aguardando resposta do Gemini.")
+            if collected_texts:
+                return "\n".join(collected_texts).strip()
+            return "Demorei muito pensando na resposta (a API de IA está lenta no momento). Tente novamente em instantes!"
         except ResourceExhausted:
             logger.warning("ChatHandler: Quota exceeded.")
+            if collected_texts:
+                return "\n".join(collected_texts).strip()
             return "Estou um pouco sobrecarregado agora (limite de requisições excedido). Tente novamente em instantes!"
         except Exception as e:
             logger.error(f"ChatHandler Error: {e}")
+            if collected_texts:
+                return "\n".join(collected_texts).strip()
             return "Desculpe, ocorreu um erro ao processar sua mensagem."
 
     def format_history(self, discord_messages, bot_user):
