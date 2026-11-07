@@ -49,17 +49,42 @@ def build_retrospective_conclusion(guild: discord.Guild, year: int, extras: Dict
 
     # 1. Print / Clipe do Ano
     if top_media:
-        jump_link = f"[🔗 Ver Mensagem Original no Discord]({top_media['jump_url']})" if top_media.get("jump_url") else ""
-        media_desc = (
-            f"👤 **Autor:** {top_media.get('username', 'Desconhecido')}\n"
-            f"📊 **Reações:** {top_media.get('reaction_summary', '🔥')}\n"
-            f"{jump_link}"
+        jump_url = top_media.get("jump_url")
+        if not jump_url and top_media.get("channel_id") and top_media.get("message_id") and getattr(guild, "id", None):
+            jump_url = f"https://discord.com/channels/{guild.id}/{top_media['channel_id']}/{top_media['message_id']}"
+
+        jump_link = f"[🔗 Ver Mensagem Vencedora no Discord]({jump_url})" if jump_url else ""
+        media_url = top_media.get("media_url", "")
+        lower_media = media_url.lower()
+        is_video_or_clip = any(
+            k in lower_media
+            for k in [".mp4", ".mov", ".webm", "twitch.tv", "medal.tv", "youtube.com", "youtu.be", "streamable.com"]
         )
+        if is_video_or_clip and media_url:
+            clip_link = f"[🎬 Assistir Clipe / Mídia]({media_url})"
+            jump_link = f"{jump_link} • {clip_link}" if jump_link else clip_link
+
+        author_uid = top_media.get("user_id")
+        author_name = top_media.get("username", "Desconhecido")
+        author_str = f"<@{author_uid}> (`{author_name}`)" if author_uid else author_name
+
+        reaction_str = top_media.get("reaction_summary") or f"🔥 {top_media.get('reaction_count', 0)}"
+        reply_cnt = top_media.get("reply_count", 0)
+        if reply_cnt and reply_cnt > 0:
+            reaction_str += f" • 💬 {reply_cnt} resposta(s)"
+
+        media_desc = (
+            f"👤 **Autor:** {author_str}\n"
+            f"📊 **Engajamento:** {reaction_str}\n"
+            f"{jump_link}"
+        ).strip()
         if top_media.get("content"):
-            media_desc = f"💬 *\"{top_media['content']}\"*\n" + media_desc
-        embed.add_field(name="📸 Print / Clipe do Ano", value=media_desc, inline=False)
-        if top_media.get("media_url"):
-            embed.set_image(url=top_media["media_url"])
+            clean_content = str(top_media["content"]).strip()
+            if clean_content and clean_content != media_url:
+                media_desc = f"💬 *\"{clean_content}\"*\n" + media_desc
+        embed.add_field(name="📸 Mídia • Print / Clipe do Ano", value=media_desc, inline=False)
+        if media_url:
+            embed.set_image(url=media_url)
 
     # 2. GIF do Ano
     if top_gif:
@@ -86,6 +111,72 @@ def build_retrospective_conclusion(guild: discord.Guild, year: int, extras: Dict
 
     embed.set_footer(text=f"Retrospectiva Oficial {year} • {guild.name}")
     return content, embed
+
+
+async def enrich_retrospective_extras(
+    db: Database,
+    guild: discord.Guild,
+    year: int,
+    extras: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Garante que os extras da retrospectiva (tanto via comando quanto agendada)
+    tenham a Mídia (Print/Clipe) do Ano com link da mensagem vencedora e o link do GIF do Ano,
+    escaneando os canais públicos caso ainda não estejam indexados no banco.
+    """
+    from utils.highlights_scanner import HighlightsScanner
+
+    # 1. Garante Mídia (Print / Clipe) do Ano com jump_url da mensagem vencedora
+    top_media = extras.get("top_media")
+    if not top_media or top_media.get("popularity_score", 0) <= 0:
+        try:
+            scanned_media = await HighlightsScanner.scan_guild_top_clip(guild, year, timeout=25.0)
+            if scanned_media and (
+                not top_media
+                or scanned_media.get("popularity_score", 0) >= top_media.get("popularity_score", 0)
+            ):
+                extras["top_media"] = scanned_media
+                top_media = scanned_media
+                try:
+                    await db.upsert_media_highlight(
+                        message_id=scanned_media["message_id"],
+                        guild_id=guild.id,
+                        channel_id=scanned_media.get("channel_id", 0),
+                        channel_name=scanned_media.get("channel_name", ""),
+                        user_id=scanned_media["user_id"],
+                        username=scanned_media.get("username", "Desconhecido"),
+                        avatar_url=scanned_media.get("avatar_url"),
+                        media_url=scanned_media["media_url"],
+                        content=scanned_media.get("content", ""),
+                        reaction_count=scanned_media.get("reaction_count", 0),
+                        reactions_json=scanned_media.get("reactions_json", {}),
+                        reply_count=scanned_media.get("reply_count", 0),
+                        jump_url=scanned_media.get("jump_url"),
+                        created_at=scanned_media.get("created_at_dt"),
+                    )
+                except Exception as db_err:
+                    logger.debug("Não foi possível persistir top_media escaneada: %s", db_err)
+        except Exception as scan_err:
+            logger.warning("Erro ao escanear top_media para %s: %s", guild.name, scan_err)
+
+    if top_media and not top_media.get("jump_url") and top_media.get("channel_id") and top_media.get("message_id"):
+        top_media["jump_url"] = f"https://discord.com/channels/{guild.id}/{top_media['channel_id']}/{top_media['message_id']}"
+
+    # 2. Garante link da primeira mensagem do GIF do Ano
+    top_gif = extras.get("top_gif")
+    if top_gif and top_gif.get("gif_url") and not (top_gif.get("jump_url") or top_gif.get("first_message_url")):
+        try:
+            found_jump_url = await HighlightsScanner.find_first_gif_message_url(
+                guild, top_gif["gif_url"], year
+            )
+            if found_jump_url:
+                top_gif["jump_url"] = found_jump_url
+                top_gif["first_message_url"] = found_jump_url
+                await db.set_gif_first_message_url(guild.id, top_gif["gif_url"], year, found_jump_url)
+        except Exception as gif_err:
+            logger.debug("Erro ao buscar jump_url do top_gif: %s", gif_err)
+
+    return extras
 
 
 async def handle_highlights_gallery(db: Database, interaction: discord.Interaction, year: Optional[int] = None):
@@ -117,19 +208,10 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
             files=files
         )
 
-        # Envia a mensagem conclusiva com MVP, Print do Ano, GIF e curiosidades
+        # Envia a mensagem conclusiva com MVP, Mídia (Print/Clipe) do Ano, GIF e curiosidades
         try:
             extras = await db.get_retrospective_extras(interaction.guild.id, year, is_automatic=False)
-            top_gif = extras.get("top_gif")
-            if top_gif and top_gif.get("gif_url") and not (top_gif.get("jump_url") or top_gif.get("first_message_url")):
-                from utils.highlights_scanner import HighlightsScanner
-                found_jump_url = await HighlightsScanner.find_first_gif_message_url(
-                    interaction.guild, top_gif["gif_url"], year
-                )
-                if found_jump_url:
-                    top_gif["jump_url"] = found_jump_url
-                    top_gif["first_message_url"] = found_jump_url
-                    await db.set_gif_first_message_url(interaction.guild.id, top_gif["gif_url"], year, found_jump_url)
+            extras = await enrich_retrospective_extras(db, interaction.guild, year, extras)
             conclusion_text, conclusion_embed = build_retrospective_conclusion(interaction.guild, year, extras)
             if interaction.channel:
                 await interaction.channel.send(content=conclusion_text, embed=conclusion_embed)

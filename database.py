@@ -4966,6 +4966,12 @@ class Database:
         if not start_dt or not end_dt:
             start_dt, end_dt = self.get_retrospective_period(year, is_automatic=is_automatic)
 
+        # media_highlights.created_at é TIMESTAMPTZ (aware), enquanto tabelas legadas são TIMESTAMP (naive)
+        start_dt_naive = start_dt.replace(tzinfo=None) if getattr(start_dt, "tzinfo", None) else start_dt
+        end_dt_naive = end_dt.replace(tzinfo=None) if getattr(end_dt, "tzinfo", None) else end_dt
+        start_dt_aware = start_dt.replace(tzinfo=timezone.utc) if getattr(start_dt, "tzinfo", None) is None else start_dt
+        end_dt_aware = end_dt.replace(tzinfo=timezone.utc) if getattr(end_dt, "tzinfo", None) is None else end_dt
+
         extras: Dict[str, Any] = {
             "mvp": None,
             "top_media": None,
@@ -4992,22 +4998,31 @@ class Database:
                     GROUP BY ip.user_id, u.username, u.avatar_url
                     ORDER BY value DESC
                     LIMIT 1
-                """, guild_id, start_dt, end_dt)
+                """, guild_id, start_dt_naive, end_dt_naive)
                 if mvp_row:
                     extras["mvp"] = dict(mvp_row)
             except Exception as e:
                 logger.warning("Erro extras mvp: %s", e)
 
-            # 2. Print / Clipe do Ano (Top Media)
+            # 2. Print / Clipe do Ano (Top Media — prioriza prints/clipes reais, excluindo links de Giphy/Tenor)
             try:
                 media_row = await conn.fetchrow("""
                     SELECT * FROM media_highlights
                     WHERE guild_id = $1 
                       AND created_at >= $2 AND created_at <= $3
-                      AND popularity_score > 0
-                    ORDER BY popularity_score DESC, reaction_count DESC, created_at ASC
+                      AND media_url NOT ILIKE '%tenor.com%'
+                      AND media_url NOT ILIKE '%giphy.com%'
+                    ORDER BY (popularity_score > 0) DESC, popularity_score DESC, reaction_count DESC, reply_count DESC, created_at ASC
                     LIMIT 1
-                """, guild_id, start_dt, end_dt)
+                """, guild_id, start_dt_aware, end_dt_aware)
+                if not media_row:
+                    media_row = await conn.fetchrow("""
+                        SELECT * FROM media_highlights
+                        WHERE guild_id = $1 
+                          AND created_at >= $2 AND created_at <= $3
+                        ORDER BY (popularity_score > 0) DESC, popularity_score DESC, reaction_count DESC, reply_count DESC, created_at ASC
+                        LIMIT 1
+                    """, guild_id, start_dt_aware, end_dt_aware)
                 if media_row:
                     m_data = dict(media_row)
                     if isinstance(m_data.get("reactions_json"), str):
@@ -5020,6 +5035,8 @@ class Database:
                         m_data["reaction_summary"] = " ".join(f"{emoji} {cnt}" for emoji, cnt in list(reactions_dict.items())[:5])
                     else:
                         m_data["reaction_summary"] = f"🔥 {m_data.get('reaction_count', 0)}"
+                    if not m_data.get("jump_url") and m_data.get("channel_id") and m_data.get("message_id"):
+                        m_data["jump_url"] = f"https://discord.com/channels/{guild_id}/{m_data['channel_id']}/{m_data['message_id']}"
                     extras["top_media"] = m_data
             except Exception as e:
                 logger.warning("Erro extras top_media: %s", e)
@@ -5064,7 +5081,7 @@ class Database:
                           AND (media_url ILIKE '%.gif%' OR media_url ILIKE '%tenor.com%' OR media_url ILIKE '%giphy.com%')
                         ORDER BY popularity_score DESC
                         LIMIT 1
-                    """, guild_id, start_dt, end_dt)
+                    """, guild_id, start_dt_aware, end_dt_aware)
                     if fb_gif:
                         extras["top_gif"] = {"gif_url": fb_gif["media_url"], "count": fb_gif["popularity_score"], "author": fb_gif["username"], "jump_url": fb_gif["jump_url"]}
             except Exception as e:
@@ -5085,7 +5102,7 @@ class Database:
                     rows = await conn.fetch("""
                         SELECT reactions_json FROM media_highlights
                         WHERE guild_id = $1 AND created_at >= $2 AND created_at <= $3
-                    """, guild_id, start_dt, end_dt)
+                    """, guild_id, start_dt_aware, end_dt_aware)
                     totals: Dict[str, int] = {}
                     for r in rows:
                         rj = r.get("reactions_json")
@@ -5473,15 +5490,27 @@ class Database:
         if not start_dt or not end_dt:
             start_dt, end_dt = self.get_retrospective_period(year, is_automatic=is_automatic)
 
+        start_dt_aware = start_dt.replace(tzinfo=timezone.utc) if getattr(start_dt, "tzinfo", None) is None else start_dt
+        end_dt_aware = end_dt.replace(tzinfo=timezone.utc) if getattr(end_dt, "tzinfo", None) is None else end_dt
+
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT * FROM media_highlights
                 WHERE guild_id = $1 
                   AND created_at >= $2 AND created_at <= $3
-                  AND popularity_score > 0
-                ORDER BY popularity_score DESC, reaction_count DESC, created_at ASC
+                  AND media_url NOT ILIKE '%tenor.com%'
+                  AND media_url NOT ILIKE '%giphy.com%'
+                ORDER BY (popularity_score > 0) DESC, popularity_score DESC, reaction_count DESC, reply_count DESC, created_at ASC
                 LIMIT 1
-            """, guild_id, start_dt, end_dt)
+            """, guild_id, start_dt_aware, end_dt_aware)
+            if not row:
+                row = await conn.fetchrow("""
+                    SELECT * FROM media_highlights
+                    WHERE guild_id = $1 
+                      AND created_at >= $2 AND created_at <= $3
+                    ORDER BY (popularity_score > 0) DESC, popularity_score DESC, reaction_count DESC, reply_count DESC, created_at ASC
+                    LIMIT 1
+                """, guild_id, start_dt_aware, end_dt_aware)
             if not row:
                 return None
             data = dict(row)

@@ -100,6 +100,7 @@ class HighlightsScanner:
         
         dedicated_channels = []
         secondary_channels = []
+        other_channels = []
 
         for ch in guild.text_channels:
             if not ch.permissions_for(guild.me).read_message_history or not is_public_channel(ch):
@@ -117,50 +118,49 @@ class HighlightsScanner:
             is_secondary = any(re.sub(r'[^a-zA-Z0-9]', '', name).lower() in norm_ch for name in SECONDARY_CHANNELS)
             if is_secondary and ch not in secondary_channels:
                 secondary_channels.append(ch)
+                continue
 
-        # Se não encontrou nenhum dos configurados, seleciona o primeiro canal público legível
-        if not dedicated_channels and not secondary_channels:
-            for ch in guild.text_channels:
-                if ch.permissions_for(guild.me).read_message_history and is_public_channel(ch):
-                    secondary_channels.append(ch)
-                    break
+            if ch not in other_channels:
+                other_channels.append(ch)
 
         logger.info(
-            "🔍 Escaneando mídia de %d em %s: %d canal(is) dedicado(s), %d secundário(s)...",
-            year, guild.name, len(dedicated_channels), len(secondary_channels)
+            "🔍 Escaneando mídia de %d em %s: %d canal(is) dedicado(s), %d secundário(s), %d outro(s)...",
+            year, guild.name, len(dedicated_channels), len(secondary_channels), len(other_channels)
         )
 
         top_item = None
-        max_score = -1
+        max_score = 0
+        fallback_zero_item = None
 
-        # 1. Escaneia primeiro canais dedicados de mídia com varredura completa do ano (sem corte prematuro)
-        for ch in dedicated_channels:
-            try:
-                ch_top = await cls._scan_single_channel(ch, start_of_year, end_of_year, limit=None)
-                if ch_top:
-                    score = ch_top.get("popularity_score", 0)
-                    total_reactions = ch_top.get("reaction_count", 0)
-                    if score > max_score or (score == max_score and total_reactions > (top_item.get("reaction_count", 0) if top_item else -1)):
-                        max_score = score
-                        top_item = ch_top
-            except Exception as e:
-                logger.warning("Falha ao escanear canal dedicado #%s: %s", ch.name, e)
-
-        # 2. Se nenhum item foi encontrado ou se os canais dedicados estavam vazios, varre secundários com limite razoável
-        if not top_item:
-            for ch in secondary_channels:
+        async def _evaluate_channels(channels_list: List[discord.TextChannel], ch_limit: Optional[int]):
+            nonlocal top_item, max_score, fallback_zero_item
+            for ch in channels_list:
                 try:
-                    ch_top = await cls._scan_single_channel(ch, start_of_year, end_of_year, limit=1000)
+                    ch_top = await cls._scan_single_channel(ch, start_of_year, end_of_year, limit=ch_limit)
                     if ch_top:
                         score = ch_top.get("popularity_score", 0)
                         total_reactions = ch_top.get("reaction_count", 0)
-                        if score > max_score or (score == max_score and total_reactions > (top_item.get("reaction_count", 0) if top_item else -1)):
-                            max_score = score
-                            top_item = ch_top
+                        if score > 0:
+                            if score > max_score or (score == max_score and total_reactions > (top_item.get("reaction_count", 0) if top_item else -1)):
+                                max_score = score
+                                top_item = ch_top
+                        elif fallback_zero_item is None:
+                            fallback_zero_item = ch_top
                 except Exception as e:
-                    logger.warning("Falha ao escanear canal secundário #%s: %s", ch.name, e)
+                    logger.warning("Falha ao escanear canal #%s: %s", ch.name, e)
 
-        return top_item
+        # 1. Escaneia primeiro canais dedicados de mídia com varredura completa do ano
+        await _evaluate_channels(dedicated_channels, ch_limit=None)
+
+        # 2. Se nenhum item engajado foi encontrado, varre canais secundários
+        if not top_item:
+            await _evaluate_channels(secondary_channels, ch_limit=1000)
+
+        # 3. Se ainda não encontrou item engajado, varre os demais canais públicos
+        if not top_item and other_channels:
+            await _evaluate_channels(other_channels, ch_limit=500)
+
+        return top_item or fallback_zero_item
 
     @classmethod
     async def _scan_single_channel(
@@ -184,7 +184,8 @@ class HighlightsScanner:
                 reply_counts[ref_id] = reply_counts.get(ref_id, 0) + 1
 
         top_item = None
-        max_score = -1
+        max_score = 0
+        fallback_item = None
 
         for message in messages:
             if message.author.bot:
@@ -210,37 +211,50 @@ class HighlightsScanner:
             if not media_url:
                 continue
 
+            # Ignora GIFs de reação do Tenor/Giphy (que já entram na categoria GIF do Ano)
+            lower_url = media_url.lower()
+            if "tenor.com" in lower_url or "giphy.com" in lower_url:
+                continue
+
+            reactions_dict = {str(r.emoji): r.count for r in message.reactions}
             total_reactions = sum(r.count for r in message.reactions)
             direct_replies = reply_counts.get(message.id, 0)
 
             # Fórmula de engajamento da comunidade: 1 reação = 1 pt, 1 resposta direta = 2 pts
             popularity_score = total_reactions + (direct_replies * 2)
+            reaction_summary = " ".join(f"{r.emoji} {r.count}" for r in message.reactions[:5]) if message.reactions else f"🔥 {total_reactions}"
 
-            # Só considera se tiver ao menos 1 reação ou 1 resposta
+            candidate = {
+                "message_id": message.id,
+                "channel_id": getattr(channel, "id", 0),
+                "channel_name": channel.name,
+                "user_id": message.author.id,
+                "username": message.author.display_name,
+                "avatar_url": str(message.author.display_avatar.url) if getattr(message.author, "display_avatar", None) else None,
+                "media_url": media_url,
+                "reaction_count": total_reactions,
+                "reactions_json": reactions_dict,
+                "reply_count": direct_replies,
+                "popularity_score": popularity_score,
+                "reaction_summary": reaction_summary,
+                "created_at": message.created_at.strftime("%d/%m/%Y"),
+                "created_at_dt": message.created_at,
+                "jump_url": message.jump_url,
+                "content": message.content[:150] if message.content else ""
+            }
+
             if popularity_score <= 0:
+                if fallback_item is None:
+                    fallback_item = candidate
                 continue
 
             if popularity_score > max_score or (
                 popularity_score == max_score and total_reactions > (top_item.get("reaction_count", 0) if top_item else -1)
             ):
                 max_score = popularity_score
-                top_item = {
-                    "message_id": message.id,
-                    "channel_name": channel.name,
-                    "user_id": message.author.id,
-                    "username": message.author.display_name,
-                    "avatar_url": str(message.author.display_avatar.url),
-                    "media_url": media_url,
-                    "reaction_count": total_reactions,
-                    "reply_count": direct_replies,
-                    "popularity_score": popularity_score,
-                    "reaction_summary": " ".join(f"{r.emoji} {r.count}" for r in message.reactions[:5]),
-                    "created_at": message.created_at.strftime("%d/%m/%Y"),
-                    "jump_url": message.jump_url,
-                    "content": message.content[:150] if message.content else ""
-                }
+                top_item = candidate
 
-        return top_item
+        return top_item or fallback_item
 
     @classmethod
     async def find_first_gif_message_url(
