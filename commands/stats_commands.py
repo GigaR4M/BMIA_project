@@ -23,28 +23,43 @@ HIGHLIGHTS_CATEGORIES = [
     {"id": "outros_destaques", "label": "Outros Destaques", "title": "OUTROS DESTAQUES DO ANO", "subtitle": "Recordes e Menções Honrosas", "icon": "🌟", "color": "#8b5cf6"},
 ]
 
+MVP_CELEBRATION_GIF_URL = (
+    "https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExYmE4cDB2ZGI3eTJlcGRleG14bzJudnFrYmZwOWZ6cnJ6cmZ5djFoMSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/yLElvNqqq7kdgsKNCC/giphy.gif"
+)
 
-def build_retrospective_conclusion(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> tuple[str, Optional[discord.Embed]]:
-    """Gera o texto de encerramento com menção ao MVP e embed de honrarias da Retrospectiva."""
+NEW_YEAR_CELEBRATION_GIF_URL = (
+    "https://media.giphy.com/media/26tOZ42Mg6pbTUPHW/giphy.gif"
+)
+
+
+def build_mvp_celebration_message(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> str:
+    """Gera a mensagem fora do embed mencionando e parabenizando o MVP do Ano junto com o GIF de celebração."""
     mvp = extras.get("mvp")
+    if mvp:
+        return (
+            f"👑 **MVP DO ANO {year} • {guild.name}**\n"
+            f"Parabéns a <@{mvp['user_id']}> (`{mvp['username']}`), o membro lendário que mais movimentou o servidor este ano, "
+            f"acumulando incríveis **{mvp['value']:,} pontos** de pura presença e atividade! 🏆✨\n"
+            f"{MVP_CELEBRATION_GIF_URL}"
+        )
+    return (
+        f"✨ **RETROSPECTIVA DO ANO {year} • {guild.name}**\n"
+        f"Parabéns a toda a comunidade por mais um ano inesquecível juntos! 🎮🚀\n"
+        f"{MVP_CELEBRATION_GIF_URL}"
+    )
+
+
+def build_honorable_mentions_embed(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> discord.Embed:
+    """Gera o embed de Menções Honrosas & Curiosidades do Ano (enviado após a virada do ano)."""
     top_media = extras.get("top_media")
     top_gif = extras.get("top_gif")
     top_emoji = extras.get("top_emoji")
     most_active_day = extras.get("most_active_day")
 
-    # Texto principal com menção / ping
-    if mvp:
-        content = (
-            f"👑 **MVP DO ANO {year} • {guild.name}**\n"
-            f"Parabéns a <@{mvp['user_id']}> (`{mvp['username']}`), o membro lendário que mais movimentou o servidor este ano, acumulando incríveis **{mvp['value']:,} pontos** de pura presença e atividade! 🏆✨"
-        )
-    else:
-        content = f"✨ **RETROSPECTIVA DO ANO {year} • {guild.name}**\nParabéns a toda a comunidade por mais um ano inesquecível juntos! 🎮🚀"
-
     embed = discord.Embed(
         title=f"🌟 Menções Honrosas & Curiosidades do Ano {year}",
         color=discord.Color.gold(),
-        description="Confira os momentos mais marcantes e registros históricos da comunidade no ano:"
+        description="Confira os momentos mais marcantes e registros históricos da comunidade no ano que passou:"
     )
 
     # 1. Print / Clipe do Ano
@@ -110,6 +125,24 @@ def build_retrospective_conclusion(guild: discord.Guild, year: int, extras: Dict
         embed.add_field(name="🔥 O Dia Mais Caótico do Ano", value=day_text, inline=False)
 
     embed.set_footer(text=f"Retrospectiva Oficial {year} • {guild.name}")
+    return embed
+
+
+def build_new_year_greeting(guild: discord.Guild, new_year: int, prev_year: int, gif_url: Optional[str] = None) -> str:
+    """Gera a mensagem separada de Feliz Ano Novo com GIF para envio após a virada do ano."""
+    chosen_gif = gif_url or NEW_YEAR_CELEBRATION_GIF_URL
+    return (
+        f"🎆 **FELIZ ANO NOVO, {guild.name.upper()}! BEM-VINDO A {new_year}!** 🥂✨\n"
+        f"Obrigado por cada risada, partida, call de madrugada e momento compartilhado em **{prev_year}**. "
+        f"Que **{new_year}** traga ainda mais conquistas, vitórias e resenhas épicas para toda a nossa comunidade! 🚀🎉\n"
+        f"{chosen_gif}"
+    )
+
+
+def build_retrospective_conclusion(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> tuple[str, Optional[discord.Embed]]:
+    """Mantido por compatibilidade: retorna a mensagem de celebração do MVP e o embed de Menções Honrosas."""
+    content = build_mvp_celebration_message(guild, year, extras)
+    embed = build_honorable_mentions_embed(guild, year, extras)
     return content, embed
 
 
@@ -208,15 +241,14 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
             files=files
         )
 
-        # Envia a mensagem conclusiva com MVP, Mídia (Print/Clipe) do Ano, GIF e curiosidades
+        # Envia a mensagem fora do embed mencionando e parabenizando o MVP junto com o GIF de celebração
         try:
             extras = await db.get_retrospective_extras(interaction.guild.id, year, is_automatic=False)
-            extras = await enrich_retrospective_extras(db, interaction.guild, year, extras)
-            conclusion_text, conclusion_embed = build_retrospective_conclusion(interaction.guild, year, extras)
+            mvp_text = build_mvp_celebration_message(interaction.guild, year, extras)
             if interaction.channel:
-                await interaction.channel.send(content=conclusion_text, embed=conclusion_embed)
+                await interaction.channel.send(content=mvp_text)
         except Exception as ex_err:
-            logger.warning("Erro ao enviar mensagem conclusiva da retrospectiva: %s", ex_err)
+            logger.warning("Erro ao enviar mensagem de parabenização do MVP da retrospectiva: %s", ex_err)
 
     except Exception as e:
         logger.error("❌ Erro ao gerar galeria de Destaques do Ano: %s", e, exc_info=True)

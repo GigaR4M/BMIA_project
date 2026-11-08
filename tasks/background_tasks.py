@@ -170,8 +170,7 @@ async def check_monthly_podium(
                                 from utils.image_generator import HighlightsBuilder
                                 from commands.stats_commands import (
                                     HIGHLIGHTS_CATEGORIES,
-                                    build_retrospective_conclusion,
-                                    enrich_retrospective_extras,
+                                    build_mvp_celebration_message,
                                 )
 
                                 h_data = await db.get_annual_highlights_data(guild.id, retrospective_year, is_automatic=True, start_dt=start_dt, end_dt=end_dt)
@@ -188,17 +187,52 @@ async def check_monthly_podium(
                                         files=h_files
                                     )
 
-                                # Envia a mensagem conclusiva especial com MVP, Mídia (Print/Clipe) do Ano, GIF e curiosidades
+                                # No dia 21, envia a mensagem fora do embed mencionando e parabenizando o MVP + GIF
                                 extras = await db.get_retrospective_extras(guild.id, retrospective_year, is_automatic=True, start_dt=start_dt, end_dt=end_dt)
-                                extras = await enrich_retrospective_extras(db, guild, retrospective_year, extras)
-                                conclusion_text, conclusion_embed = build_retrospective_conclusion(guild, retrospective_year, extras)
-                                await target_channel.send(content=conclusion_text, embed=conclusion_embed)
+                                mvp_text = build_mvp_celebration_message(guild, retrospective_year, extras)
+                                await target_channel.send(content=mvp_text)
 
                             except Exception as h_err:
                                 logger.warning("Erro ao enviar galeria de destaques no background: %s", h_err)
 
                             await db.log_periodic_leaderboard_sent(guild.id, "YEARLY", yearly_target_id)
                             logger.info("✅ Retrospectiva de gala e destaques anuais concluídos para %s", guild.name)
+
+                    # 3. APÓS A VIRADA DO ANO (Janeiro): Menções Honrosas & Curiosidades + GIF de Feliz Ano Novo (mensagem separada)
+                    if now.month == 1:
+                        honors_target_id = str(prev_year)
+                        if not await db.check_periodic_leaderboard_sent(guild.id, "NEW_YEAR_HONORS", honors_target_id):
+                            logger.info("Enviando Menções Honrosas & Curiosidades (%s) e mensagem de Feliz Ano Novo para %s...", honors_target_id, guild.name)
+                            try:
+                                from commands.stats_commands import (
+                                    build_honorable_mentions_embed,
+                                    build_new_year_greeting,
+                                    enrich_retrospective_extras,
+                                )
+
+                                extras_ny = await db.get_retrospective_extras(
+                                    guild.id,
+                                    prev_year,
+                                    is_automatic=False,
+                                    start_dt=yearly_start,
+                                    end_dt=yearly_end,
+                                )
+                                extras_ny = await enrich_retrospective_extras(db, guild, prev_year, extras_ny)
+                                honors_embed = build_honorable_mentions_embed(guild, prev_year, extras_ny)
+
+                                await target_channel.send(
+                                    content=f"🌟 **MENÇÕES HONROSAS & CURIOSIDADES DE {prev_year} • {guild.name}**",
+                                    embed=honors_embed,
+                                )
+
+                                # Mensagem separada com votos de Feliz Ano Novo e GIF comemorativo
+                                new_year_msg = build_new_year_greeting(guild, now.year, prev_year)
+                                await target_channel.send(content=new_year_msg)
+
+                                await db.log_periodic_leaderboard_sent(guild.id, "NEW_YEAR_HONORS", honors_target_id)
+                                logger.info("✅ Menções Honrosas e Feliz Ano Novo enviados para %s", guild.name)
+                            except Exception as ny_err:
+                                logger.warning("Erro ao enviar Menções Honrosas e Feliz Ano Novo para %s: %s", guild.name, ny_err)
 
         except Exception as exc:
             logger.error("❌ Erro no check_monthly_podium: %s", exc)
