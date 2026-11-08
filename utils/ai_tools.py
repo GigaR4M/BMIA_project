@@ -129,22 +129,147 @@ class AIToolkit:
             logger.error(f"Erro ao executar tool get_messages_leaderboard: {e}")
             return [{"erro": "Falha ao consultar ranking de mensagens."}]
 
+    async def _resolve_member_and_user(self, identifier: Any) -> tuple[Optional[Any], Optional[Dict[str, Any]]]:
+        """
+        Resolve de forma resiliente um membro do Discord e seu registro na tabela `users`
+        a partir de ID numérico, menção <@id>, display_name (incluindo sufixos de streak como '| 🔥 1') ou username.
+        Retorna (discord_member, db_user_dict).
+        """
+        import re
+
+        raw = str(identifier or "").strip()
+        if not raw:
+            return None, None
+
+        guild = None
+        if self.current_message and getattr(self.current_message, "guild", None):
+            guild = self.current_message.guild
+        elif self.client:
+            guild = self.client.get_guild(self.guild_id)
+
+        # Limpa prefixo @, menção <@!123> e sufixos de streak como '| 🔥 1'
+        id_match = re.search(r"<@!?(\d+)>", raw)
+        extracted_id: Optional[int] = None
+        if id_match:
+            extracted_id = int(id_match.group(1))
+        elif raw.isdigit() and int(raw) > 1000:
+            extracted_id = int(raw)
+
+        cleaned = re.sub(r"<@!?\d+>", "", raw).lstrip("@").strip()
+        # Remove sufixo de streak (ex: ' | 🔥 12' ou '| 🔥 1')
+        cleaned_no_streak = re.sub(r"\s*\|\s*🔥\s*\d+.*$", "", cleaned).strip()
+
+        member = None
+        # 1. Busca por ID extraído
+        if extracted_id and guild:
+            member = guild.get_member(extracted_id)
+
+        # 2. Busca nas menções da mensagem atual
+        if not member and self.current_message and getattr(self.current_message, "mentions", None):
+            for m in self.current_message.mentions:
+                if getattr(m, "bot", False):
+                    continue
+                if extracted_id and m.id == extracted_id:
+                    member = m
+                    break
+                m_names = [
+                    getattr(m, "name", "").lower(),
+                    getattr(m, "display_name", "").lower(),
+                    getattr(m, "global_name", "" or "").lower(),
+                    re.sub(r"\s*\|\s*🔥\s*\d+.*$", "", getattr(m, "display_name", "")).strip().lower(),
+                ]
+                for q in (cleaned.lower(), cleaned_no_streak.lower()):
+                    if q and any(q == n or q in n or (n and n in q) for n in m_names if n):
+                        member = m
+                        break
+                if member:
+                    break
+
+        # 3. Busca nos membros da guilda (exato primeiro, depois parcial)
+        if not member and guild and getattr(guild, "members", None):
+            queries = [q.lower() for q in (cleaned_no_streak, cleaned) if q]
+            for q in queries:
+                for m in guild.members:
+                    if getattr(m, "bot", False):
+                        continue
+                    disp = getattr(m, "display_name", "") or ""
+                    disp_clean = re.sub(r"\s*\|\s*🔥\s*\d+.*$", "", disp).strip().lower()
+                    uname = (getattr(m, "name", "") or "").lower()
+                    gname = (getattr(m, "global_name", "") or "").lower()
+                    if q in (uname, disp.lower(), disp_clean, gname):
+                        member = m
+                        break
+                if member:
+                    break
+
+            if not member:
+                for q in queries:
+                    for m in guild.members:
+                        if getattr(m, "bot", False):
+                            continue
+                        disp = getattr(m, "display_name", "") or ""
+                        disp_clean = re.sub(r"\s*\|\s*🔥\s*\d+.*$", "", disp).strip().lower()
+                        uname = (getattr(m, "name", "") or "").lower()
+                        gname = (getattr(m, "global_name", "") or "").lower()
+                        if any(q in n for n in (uname, disp.lower(), disp_clean, gname) if n):
+                            member = m
+                            break
+                    if member:
+                        break
+
+        # 4. Se encontrou member na guilda, monta/busca db_user
+        if member:
+            db_user = None
+            if hasattr(self.db, "find_user_by_username") and getattr(member, "name", None):
+                try:
+                    db_user = await self.db.find_user_by_username(member.name)
+                except Exception:
+                    db_user = None
+            if not db_user:
+                db_user = {
+                    "user_id": member.id,
+                    "username": getattr(member, "name", None) or getattr(member, "display_name", str(member.id)),
+                    "is_bot": getattr(member, "bot", False),
+                }
+            return member, db_user
+
+        # 5. Fallback no banco de dados tentando cleaned_no_streak e cleaned
+        for candidate_q in dict.fromkeys([cleaned_no_streak, cleaned, raw]):
+            if not candidate_q:
+                continue
+            try:
+                user = await self.db.find_user_by_username(candidate_q)
+                if user:
+                    if guild and user.get("user_id"):
+                        member = guild.get_member(user["user_id"])
+                    return member, user
+            except Exception:
+                pass
+
+        if extracted_id:
+            return None, {"user_id": extracted_id, "username": str(extracted_id), "is_bot": False}
+
+        return None, None
+
     async def get_user_stats_summary(self, username: str, days: int = 30) -> Dict[str, Any]:
         """Busca o resumo de estatísticas (mensagens, voz, jogos) de um usuário específico do servidor.
 
         Args:
-            username: Nome de usuário ou menção aproximada da pessoa.
+            username: Nome de usuário, apelido no servidor, menção ou ID da pessoa.
             days: Quantidade de dias para analisar o histórico (padrão: 30).
         """
         try:
-            user = await self.db.find_user_by_username(username)
+            member, user = await self._resolve_member_and_user(username)
             if not user:
                 return {"mensagem": f"Usuário '{username}' não foi encontrado na base de dados do servidor."}
 
             user_id = user["user_id"]
             stats = await self.db.get_detailed_user_stats(user_id, self.guild_id, days=days)
+            display_label = getattr(member, "display_name", None) or user.get("username")
             return {
-                "usuario": user.get("username"),
+                "usuario": display_label,
+                "username": user.get("username"),
+                "user_id": user_id,
                 "periodo_dias": days,
                 "total_mensagens": stats.get("total_messages", 0),
                 "horas_em_voz": round(stats.get("voice_minutes", 0) / 60, 1),
@@ -154,6 +279,101 @@ class AIToolkit:
         except Exception as e:
             logger.error(f"Erro ao executar tool get_user_stats_summary para {username}: {e}")
             return {"erro": f"Falha ao consultar estatísticas do usuário {username}."}
+
+    async def get_user_reputation(self, usuario: str) -> Dict[str, Any]:
+        """Consulta a Reputação, Trust Score (nota de confiança de 0 a 100), nível de risco, tempo de casa e histórico de infrações/moderação de um membro do servidor.
+
+        Args:
+            usuario: Nome de usuário, apelido no servidor (display_name), menção ou ID numérico do membro.
+        """
+        try:
+            from datetime import datetime, timezone
+            from utils.reputation_manager import ReputationManager
+
+            member, user = await self._resolve_member_and_user(usuario)
+            if not user and not member:
+                return {"mensagem": f"Membro '{usuario}' não foi encontrado no servidor."}
+
+            user_id = member.id if member else user["user_id"]
+            username_str = getattr(member, "name", None) or (user.get("username") if user else str(user_id))
+            display_name = getattr(member, "display_name", None) or username_str
+
+            now = datetime.now(timezone.utc)
+            account_age_days = 365
+            server_membership_days = 90
+            is_timed_out = False
+
+            if member:
+                created_at = getattr(member, "created_at", None)
+                if isinstance(created_at, datetime):
+                    account_age_days = max(0, (now - created_at).days)
+                joined_at = getattr(member, "joined_at", None)
+                if isinstance(joined_at, datetime):
+                    server_membership_days = max(0, (now - joined_at).days)
+                if hasattr(member, "is_timed_out") and callable(member.is_timed_out):
+                    try:
+                        is_timed_out = bool(member.is_timed_out())
+                    except Exception:
+                        is_timed_out = False
+
+            dossier_data = await self.db.get_user_full_dossier(self.guild_id, user_id)
+            infractions_summary = dossier_data.get("infractions_summary", {})
+            reports = dossier_data.get("reports", [])
+            approved_reports = [r for r in reports if r.get("status") == "approved"]
+            moderated_messages = dossier_data.get("moderated_messages_count", 0)
+
+            trust_info = ReputationManager.calculate_trust_score(
+                account_age_days=account_age_days,
+                server_membership_days=server_membership_days,
+                infractions_summary=infractions_summary,
+                reports_count=len(reports),
+                approved_reports_count=len(approved_reports),
+                moderated_messages_count=moderated_messages,
+                is_currently_timed_out=is_timed_out,
+            )
+
+            warn_count = infractions_summary.get("warn", {}).get("count", 0)
+            timeout_count = infractions_summary.get("timeout", {}).get("count", 0)
+            mute_count = (
+                infractions_summary.get("mute", {}).get("count", 0)
+                + infractions_summary.get("hardmute", {}).get("count", 0)
+            )
+            kick_count = (
+                infractions_summary.get("kick", {}).get("count", 0)
+                + infractions_summary.get("softban", {}).get("count", 0)
+            )
+            ban_count = (
+                infractions_summary.get("ban", {}).get("count", 0)
+                + infractions_summary.get("tempban", {}).get("count", 0)
+            )
+
+            return {
+                "usuario": display_name,
+                "username": username_str,
+                "user_id": user_id,
+                "trust_score": trust_info["score"],
+                "escala": "0 a 100",
+                "classificacao": trust_info["label"],
+                "tier": trust_info["tier"],
+                "em_castigo_atualmente": is_timed_out,
+                "idade_conta_dias": account_age_days,
+                "tempo_no_servidor_dias": server_membership_days,
+                "historico_infracoes": {
+                    "advertencias": warn_count,
+                    "castigos_timeouts": timeout_count,
+                    "mutes": mute_count,
+                    "expulsoes_kicks": kick_count,
+                    "banimentos": ban_count,
+                    "mensagens_moderadas_pela_ia": moderated_messages,
+                    "denuncias_recebidas": len(reports),
+                    "denuncias_aprovadas": len(approved_reports),
+                },
+                "bonus_aplicados": [f"{b[0]} (+{b[1]} pts)" for b in trust_info.get("bonuses", [])],
+                "penalidades_aplicadas": [f"{p[0]} (-{p[1]} pts)" for p in trust_info.get("penalties", [])],
+            }
+        except Exception as e:
+            logger.error(f"Erro ao executar tool get_user_reputation para {usuario}: {e}")
+            return {"erro": f"Falha ao consultar a reputação do usuário {usuario}."}
 
     async def get_tournament_history(self, limit: int = 5) -> List[Dict[str, Any]]:
         """Retorna o histórico dos torneios e campeonatos realizados no servidor, incluindo vencedores e jogos.
@@ -508,6 +728,7 @@ class AIToolkit:
             self.get_voice_leaderboard,
             self.get_messages_leaderboard,
             self.get_user_stats_summary,
+            self.get_user_reputation,
             self.get_tournament_history,
             self.get_tournament_hall_of_fame,
             self.buscar_gif,

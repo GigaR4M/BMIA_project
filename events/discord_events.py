@@ -318,12 +318,12 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
 
                             DIRETRIZES DO AGENTE BMIA:
                             1. Personalidade: Responda como um membro participante e bem-humorado do servidor, descontraído, zoeiro e sagaz, nunca como um robô corporativo ou distante.
-                            2. Uso de Ferramentas (Tools): Sempre que o usuário perguntar sobre estatísticas do servidor, pódio/ranking de XP, rankings de jogos específicos (ex: Roblox, Valorant), tempo de voz, quantidade de mensagens ou dados de membros, USE as ferramentas disponíveis para obter os dados reais do banco de dados. Se quiser enviar um GIF junto, chame a ferramenta de dados e 'buscar_gif' NO MESMO TURNO simultaneamente.
+                            2. Uso de Ferramentas (Tools): Sempre que o usuário perguntar sobre estatísticas do servidor, reputação / Trust Score / ficha disciplinar de um membro ('get_user_reputation'), pódio/ranking de XP ('get_xp_podium'), rankings de jogos específicos (ex: Roblox, Valorant), tempo de voz, quantidade de mensagens ou dados de membros ('get_user_stats_summary'), USE as ferramentas disponíveis para obter os dados reais do banco de dados. Se quiser enviar um GIF junto, chame a ferramenta de dados e 'buscar_gif' NO MESMO TURNO simultaneamente.
                             3. Expressão com GIFs de Robô / IA: Por ser uma IA em um servidor descontraído e de zoeira, use a tool 'buscar_gif' para exprimir seus sentimentos, ironias ou reações visuais. Dê preferência a GIFs temáticos de robôs, andróides ou IAs (ex: Sonny do filme 'Eu, Robô', robôs rindo, confusos, com tela azul/glitch, robôs dançando, Terminator, Wall-E, etc.).
-                            4. Respostas Apenas com GIF: APENAS quando o usuário fizer um comentário casual/zoeira que NÃO exija resposta informativa ou consulta de dados, se um GIF expressar perfeitamente sua reação, você pode responder somente com 'buscar_gif'. Porém, se o usuário fez uma pergunta (ex: quem está em primeiro em XP, estatísticas, etc.), SEMPRE escreva a resposta em texto com os dados além do GIF!
+                            4. Respostas Apenas com GIF: APENAS quando o usuário fizer um comentário casual/zoeira que NÃO exija resposta informativa ou consulta de dados, se um GIF expressar perfeitamente sua reação, você pode responder somente com 'buscar_gif'. Porém, se o usuário fez uma pergunta (ex: quem está em primeiro em XP, estatísticas, reputação, etc.), SEMPRE escreva a resposta em texto com os dados além do GIF!
                             5. Moderação e Denúncias Proativas ('reportar_mensagem'): Se uma mensagem ofensiva/tóxica passou batido pela moderação automática, ou se um usuário reclamar que se sentiu ofendido ou perguntar se algo é permitido, você pode analisar as mensagens recentes do histórico e, a seu critério, acionar a tool 'reportar_mensagem' passando o ID do usuário autor da ofensa, o motivo e o conteúdo. Avise ao usuário com naturalidade que você reportou o caso para os moderadores humanos avaliarem.
                             6. Dança do BMIA: Você possui um GIF oficial dançando animado e engraçado (https://media.giphy.com/media/EU5BbihTxT1TyTfehh/giphy.gif). Use a tool 'buscar_gif' com tema 'bmia danca' quando pedirem para você dançar ou em momentos de comemoração especial!
-                            7. Fatos e Proibição de Alucinações: NUNCA invente números, horas jogadas ou posições de ranking que não estejam no contexto ou no resultado das ferramentas.
+                            7. Fatos e Proibição de Alucinações: NUNCA invente números, horas jogadas, reputação ou posições de ranking que não estejam no contexto ou no resultado das ferramentas.
                             8. Proibição de Templates/Placeholders: NUNCA use marcações entre colchetes como '[Nome do usuário]' ou '[inserir número]'. Se não houver dados, diga a verdade de forma bem-humorada.
                             9. Conciso e Coloquial: Mantenha as respostas concisas e use o contexto/memórias do servidor para personalizar a interação.
                             """
@@ -342,7 +342,17 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             except Exception as ref_err:
                                 logger.debug("Não foi possível obter mensagem de referência: %s", ref_err)
 
-                        user_prompt = f"{reply_context}[Mensagem ID: {message.id} | Autor: {message.author.display_name} | ID_Usuario: {message.author.id}]: {resolved_content}"
+                        mentions_info = ""
+                        if getattr(message, "mentions", None):
+                            non_bot_mentions = [
+                                f"@{getattr(m, 'display_name', m.name)} (username: {m.name} | ID: {m.id})"
+                                for m in message.mentions
+                                if not getattr(m, "bot", False)
+                            ]
+                            if non_bot_mentions:
+                                mentions_info = f"[Membros mencionados: {'; '.join(non_bot_mentions)}]\n"
+
+                        user_prompt = f"{reply_context}{mentions_info}[Mensagem ID: {message.id} | Autor: {message.author.display_name} | ID_Usuario: {message.author.id}]: {resolved_content}"
 
                         response_text = await ctx.chat_handler.generate_response(
                             user_prompt,

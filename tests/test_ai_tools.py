@@ -82,6 +82,45 @@ class TestAIToolkit:
         assert res["horas_em_jogos"] == 10.0
 
     @pytest.mark.asyncio
+    async def test_get_user_reputation_with_streak_display_name(self, toolkit, mock_db):
+        from datetime import datetime, timezone, timedelta
+
+        fake_member = MagicMock()
+        fake_member.id = 1351949989026336843
+        fake_member.name = "gigahoo"
+        fake_member.display_name = "Gigahoo | 🔥 1"
+        fake_member.global_name = "Gigahoo"
+        fake_member.bot = False
+        fake_member.created_at = datetime.now(timezone.utc) - timedelta(days=800)
+        fake_member.joined_at = datetime.now(timezone.utc) - timedelta(days=200)
+        fake_member.is_timed_out = MagicMock(return_value=False)
+
+        fake_guild = MagicMock()
+        fake_guild.members = [fake_member]
+        fake_guild.get_member = MagicMock(return_value=fake_member)
+
+        fake_msg = MagicMock()
+        fake_msg.guild = fake_guild
+        fake_msg.mentions = [fake_member]
+        toolkit.current_message = fake_msg
+
+        mock_db.get_user_full_dossier = AsyncMock(return_value={
+            "infractions_summary": {"warn": {"count": 1}, "timeout": {"count": 1}},
+            "reports": [{"id": 1, "status": "approved"}],
+            "moderated_messages_count": 2,
+        })
+
+        res = await toolkit.get_user_reputation(usuario="@Gigahoo | 🔥 1")
+        assert res["user_id"] == 1351949989026336843
+        assert res["username"] == "gigahoo"
+        assert "trust_score" in res
+        assert 0 <= res["trust_score"] <= 100
+        assert res["historico_infracoes"]["advertencias"] == 1
+        assert res["historico_infracoes"]["castigos_timeouts"] == 1
+        assert res["historico_infracoes"]["denuncias_aprovadas"] == 1
+        mock_db.get_user_full_dossier.assert_awaited_once_with(123456789, 1351949989026336843)
+
+    @pytest.mark.asyncio
     async def test_reportar_mensagem(self, toolkit, mock_db):
         mock_db.create_user_report = AsyncMock(return_value=42)
         mock_db.get_guild_config = AsyncMock(return_value={"announcement_channel_id": 9999})
@@ -120,11 +159,12 @@ class TestAIToolkit:
 
     def test_get_tool_callables(self, toolkit):
         callables = toolkit.get_tool_callables()
-        assert len(callables) == 11
+        assert len(callables) == 12
         names = [c.__name__ for c in callables]
         assert "get_top_games" in names
         assert "get_game_leaderboard" in names
         assert "get_voice_leaderboard" in names
+        assert "get_user_reputation" in names
         assert "get_tournament_history" in names
         assert "get_tournament_hall_of_fame" in names
         assert "buscar_gif" in names
