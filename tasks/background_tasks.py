@@ -596,6 +596,7 @@ async def rotate_bot_presence_periodically(client: discord.Client, db) -> None:
     3. '🏆 /rank • Veja seu nível e XP'
     """
     import re
+    from datetime import datetime
     from config import BRT, now_brt
 
     await client.wait_until_ready()
