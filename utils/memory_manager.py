@@ -197,11 +197,14 @@ class MemoryManager:
 
         for model in models_to_try:
             try:
-                result = await asyncio.to_thread(
-                    genai.embed_content,
-                    model=model,
-                    content=text,
-                    task_type="retrieval_document"
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        genai.embed_content,
+                        model=model,
+                        content=text,
+                        task_type="retrieval_document"
+                    ),
+                    timeout=8.0,
                 )
                 if isinstance(result, dict):
                     emb = result.get('embedding')

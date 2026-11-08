@@ -1,10 +1,31 @@
 import os
+import random
 import asyncio
 import logging
 import google.generativeai as genai
 from google.api_core.exceptions import ResourceExhausted
 
 logger = logging.getLogger(__name__)
+
+TIMEOUT_FALLBACK_MESSAGES = [
+    "Deu 999ms de ping no meu neurônio artificial e fui de Vasco tentando processar isso aí 💀🔌 Manda de novo que o servidor destravou!",
+    "Meu processador deu aquela congelada nível PC da Xuxa rodando Cyberpunk no ultra 🤯🔥 Manda de novo aí que deu lag mental!",
+    "Caiu o FPS do meu cérebro pra 2 e tomei disconnect no meio do raciocínio 📉🤖 Repete aí na moral!",
+]
+
+QUOTA_FALLBACK_MESSAGES = [
+    "Calma aí rapaziada, tão me spammando mais que call em final de campeonato! Minha placa de vídeo tá fritando 🥵🔥 Espera uns segundinhos e manda de novo!",
+    "Tô em cooldown, tropa! Muita gente me marcando ao mesmo tempo, até robô precisa puxar um ar 😮‍💨⚡ Tenta de novo já já!",
+]
+
+ERROR_FALLBACK_MESSAGES = [
+    "Deu tela azul nos meus circuitos tentando ler isso aí 🟦💀 Buguei mais que jogo em lançamento, manda de novo!",
+    "Tropecei nos cabos do servidor e crashei o raciocínio 🤖💥 Manda de novo aí!",
+]
+
+EMPTY_FALLBACK_MESSAGES = [
+    "Fiquei tão sem palavras que meu chip de áudio até mutou 😶🤖 Manda de novo aí!",
+]
 
 
 class ChatHandler:
@@ -60,6 +81,7 @@ class ChatHandler:
         toolkit: Optional AIToolkit instance providing tools for function calling.
         """
         collected_texts = []
+        executed_tool_results = []
         try:
             tools = toolkit.get_tool_callables() if toolkit else None
 
@@ -71,7 +93,7 @@ class ChatHandler:
 
             model = genai.GenerativeModel(self.model_name, **model_kwargs)
             chat = model.start_chat(history=history, enable_automatic_function_calling=False)
-            response = await asyncio.wait_for(chat.send_message_async(prompt), timeout=45.0)
+            response = await asyncio.wait_for(chat.send_message_async(prompt), timeout=25.0)
 
             initial_text = self._extract_text_parts(response)
             if initial_text:
@@ -108,6 +130,9 @@ class ChatHandler:
                     else:
                         result = {"erro": f"Ferramenta '{fn_name}' não encontrada."}
 
+                    if fn_name != "buscar_gif":
+                        executed_tool_results.append((fn_name, result))
+
                     response_parts.append(
                         genai.protos.Part(
                             function_response=genai.protos.FunctionResponse(
@@ -125,7 +150,7 @@ class ChatHandler:
 
                 response = await asyncio.wait_for(
                     chat.send_message_async(genai.protos.Content(parts=response_parts)),
-                    timeout=45.0,
+                    timeout=25.0,
                 )
                 turn_text = self._extract_text_parts(response)
                 if turn_text:
@@ -142,23 +167,43 @@ class ChatHandler:
             if toolkit and getattr(toolkit, "last_gif_url", None):
                 return ""
 
-            return "Não consegui formular uma resposta no momento."
+            return random.choice(EMPTY_FALLBACK_MESSAGES)
 
         except asyncio.TimeoutError:
             logger.warning("ChatHandler: Timeout aguardando resposta do Gemini.")
             if collected_texts:
                 return "\n".join(collected_texts).strip()
-            return "Demorei muito pensando na resposta (a API de IA está lenta no momento). Tente novamente em instantes!"
+            # Se alguma ferramenta de dados já foi executada antes do timeout, tenta síntese rápida sem tools
+            if executed_tool_results:
+                try:
+                    fallback_kwargs = {"system_instruction": system_instruction} if system_instruction else {}
+                    fallback_model = genai.GenerativeModel(self.model_name, **fallback_kwargs)
+                    tools_summary = "\n".join(f"- {name}: {res}" for name, res in executed_tool_results)
+                    synth_prompt = (
+                        f"{prompt}\n\n"
+                        f"[Dados já coletados do banco de dados pelas ferramentas:\n{tools_summary}]\n"
+                        f"Responda diretamente ao usuário de forma descontraída e zoeira usando os dados acima:"
+                    )
+                    synth_resp = await asyncio.wait_for(
+                        fallback_model.generate_content_async(synth_prompt),
+                        timeout=15.0,
+                    )
+                    synth_text = self._extract_text_parts(synth_resp)
+                    if synth_text:
+                        return synth_text
+                except Exception as synth_err:
+                    logger.debug("Fallback de síntese pós-timeout falhou: %s", synth_err)
+            return random.choice(TIMEOUT_FALLBACK_MESSAGES)
         except ResourceExhausted:
             logger.warning("ChatHandler: Quota exceeded.")
             if collected_texts:
                 return "\n".join(collected_texts).strip()
-            return "Estou um pouco sobrecarregado agora (limite de requisições excedido). Tente novamente em instantes!"
+            return random.choice(QUOTA_FALLBACK_MESSAGES)
         except Exception as e:
             logger.error(f"ChatHandler Error: {e}")
             if collected_texts:
                 return "\n".join(collected_texts).strip()
-            return "Desculpe, ocorreu um erro ao processar sua mensagem."
+            return random.choice(ERROR_FALLBACK_MESSAGES)
 
     def format_history(self, discord_messages, bot_user):
         """

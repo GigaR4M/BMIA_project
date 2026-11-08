@@ -402,7 +402,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
 
                     except Exception as exc:
                         logger.error("Erro no ChatHandler: %s", exc)
-                        await message.reply("Desculpe, tive um problema ao tentar responder.")
+                        await message.reply("Deu tela azul nos meus circuitos tentando responder isso aí 🟦💀 Manda de novo!")
 
         # Pontos por mensagem (canais permitidos no servidor atual)
         allowed = await ctx.get_allowed_channels(message.guild.id) if message.guild else ctx.allowed_channels

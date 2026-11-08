@@ -160,8 +160,14 @@ class AIToolkit:
         cleaned_no_streak = re.sub(r"\s*\|\s*🔥\s*\d+.*$", "", cleaned).strip()
 
         member = None
+        # 0. Se o modelo passou referência à própria pessoa que enviou a mensagem ("eu", "minha", "meu", "autor")
+        if cleaned_no_streak.lower() in ("eu", "meu", "minha", "me", "self", "autor", "author") and self.current_message:
+            author = getattr(self.current_message, "author", None)
+            if author and not getattr(author, "bot", False):
+                member = author
+
         # 1. Busca por ID extraído
-        if extracted_id and guild:
+        if not member and extracted_id and guild:
             member = guild.get_member(extracted_id)
 
         # 2. Busca nas menções da mensagem atual
