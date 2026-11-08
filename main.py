@@ -37,7 +37,7 @@ from tasks.moderation import processador_em_lote
 
 from database import Database
 from stats_collector import StatsCollector
-from commands.stats_commands import StatsCommands, handle_rank_card, handle_highlights_gallery
+from commands.stats_commands import StatsCommands, handle_rank_card
 from commands.role_commands import RoleCommands
 from commands.giveaway_commands import GiveawayCommands
 from commands.moderation_commands import ModerationCommands
@@ -217,11 +217,6 @@ class BMIAClient(discord.Client):
             @discord.app_commands.describe(membro="Membro que deseja visualizar o perfil (opcional)")
             async def perfil_slash(interaction: discord.Interaction, membro: discord.Member | None = None):
                 await handle_rank_card(self.ctx.db, interaction, membro)
-
-            @self.tree.command(name="destaques", description="Mostra a Retrospectiva e os Destaques do Ano do Servidor em Galeria Visual")
-            @discord.app_commands.describe(ano="Ano dos destaques para consulta (padrao: ano atual)")
-            async def destaques_slash(interaction: discord.Interaction, ano: int | None = None):
-                await handle_highlights_gallery(self.ctx.db, interaction, ano)
 
             pending = [cmd.name for cmd in self.tree.get_commands()]
             logger.info("Commands pending sync: %s", pending)

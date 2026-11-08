@@ -644,11 +644,24 @@ class StatsCommands(app_commands.Group):
                 ephemeral=True
             )
     
-    @app_commands.command(name="destaques", description="Mostra a Retrospectiva e os Destaques do Ano do Servidor em Galeria Visual")
+    @app_commands.command(
+        name="destaques",
+        description="[ADMIN/TESTE] Mostra a Retrospectiva e os Destaques do Ano do Servidor em Galeria Visual"
+    )
     @app_commands.describe(ano="Ano dos destaques para consulta (padrão: ano atual)")
+    @app_commands.checks.has_permissions(administrator=True)
     async def destaques(self, interaction: discord.Interaction, ano: Optional[int] = None):
-        """Comando slash para exibir a Retrospectiva e Destaques do Ano."""
+        """Comando administrativo de teste para exibir a Retrospectiva e Destaques do Ano."""
         await handle_highlights_gallery(self.db, interaction, ano)
+
+    @destaques.error
+    async def destaques_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        """Handler de erro para o comando de destaques restrito a administradores."""
+        if isinstance(error, app_commands.MissingPermissions):
+            await interaction.response.send_message(
+                "❌ Este comando é exclusivo para **Administradores** (teste da retrospectiva anual).",
+                ephemeral=True
+            )
 
     @app_commands.command(
         name="podio_mensal_teste",
