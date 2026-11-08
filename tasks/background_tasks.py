@@ -586,3 +586,61 @@ async def check_tracked_game_deals_periodically(client: discord.Client, db, gg_c
             logger.error("❌ Erro no loop de monitoramento de promoções de jogos: %s", exc)
         await asyncio.sleep(1800)
 
+
+# ── Rotação de Status / Rich Presence do Bot ───────────────────────────────────
+async def rotate_bot_presence_periodically(client: discord.Client, db) -> None:
+    """
+    Alterna periodicamente o status personalizado (CustomActivity) do BMIA entre:
+    1. 'Monitorando o servidor 🤖'
+    2. '🏆 Líder de XP: @Fulano'
+    3. '🏆 /rank • Veja seu nível e XP'
+    """
+    import re
+    from config import BRT, now_brt
+
+    await client.wait_until_ready()
+    step = 0
+
+    while not client.is_closed():
+        try:
+            status_text = "Monitorando o servidor 🤖"
+
+            if step % 3 == 0:
+                status_text = "Monitorando o servidor 🤖"
+            elif step % 3 == 1:
+                leader_name = None
+                if db and client.guilds:
+                    try:
+                        # Seleciona o servidor principal (maior número de membros)
+                        main_guild = max(client.guilds, key=lambda g: g.member_count or len(g.members) or 0)
+                        now = now_brt()
+                        start_dt = datetime(now.year, 1, 1, 0, 0, 0, tzinfo=BRT)
+                        end_dt = datetime(now.year + 1, 1, 1, 0, 0, 0, tzinfo=BRT)
+                        top_rows = await db.get_top_users_date_range(main_guild.id, start_dt, end_dt, limit=1)
+                        if top_rows:
+                            uid = top_rows[0].get("user_id")
+                            uname = top_rows[0].get("username", "")
+                            member = main_guild.get_member(uid) if uid else None
+                            raw_name = (member.display_name if member and member.display_name else uname) or "Membro"
+                            leader_name = re.sub(r"\s*\|\s*🔥\s*\d+.*$", "", raw_name).strip() or raw_name
+                    except Exception as leader_err:
+                        logger.debug("Não foi possível consultar líder de XP para presence: %s", leader_err)
+
+                if leader_name:
+                    status_text = f"🏆 Líder de XP: @{leader_name}"
+                else:
+                    status_text = "🏆 /rank • Veja seu nível e XP"
+            else:
+                status_text = "🏆 /rank • Veja seu nível e XP"
+
+            await client.change_presence(
+                status=discord.Status.online,
+                activity=discord.CustomActivity(name=status_text)
+            )
+            step += 1
+        except Exception as exc:
+            logger.debug("Erro ao atualizar presence do bot: %s", exc)
+
+        await asyncio.sleep(60)
+
+
