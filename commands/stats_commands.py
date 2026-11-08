@@ -32,21 +32,24 @@ NEW_YEAR_CELEBRATION_GIF_URL = (
 )
 
 
-def build_mvp_celebration_message(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> str:
-    """Gera a mensagem fora do embed mencionando e parabenizando o MVP do Ano junto com o GIF de celebração."""
+def build_mvp_celebration_message(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> tuple[str, discord.Embed]:
+    """Gera a mensagem fora do embed mencionando e parabenizando o MVP do Ano + embed discreto apenas com o GIF (sem link visível)."""
     mvp = extras.get("mvp")
     if mvp:
-        return (
+        content = (
             f"👑 **MVP DO ANO {year} • {guild.name}**\n"
             f"Parabéns a <@{mvp['user_id']}> (`{mvp['username']}`), o membro lendário que mais movimentou o servidor este ano, "
-            f"acumulando incríveis **{mvp['value']:,} pontos** de pura presença e atividade! 🏆✨\n"
-            f"{MVP_CELEBRATION_GIF_URL}"
+            f"acumulando incríveis **{mvp['value']:,} pontos** de pura presença e atividade! 🏆✨"
         )
-    return (
-        f"✨ **RETROSPECTIVA DO ANO {year} • {guild.name}**\n"
-        f"Parabéns a toda a comunidade por mais um ano inesquecível juntos! 🎮🚀\n"
-        f"{MVP_CELEBRATION_GIF_URL}"
-    )
+    else:
+        content = (
+            f"✨ **RETROSPECTIVA DO ANO {year} • {guild.name}**\n"
+            f"Parabéns a toda a comunidade por mais um ano inesquecível juntos! 🎮🚀"
+        )
+
+    gif_embed = discord.Embed(color=0x2b2d31)
+    gif_embed.set_image(url=MVP_CELEBRATION_GIF_URL)
+    return content, gif_embed
 
 
 def build_honorable_mentions_embed(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> discord.Embed:
@@ -128,20 +131,22 @@ def build_honorable_mentions_embed(guild: discord.Guild, year: int, extras: Dict
     return embed
 
 
-def build_new_year_greeting(guild: discord.Guild, new_year: int, prev_year: int, gif_url: Optional[str] = None) -> str:
-    """Gera a mensagem separada de Feliz Ano Novo com GIF para envio após a virada do ano."""
+def build_new_year_greeting(guild: discord.Guild, new_year: int, prev_year: int, gif_url: Optional[str] = None) -> tuple[str, discord.Embed]:
+    """Gera a mensagem separada de Feliz Ano Novo + embed discreto apenas com o GIF (sem link visível)."""
     chosen_gif = gif_url or NEW_YEAR_CELEBRATION_GIF_URL
-    return (
+    content = (
         f"🎆 **FELIZ ANO NOVO, {guild.name.upper()}! BEM-VINDO A {new_year}!** 🥂✨\n"
         f"Obrigado por cada risada, partida, call de madrugada e momento compartilhado em **{prev_year}**. "
-        f"Que **{new_year}** traga ainda mais conquistas, vitórias e resenhas épicas para toda a nossa comunidade! 🚀🎉\n"
-        f"{chosen_gif}"
+        f"Que **{new_year}** traga ainda mais conquistas, vitórias e resenhas épicas para toda a nossa comunidade! 🚀🎉"
     )
+    gif_embed = discord.Embed(color=0x2b2d31)
+    gif_embed.set_image(url=chosen_gif)
+    return content, gif_embed
 
 
 def build_retrospective_conclusion(guild: discord.Guild, year: int, extras: Dict[str, Any]) -> tuple[str, Optional[discord.Embed]]:
     """Mantido por compatibilidade: retorna a mensagem de celebração do MVP e o embed de Menções Honrosas."""
-    content = build_mvp_celebration_message(guild, year, extras)
+    content, _ = build_mvp_celebration_message(guild, year, extras)
     embed = build_honorable_mentions_embed(guild, year, extras)
     return content, embed
 
@@ -241,12 +246,12 @@ async def handle_highlights_gallery(db: Database, interaction: discord.Interacti
             files=files
         )
 
-        # Envia a mensagem fora do embed mencionando e parabenizando o MVP junto com o GIF de celebração
+        # Envia a mensagem fora do embed mencionando e parabenizando o MVP junto com o GIF de celebração (via embed discreto)
         try:
             extras = await db.get_retrospective_extras(interaction.guild.id, year, is_automatic=False)
-            mvp_text = build_mvp_celebration_message(interaction.guild, year, extras)
+            mvp_text, mvp_gif_embed = build_mvp_celebration_message(interaction.guild, year, extras)
             if interaction.channel:
-                await interaction.channel.send(content=mvp_text)
+                await interaction.channel.send(content=mvp_text, embed=mvp_gif_embed)
         except Exception as ex_err:
             logger.warning("Erro ao enviar mensagem de parabenização do MVP da retrospectiva: %s", ex_err)
 

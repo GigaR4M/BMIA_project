@@ -187,10 +187,10 @@ async def check_monthly_podium(
                                         files=h_files
                                     )
 
-                                # No dia 21, envia a mensagem fora do embed mencionando e parabenizando o MVP + GIF
+                                # No dia 21, envia a mensagem fora do embed mencionando e parabenizando o MVP + GIF (em embed discreto sem link visível)
                                 extras = await db.get_retrospective_extras(guild.id, retrospective_year, is_automatic=True, start_dt=start_dt, end_dt=end_dt)
-                                mvp_text = build_mvp_celebration_message(guild, retrospective_year, extras)
-                                await target_channel.send(content=mvp_text)
+                                mvp_text, mvp_gif_embed = build_mvp_celebration_message(guild, retrospective_year, extras)
+                                await target_channel.send(content=mvp_text, embed=mvp_gif_embed)
 
                             except Exception as h_err:
                                 logger.warning("Erro ao enviar galeria de destaques no background: %s", h_err)
@@ -225,9 +225,9 @@ async def check_monthly_podium(
                                     embed=honors_embed,
                                 )
 
-                                # Mensagem separada com votos de Feliz Ano Novo e GIF comemorativo
-                                new_year_msg = build_new_year_greeting(guild, now.year, prev_year)
-                                await target_channel.send(content=new_year_msg)
+                                # Mensagem separada com votos de Feliz Ano Novo e GIF comemorativo (em embed discreto sem link visível)
+                                new_year_msg, new_year_gif_embed = build_new_year_greeting(guild, now.year, prev_year)
+                                await target_channel.send(content=new_year_msg, embed=new_year_gif_embed)
 
                                 await db.log_periodic_leaderboard_sent(guild.id, "NEW_YEAR_HONORS", honors_target_id)
                                 logger.info("✅ Menções Honrosas e Feliz Ano Novo enviados para %s", guild.name)

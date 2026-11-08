@@ -243,20 +243,21 @@ def test_build_retrospective_conclusion():
         "most_active_day": {"formatted_date": "15/07/2026", "total_messages": 450, "total_voice_minutes": 1200}
     }
 
-    mvp_msg = build_mvp_celebration_message(fake_guild, 2026, extras)
+    mvp_msg, mvp_gif_embed = build_mvp_celebration_message(fake_guild, 2026, extras)
     assert "<@312389956045897731>" in mvp_msg
-    assert MVP_CELEBRATION_GIF_URL in mvp_msg
+    assert MVP_CELEBRATION_GIF_URL not in mvp_msg
+    assert mvp_gif_embed.image.url == MVP_CELEBRATION_GIF_URL
 
-    ny_msg = build_new_year_greeting(fake_guild, 2027, 2026)
+    ny_msg, ny_gif_embed = build_new_year_greeting(fake_guild, 2027, 2026)
     assert "FELIZ ANO NOVO" in ny_msg
-    assert NEW_YEAR_CELEBRATION_GIF_URL in ny_msg
+    assert NEW_YEAR_CELEBRATION_GIF_URL not in ny_msg
+    assert ny_gif_embed.image.url == NEW_YEAR_CELEBRATION_GIF_URL
 
     content, embed = build_retrospective_conclusion(fake_guild, 2026, extras)
     
     assert "<@312389956045897731>" in content
     assert "Lord PureBone" in content
     assert "15,420" in content
-    assert MVP_CELEBRATION_GIF_URL in content
     assert embed is not None
     assert any("Print / Clipe do Ano" in f.name for f in embed.fields)
     gif_fields = [f for f in embed.fields if "GIF Mais Marcante do Ano" in f.name]
