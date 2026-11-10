@@ -137,8 +137,11 @@ class SteamCommands(app_commands.Group):
         for ev in events:
             slug = ev["event_slug"]
             name = ev["event_name"]
-            if current.lower() in slug.lower() or current.lower() in name.lower():
-                display = f"{name[:60]} ({slug})" if len(name) > 60 else f"{name} ({slug})"
+            has_banner = bool(ev.get("banner_url"))
+            status_tag = "🖼️" if has_banner else "⚠️ Sem banner"
+            if current.lower() in slug.lower() or current.lower() in name.lower() or current.lower() in status_tag.lower():
+                short_name = f"{name[:50]}..." if len(name) > 50 else name
+                display = f"{status_tag} | {short_name} ({slug})"
                 choices.append(app_commands.Choice(name=display[:100], value=slug))
         return choices[:25]
 

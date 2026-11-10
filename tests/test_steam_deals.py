@@ -224,3 +224,52 @@ class TestGamingChannelPriority:
         assert selected == main_ch
         assert selected != staff_ch
 
+
+class TestEventBannerAutocomplete:
+    """Testes para o indicador visual no autocomplete de /steam evento_banner."""
+
+    @staticmethod
+    def _run_coro(coro):
+        try:
+            coro.send(None)
+        except StopIteration as exc:
+            return exc.value
+        raise RuntimeError("Coroutine did not finish synchronously")
+
+    def test_autocomplete_shows_banner_indicators_and_filters(self):
+        from commands.deals_commands import SteamCommands
+
+        async def fake_get_events(limit=25):
+            return [
+                {
+                    "event_slug": "autumn_sale_2026",
+                    "event_name": "Promoção de Outono da Steam",
+                    "banner_url": "https://example.com/banner.jpg"
+                },
+                {
+                    "event_slug": "board_game_fest_2026",
+                    "event_name": "Festival de Jogos de Tabuleiro",
+                    "banner_url": None
+                }
+            ]
+
+        mock_db = MagicMock()
+        mock_db.get_upcoming_steam_events = fake_get_events
+
+        cmd_group = SteamCommands(mock_db)
+        interaction = MagicMock()
+
+        # Listando todos
+        choices_all = self._run_coro(cmd_group.event_slug_autocomplete(interaction, ""))
+        assert len(choices_all) == 2
+        assert choices_all[0].name == "🖼️ | Promoção de Outono da Steam (autumn_sale_2026)"
+        assert choices_all[0].value == "autumn_sale_2026"
+        assert choices_all[1].name == "⚠️ Sem banner | Festival de Jogos de Tabuleiro (board_game_fest_2026)"
+        assert choices_all[1].value == "board_game_fest_2026"
+
+        # Filtrando por "sem banner"
+        choices_missing = self._run_coro(cmd_group.event_slug_autocomplete(interaction, "sem banner"))
+        assert len(choices_missing) == 1
+        assert choices_missing[0].value == "board_game_fest_2026"
+
+
