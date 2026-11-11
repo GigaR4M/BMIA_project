@@ -228,3 +228,36 @@ class TestExtractAndCleanGif:
         gif_url, clean_text = extract_and_clean_gif(raw, fallback_gif_url="https://giphy.com/gifs/funny-abc999")
         assert gif_url == "https://media.giphy.com/media/abc999/giphy.gif"
         assert clean_text == raw
+
+
+class TestResolveCustomEmojis:
+    def test_resolves_goldeggplant_shortcode_and_preserves_unknown(self):
+        from events.discord_events import resolve_custom_emojis_in_text
+
+        emoji_mock = MagicMock()
+        emoji_mock.name = "goldeggplant"
+        emoji_mock.id = 987654321012345678
+        emoji_mock.animated = False
+
+        guild = MagicMock()
+        guild.emojis = [emoji_mock]
+
+        raw = "O MVP leva o troféu beringela :goldeggplant: e o cargo 🍆 MVP 2026! (:unknown_emoji:)"
+        resolved = resolve_custom_emojis_in_text(raw, guild)
+        assert resolved == "O MVP leva o troféu beringela <:goldeggplant:987654321012345678> e o cargo 🍆 MVP 2026! (:unknown_emoji:)"
+
+    def test_fixes_hallucinated_emoji_id_and_animated_emoji(self):
+        from events.discord_events import resolve_custom_emojis_in_text
+
+        emoji_mock = MagicMock()
+        emoji_mock.name = "goldeggplant"
+        emoji_mock.id = 987654321012345678
+        emoji_mock.animated = True
+
+        guild = MagicMock()
+        guild.emojis = [emoji_mock]
+
+        raw = "Toma a beringela do adm <:goldeggplant:12345> e :GoldEggplant:!"
+        resolved = resolve_custom_emojis_in_text(raw, guild)
+        assert resolved == "Toma a beringela do adm <a:goldeggplant:987654321012345678> e <a:goldeggplant:987654321012345678>!"
+

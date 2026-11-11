@@ -37,6 +37,38 @@ def resolve_mentions_in_text(text: str, guild: discord.Guild | None) -> str:
     return re.sub(r"<@!?(\d+)>", replace, text)
 
 
+def resolve_custom_emojis_in_text(text: str, guild: discord.Guild | None) -> str:
+    """
+    Substitui shortcodes de emojis customizados (ex: :goldeggplant:) pelo formato
+    renderizável do Discord (<:goldeggplant:ID> ou <a:goldeggplant:ID>) usando os emojis da guild.
+    """
+    if not text or not guild:
+        return text
+
+    emojis = getattr(guild, "emojis", None)
+    if not emojis:
+        return text
+
+    emoji_map: Dict[str, str] = {}
+    for em in emojis:
+        em_name = getattr(em, "name", None)
+        em_id = getattr(em, "id", None)
+        if em_name and em_id:
+            prefix = "a" if getattr(em, "animated", False) else ""
+            emoji_map[em_name.lower()] = f"<{prefix}:{em_name}:{em_id}>"
+
+    if not emoji_map:
+        return text
+
+    def replace_shortcode(match: re.Match) -> str:
+        shortcode = match.group(1)
+        return emoji_map.get(shortcode.lower(), match.group(0))
+
+    # Substitui tanto <a?:nome:id_qualquer> quanto :nome_do_emoji: pelo ID oficial da guild
+    text = re.sub(r"<a?:([a-zA-Z0-9_]{2,32}):\d*>", replace_shortcode, text)
+    return re.sub(r"(?<!<)(?<!<a):([a-zA-Z0-9_]{2,32}):(?!\d+>)", replace_shortcode, text)
+
+
 def extract_and_clean_gif(text: str, fallback_gif_url: str | None = None) -> tuple[str | None, str]:
     """
     Remove URLs e marcações de GIF do texto para que nenhum link apareça,
@@ -326,6 +358,7 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                             7. Fatos e Proibição de Alucinações: NUNCA invente números, horas jogadas, reputação ou posições de ranking que não estejam no contexto ou no resultado das ferramentas.
                             8. Proibição de Templates/Placeholders: NUNCA use marcações entre colchetes como '[Nome do usuário]' ou '[inserir número]'. Se não houver dados, diga a verdade de forma bem-humorada.
                             9. Conciso e Coloquial: Mantenha as respostas concisas e use o contexto/memórias do servidor para personalizar a interação.
+                            10. Premiação do MVP do Ano e Lore da Beringela: O MVP do ano (1º colocado do Pódio/Ranking Anual do servidor) ganha oficialmente o cargo/tag/título "🍆 MVP <ano>" (ex: "🍆 MVP 2026") e uma chave de jogo aleatória (random key). A ideia da beringela surgiu de uma piada interna feita em call na comunidade; por isso, caso perguntem o que o MVP do ano ganha ou falem sobre o prêmio anual, explique o prêmio real (a tag "🍆 MVP <ano>" + chave de jogo aleatória) e faça piadas à vontade do tipo "ganha uma beringela", "recebe a beringela do adm", "leva o troféu beringela <ano>", etc. O servidor possui um emoji customizado de um troféu de ouro em formato de beringela chamado :goldeggplant: — use :goldeggplant: (e/ou 🍆) nas respostas sobre o MVP do ano!
                             """
 
                         # Contexto de reply se a mensagem for uma resposta a outra
@@ -365,6 +398,9 @@ def register_events(client: discord.Client, ctx: "BotContext") -> None:  # type:
                         fallback_gif = getattr(toolkit, "last_gif_url", None) if toolkit else None
                         gif_url, clean_response_text = extract_and_clean_gif(
                             response_text, fallback_gif_url=fallback_gif
+                        )
+                        clean_response_text = resolve_custom_emojis_in_text(
+                            clean_response_text, message.guild
                         )
 
                         if ctx.memory_manager and message.guild:
